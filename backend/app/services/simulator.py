@@ -36,7 +36,7 @@ import re
 
 import psycopg
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 
 DEFAULT_UNITS = 2.0
 

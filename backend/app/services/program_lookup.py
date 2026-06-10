@@ -13,7 +13,7 @@ import os
 
 import psycopg
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 
 
 def programs_for_course(conn, code: str, collapse: bool = False) -> list[dict]:

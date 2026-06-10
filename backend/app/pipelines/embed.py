@@ -14,7 +14,7 @@ import argparse
 import requests
 import psycopg
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 MODEL = "bge-m3"
 

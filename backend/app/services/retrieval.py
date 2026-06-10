@@ -234,7 +234,7 @@ def _fused_search(conn, where, query_en, k, min_sim) -> list[dict]:
 
 
 if __name__ == "__main__":
-    DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+    from app.core.config import DSN
 
     def show(title, rows, n=3, sim=False):
         print(f"\n== {title}  (命中 {len(rows)}) ==")

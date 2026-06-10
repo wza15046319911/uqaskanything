@@ -22,7 +22,7 @@ import psycopg
 
 from app.services import planner, retrieval, program_lookup, answer
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 ANSWER_CAP = 20      # 喂给答案模型的最多课程数(过多无意义且拉长 prompt)
 PROGRAM_CAP = 15     # course_to_programs 喂给答案模型的最多 program 数
 EMPTY_MSG = "问题太宽泛或无法形成检索条件,请补充学科方向或筛选条件(如学期 / 有无考试 / 专业)。"

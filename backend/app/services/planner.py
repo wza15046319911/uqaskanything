@@ -28,7 +28,7 @@ import psycopg
 
 from app.services import llm
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 
 LOWCARD = ["semester", "location", "attendance_mode", "level"]  # 低基数列,枚举值实时取
 

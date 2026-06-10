@@ -13,7 +13,7 @@ import argparse
 
 import psycopg
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 EMBED_DIM = 1024  # bge-m3
 
 DDL = f"""

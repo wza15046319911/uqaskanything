@@ -12,7 +12,7 @@ import argparse
 
 import psycopg
 
-DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
+from app.core.config import DSN
 
 DDL = """
 ALTER TABLE programs ADD COLUMN IF NOT EXISTS aux_rules JSONB;
