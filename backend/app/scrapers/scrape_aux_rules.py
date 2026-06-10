@@ -21,7 +21,7 @@ from app.core.config import DSN
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="aux_rules.jsonl")
+    ap.add_argument("--out", default="data/aux_rules.jsonl")
     ap.add_argument("--delay", type=float, default=1.0, help="每次请求间隔秒")
     ap.add_argument("--year", default="2026")
     ap.add_argument("--limit", type=int, default=0, help="只抓前 N 个(抽样)")

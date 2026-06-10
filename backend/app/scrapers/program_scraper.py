@@ -326,7 +326,7 @@ def main():
     ap.add_argument("--no-expand", action="store_true", help="不递归展开 plan 分支")
     ap.add_argument("--max-depth", type=int, default=3, help="plan 展开最大深度")
     ap.add_argument("--archived", action="store_true", help="包含已归档 program(默认只当前有效)")
-    ap.add_argument("--out", default="programs.jsonl")
+    ap.add_argument("--out", default="data/programs.jsonl")
     ap.add_argument("--delay", type=float, default=1.0)
     ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()

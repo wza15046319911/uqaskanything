@@ -78,7 +78,7 @@ def row_values(c: dict) -> list:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="infile", default="courses.jsonl")
+    ap.add_argument("--in", dest="infile", default="data/courses.jsonl")
     args = ap.parse_args()
 
     rows = [json.loads(l) for l in open(args.infile, encoding="utf-8") if l.strip()]

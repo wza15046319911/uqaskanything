@@ -27,7 +27,7 @@ CREATE INDEX IF NOT EXISTS idx_pe_course ON program_exclude(course_code);
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="infile", default="aux_rules.jsonl")
+    ap.add_argument("--in", dest="infile", default="data/aux_rules.jsonl")
     args = ap.parse_args()
 
     recs = [json.loads(l) for l in open(args.infile, encoding="utf-8") if l.strip()]

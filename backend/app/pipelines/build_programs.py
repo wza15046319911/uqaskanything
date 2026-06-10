@@ -91,7 +91,7 @@ def flatten(rules: list, via_plan: str = "", plan_subtype: str = "") -> list[tup
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in", dest="infile", default="programs.jsonl")
+    ap.add_argument("--in", dest="infile", default="data/programs.jsonl")
     args = ap.parse_args()
 
     progs = [json.loads(l) for l in open(args.infile, encoding="utf-8") if l.strip()]

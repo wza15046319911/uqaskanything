@@ -398,7 +398,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("ids", nargs="*", help="offering id, e.g. CSSE1001-21206-7620")
     ap.add_argument("--file", help="每行一个 offering id 的清单文件")
-    ap.add_argument("--out", default="courses.jsonl", help="输出 JSONL")
+    ap.add_argument("--out", default="data/courses.jsonl", help="输出 JSONL")
     ap.add_argument("--delay", type=float, default=1.0, help="请求间隔秒")
     args = ap.parse_args()
 

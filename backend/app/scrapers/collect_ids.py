@@ -90,7 +90,7 @@ def main():
     ap.add_argument("--semester", default="2026:1", help="如 2026:1 / 2026:2 / 2026:3(summer)")
     ap.add_argument("--location", default="St Lucia", help="校区精确匹配,空串=不限")
     ap.add_argument("--mode", default="In Person", help="授课模式精确匹配,空串=不限")
-    ap.add_argument("--out", default="course_ids.txt", help="offering id 输出清单")
+    ap.add_argument("--out", default="data/course_ids.txt", help="offering id 输出清单")
     ap.add_argument("--workers", type=int, default=6, help="并发数")
     ap.add_argument("--limit", type=int, default=0, help="只处理前 N 门(抽样测试)")
     args = ap.parse_args()
