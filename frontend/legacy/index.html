@@ -1,327 +1,768 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>UQ 课程问答</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<style>
-  :root{
-    --bg:#f6f7f3;        /* 微暖的纸白 */
-    --paper:#ffffff;
-    --ink:#1c2620;       /* 深墨绿黑,正文 */
-    --ink-soft:#5a675f;  /* 次要文字 */
-    --line:#e6e9e2;      /* 分割线 */
-    --mint:#1f8a6d;      /* 主色:沉静薄荷绿 */
-    --mint-soft:#e7f3ee;
-    --mint-ink:#0f5740;
-    --amber:#c8743a;     /* 强调:暖陶土橙(必修/重点) */
-    --amber-soft:#f7ebe1;
-    --radius:18px;
-    --shadow:0 1px 2px rgba(28,38,32,.04), 0 10px 30px -12px rgba(28,38,32,.12);
-    --shadow-lift:0 1px 2px rgba(28,38,32,.05), 0 22px 48px -16px rgba(28,38,32,.20);
-  }
-  *{box-sizing:border-box}
-  html{-webkit-text-size-adjust:100%}
-  body{
-    margin:0; min-height:100dvh; background:var(--bg); color:var(--ink);
-    font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
-    font-size:16px; line-height:1.6; letter-spacing:-.005em;
-    -webkit-font-smoothing:antialiased;
-    background-image:radial-gradient(120% 80% at 50% -10%, #ecf4ef 0%, rgba(236,244,239,0) 55%);
-  }
-  ::selection{background:var(--mint-soft); color:var(--mint-ink)}
-  .wrap{max-width:760px; margin:0 auto; padding:clamp(28px,6vw,72px) 20px 96px}
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UQ 课程问答</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f6f7f3; /* 微暖的纸白 */
+        --paper: #ffffff;
+        --ink: #1c2620; /* 深墨绿黑,正文 */
+        --ink-soft: #5a675f; /* 次要文字 */
+        --line: #e6e9e2; /* 分割线 */
+        --mint: #1f8a6d; /* 主色:沉静薄荷绿 */
+        --mint-soft: #e7f3ee;
+        --mint-ink: #0f5740;
+        --amber: #c8743a; /* 强调:暖陶土橙(必修/重点) */
+        --amber-soft: #f7ebe1;
+        --radius: 18px;
+        --shadow: 0 1px 2px rgba(28, 38, 32, 0.04), 0 10px 30px -12px rgba(28, 38, 32, 0.12);
+        --shadow-lift: 0 1px 2px rgba(28, 38, 32, 0.05), 0 22px 48px -16px rgba(28, 38, 32, 0.2);
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-text-size-adjust: 100%;
+      }
+      body {
+        margin: 0;
+        min-height: 100dvh;
+        background: var(--bg);
+        color: var(--ink);
+        font-family:
+          'Plus Jakarta Sans',
+          -apple-system,
+          BlinkMacSystemFont,
+          'PingFang SC',
+          'Microsoft YaHei',
+          sans-serif;
+        font-size: 16px;
+        line-height: 1.6;
+        letter-spacing: -0.005em;
+        -webkit-font-smoothing: antialiased;
+        background-image: radial-gradient(
+          120% 80% at 50% -10%,
+          #ecf4ef 0%,
+          rgba(236, 244, 239, 0) 55%
+        );
+      }
+      ::selection {
+        background: var(--mint-soft);
+        color: var(--mint-ink);
+      }
+      .wrap {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: clamp(28px, 6vw, 72px) 20px 96px;
+      }
 
-  /* ---- 顶部 ---- */
-  header{text-align:center; margin-bottom:clamp(24px,5vw,44px)}
-  .badge{
-    display:inline-flex; align-items:center; gap:7px; font-size:12.5px; font-weight:600;
-    color:var(--mint-ink); background:var(--mint-soft); padding:6px 13px; border-radius:999px;
-    letter-spacing:.02em; margin-bottom:18px;
-  }
-  .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 3px rgba(31,138,109,.18)}
-  h1{
-    font-family:"Fraunces",Georgia,serif; font-weight:500; font-optical-sizing:auto;
-    font-size:clamp(34px,7vw,52px); line-height:1.05; margin:0 0 12px; letter-spacing:-.02em;
-  }
-  h1 em{font-style:italic; color:var(--mint)}
-  .sub{color:var(--ink-soft); font-size:clamp(15px,2.4vw,17px); max-width:42ch; margin:0 auto}
+      /* ---- 顶部 ---- */
+      header {
+        text-align: center;
+        margin-bottom: clamp(24px, 5vw, 44px);
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12.5px;
+        font-weight: 600;
+        color: var(--mint-ink);
+        background: var(--mint-soft);
+        padding: 6px 13px;
+        border-radius: 999px;
+        letter-spacing: 0.02em;
+        margin-bottom: 18px;
+      }
+      .badge .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 0 3px rgba(31, 138, 109, 0.18);
+      }
+      h1 {
+        font-family: 'Fraunces', Georgia, serif;
+        font-weight: 500;
+        font-optical-sizing: auto;
+        font-size: clamp(34px, 7vw, 52px);
+        line-height: 1.05;
+        margin: 0 0 12px;
+        letter-spacing: -0.02em;
+      }
+      h1 em {
+        font-style: italic;
+        color: var(--mint);
+      }
+      .sub {
+        color: var(--ink-soft);
+        font-size: clamp(15px, 2.4vw, 17px);
+        max-width: 42ch;
+        margin: 0 auto;
+      }
 
-  /* ---- 搜索框 ---- */
-  .searchcard{
-    background:var(--paper); border:1px solid var(--line); border-radius:var(--radius);
-    box-shadow:var(--shadow); padding:10px 10px 10px 18px; display:flex; align-items:center; gap:10px;
-    transition:box-shadow .25s ease, border-color .25s ease, transform .25s ease;
-    margin-top:clamp(20px,4vw,32px);
-  }
-  .searchcard:focus-within{box-shadow:var(--shadow-lift); border-color:#cfe0d8; transform:translateY(-1px)}
-  .searchcard svg.lead{color:var(--ink-soft); flex:none}
-  #q{
-    flex:1; border:none; outline:none; background:transparent; font:inherit; color:var(--ink);
-    padding:12px 0; min-width:0;
-  }
-  #q::placeholder{color:#9aa69e}
-  #ask{
-    flex:none; border:none; cursor:pointer; font:inherit; font-weight:600; color:#fff;
-    background:var(--mint); border-radius:12px; padding:12px 20px; display:inline-flex; align-items:center; gap:7px;
-    transition:background .18s ease, transform .12s ease, box-shadow .18s ease;
-    box-shadow:0 6px 16px -6px rgba(31,138,109,.55);
-  }
-  #ask:hover{background:#1a7a60}
-  #ask:active{transform:scale(.97)}
-  #ask:disabled{opacity:.55; cursor:not-allowed; box-shadow:none}
-  .ask-spin{display:none; width:16px;height:16px;border-radius:50%;
-    border:2px solid rgba(255,255,255,.45); border-top-color:#fff; animation:spin .7s linear infinite}
-  body.loading .ask-spin{display:inline-block}
-  body.loading #ask .ask-label,body.loading #ask svg{display:none}
-  @keyframes spin{to{transform:rotate(360deg)}}
+      /* ---- 搜索框 ---- */
+      .searchcard {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 10px 10px 10px 18px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition:
+          box-shadow 0.25s ease,
+          border-color 0.25s ease,
+          transform 0.25s ease;
+        margin-top: clamp(20px, 4vw, 32px);
+      }
+      .searchcard:focus-within {
+        box-shadow: var(--shadow-lift);
+        border-color: #cfe0d8;
+        transform: translateY(-1px);
+      }
+      .searchcard svg.lead {
+        color: var(--ink-soft);
+        flex: none;
+      }
+      #q {
+        flex: 1;
+        border: none;
+        outline: none;
+        background: transparent;
+        font: inherit;
+        color: var(--ink);
+        padding: 12px 0;
+        min-width: 0;
+      }
+      #q::placeholder {
+        color: #9aa69e;
+      }
+      #ask {
+        flex: none;
+        border: none;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        color: #fff;
+        background: var(--mint);
+        border-radius: 12px;
+        padding: 12px 20px;
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        transition:
+          background 0.18s ease,
+          transform 0.12s ease,
+          box-shadow 0.18s ease;
+        box-shadow: 0 6px 16px -6px rgba(31, 138, 109, 0.55);
+      }
+      #ask:hover {
+        background: #1a7a60;
+      }
+      #ask:active {
+        transform: scale(0.97);
+      }
+      #ask:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+        box-shadow: none;
+      }
+      .ask-spin {
+        display: none;
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.45);
+        border-top-color: #fff;
+        animation: spin 0.7s linear infinite;
+      }
+      body.loading .ask-spin {
+        display: inline-block;
+      }
+      body.loading #ask .ask-label,
+      body.loading #ask svg {
+        display: none;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
 
-  /* ---- 示例 chips ---- */
-  .chips{display:flex; flex-wrap:wrap; gap:8px; justify-content:center; margin-top:18px}
-  .chip{
-    font:inherit; font-size:13.5px; color:var(--ink-soft); cursor:pointer;
-    background:var(--paper); border:1px solid var(--line); border-radius:999px; padding:7px 14px;
-    transition:all .18s ease;
-  }
-  .chip:hover{color:var(--mint-ink); border-color:#cfe0d8; background:var(--mint-soft); transform:translateY(-1px)}
+      /* ---- 示例 chips ---- */
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        justify-content: center;
+        margin-top: 18px;
+      }
+      .chip {
+        font: inherit;
+        font-size: 13.5px;
+        color: var(--ink-soft);
+        cursor: pointer;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 7px 14px;
+        transition: all 0.18s ease;
+      }
+      .chip:hover {
+        color: var(--mint-ink);
+        border-color: #cfe0d8;
+        background: var(--mint-soft);
+        transform: translateY(-1px);
+      }
 
-  /* ---- 结果区 ---- */
-  #out{margin-top:clamp(28px,5vw,40px)}
-  .meta{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; font-size:13px; color:var(--ink-soft)}
-  .pill{font-weight:600; letter-spacing:.02em; padding:4px 10px; border-radius:999px; background:#eef1ea; color:#46524b}
-  .pill[data-m="semantic"],.pill[data-m="hybrid"]{background:var(--mint-soft); color:var(--mint-ink)}
-  .pill[data-m="program"]{background:#f7ebe1; color:#a85a2a}
-  .pill[data-m="empty"]{background:#f4ece2; color:#8a6d4e}
-  .count{margin-left:auto}
+      /* ---- 结果区 ---- */
+      #out {
+        margin-top: clamp(28px, 5vw, 40px);
+      }
+      .meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 16px;
+        font-size: 13px;
+        color: var(--ink-soft);
+      }
+      .pill {
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #eef1ea;
+        color: #46524b;
+      }
+      .pill[data-m='semantic'],
+      .pill[data-m='hybrid'] {
+        background: var(--mint-soft);
+        color: var(--mint-ink);
+      }
+      .pill[data-m='program'] {
+        background: #f7ebe1;
+        color: #a85a2a;
+      }
+      .pill[data-m='empty'] {
+        background: #f4ece2;
+        color: #8a6d4e;
+      }
+      .count {
+        margin-left: auto;
+      }
 
-  /* 回答卡 */
-  .answer{
-    background:linear-gradient(180deg,#fbfdfb,#f5f9f6); border:1px solid #e2ebe5; border-radius:var(--radius);
-    padding:20px 22px; margin-bottom:22px; position:relative; box-shadow:var(--shadow);
-  }
-  .answer h3{margin:0 0 10px; font-size:12.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; color:var(--mint)}
-  .answer .body{white-space:pre-wrap; color:var(--ink); font-size:15.5px; line-height:1.72}
-  .answer .body code{background:var(--mint-soft); color:var(--mint-ink); padding:1px 6px; border-radius:6px; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.92em; font-weight:600}
+      /* 回答卡 */
+      .answer {
+        background: linear-gradient(180deg, #fbfdfb, #f5f9f6);
+        border: 1px solid #e2ebe5;
+        border-radius: var(--radius);
+        padding: 20px 22px;
+        margin-bottom: 22px;
+        position: relative;
+        box-shadow: var(--shadow);
+      }
+      .answer h3 {
+        margin: 0 0 10px;
+        font-size: 12.5px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--mint);
+      }
+      .answer .body {
+        white-space: pre-wrap;
+        color: var(--ink);
+        font-size: 15.5px;
+        line-height: 1.72;
+      }
+      .answer .body code {
+        background: var(--mint-soft);
+        color: var(--mint-ink);
+        padding: 1px 6px;
+        border-radius: 6px;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-size: 0.92em;
+        font-weight: 600;
+      }
 
-  /* 课程卡 */
-  .grid{display:grid; gap:12px}
-  .course{
-    background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:16px 18px;
-    display:flex; align-items:flex-start; gap:14px; box-shadow:var(--shadow);
-    transition:transform .16s ease, box-shadow .2s ease, border-color .2s ease;
-    animation:rise .4s cubic-bezier(.2,.7,.3,1) backwards;
-  }
-  .course:hover{transform:translateY(-2px); box-shadow:var(--shadow-lift); border-color:#dbe4dd}
-  .code{
-    flex:none; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-weight:600; font-size:13px;
-    color:var(--mint-ink); background:var(--mint-soft); padding:6px 9px; border-radius:9px; letter-spacing:.01em;
-  }
-  .cmain{min-width:0; flex:1}
-  .ctitle{font-weight:600; color:var(--ink); font-size:15.5px; line-height:1.4}
-  .ctags{display:flex; flex-wrap:wrap; gap:6px; margin-top:8px}
-  .tag{font-size:12px; color:var(--ink-soft); background:#f1f3ee; padding:3px 9px; border-radius:7px}
-  .tag.exam{background:#fbeee6; color:#b4632f}
-  .tag.req{background:var(--amber); color:#fff; font-weight:600}
-  .tag.req2{background:var(--amber-soft); color:#b4632f; font-weight:600; border:1px solid #edcdb0}
-  .tag.elec{background:#eef1ea; color:#5a675f; font-weight:600}
-  .sim{flex:none; font-size:12px; font-weight:600; color:var(--mint); font-variant-numeric:tabular-nums; padding-top:3px}
+      /* 课程卡 */
+      .grid {
+        display: grid;
+        gap: 12px;
+      }
+      .course {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 16px 18px;
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        box-shadow: var(--shadow);
+        transition:
+          transform 0.16s ease,
+          box-shadow 0.2s ease,
+          border-color 0.2s ease;
+        animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+      }
+      .course:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lift);
+        border-color: #dbe4dd;
+      }
+      .code {
+        flex: none;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-weight: 600;
+        font-size: 13px;
+        color: var(--mint-ink);
+        background: var(--mint-soft);
+        padding: 6px 9px;
+        border-radius: 9px;
+        letter-spacing: 0.01em;
+      }
+      .cmain {
+        min-width: 0;
+        flex: 1;
+      }
+      .ctitle {
+        font-weight: 600;
+        color: var(--ink);
+        font-size: 15.5px;
+        line-height: 1.4;
+      }
+      .ctags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 8px;
+      }
+      .tag {
+        font-size: 12px;
+        color: var(--ink-soft);
+        background: #f1f3ee;
+        padding: 3px 9px;
+        border-radius: 7px;
+      }
+      .tag.exam {
+        background: #fbeee6;
+        color: #b4632f;
+      }
+      .tag.req {
+        background: var(--amber);
+        color: #fff;
+        font-weight: 600;
+      }
+      .tag.req2 {
+        background: var(--amber-soft);
+        color: #b4632f;
+        font-weight: 600;
+        border: 1px solid #edcdb0;
+      }
+      .tag.elec {
+        background: #eef1ea;
+        color: #5a675f;
+        font-weight: 600;
+      }
+      .sim {
+        flex: none;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--mint);
+        font-variant-numeric: tabular-nums;
+        padding-top: 3px;
+      }
 
-  /* 二选一(equivalence)组卡片 */
-  .course.grp{flex-direction:column; align-items:stretch; gap:0}
-  .gline{display:flex; align-items:baseline; gap:10px; font-weight:600; color:var(--ink); font-size:15px; line-height:1.4}
-  .gcode{flex:none; font-family:ui-monospace,"SF Mono",Menlo,monospace; font-weight:600; font-size:12.5px;
-    color:var(--mint-ink); background:var(--mint-soft); padding:4px 8px; border-radius:8px}
-  .oror{display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--ink-soft);
-    font-weight:600; letter-spacing:.06em; margin:9px 0}
-  .oror::before,.oror::after{content:""; height:1px; flex:1; background:var(--line)}
+      /* 二选一(equivalence)组卡片 */
+      .course.grp {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0;
+      }
+      .gline {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        font-weight: 600;
+        color: var(--ink);
+        font-size: 15px;
+        line-height: 1.4;
+      }
+      .gcode {
+        flex: none;
+        font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+        font-weight: 600;
+        font-size: 12.5px;
+        color: var(--mint-ink);
+        background: var(--mint-soft);
+        padding: 4px 8px;
+        border-radius: 8px;
+      }
+      .oror {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 11.5px;
+        color: var(--ink-soft);
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        margin: 9px 0;
+      }
+      .oror::before,
+      .oror::after {
+        content: '';
+        height: 1px;
+        flex: 1;
+        background: var(--line);
+      }
 
-  /* 专业行(program) */
-  .prog{
-    background:var(--paper); border:1px solid var(--line); border-radius:12px; padding:13px 16px;
-    display:flex; align-items:center; gap:12px; box-shadow:var(--shadow);
-    animation:rise .4s cubic-bezier(.2,.7,.3,1) backwards; transition:border-color .2s,transform .16s;
-  }
-  .prog:hover{transform:translateY(-1px); border-color:#dbe4dd}
-  .prog .ptitle{flex:1; min-width:0; font-weight:500; font-size:15px}
-  .prog .sub2{display:block; font-size:12.5px; color:var(--ink-soft); font-weight:400; margin-top:2px}
+      /* 专业行(program) */
+      .prog {
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 13px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        box-shadow: var(--shadow);
+        animation: rise 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) backwards;
+        transition:
+          border-color 0.2s,
+          transform 0.16s;
+      }
+      .prog:hover {
+        transform: translateY(-1px);
+        border-color: #dbe4dd;
+      }
+      .prog .ptitle {
+        flex: 1;
+        min-width: 0;
+        font-weight: 500;
+        font-size: 15px;
+      }
+      .prog .sub2 {
+        display: block;
+        font-size: 12.5px;
+        color: var(--ink-soft);
+        font-weight: 400;
+        margin-top: 2px;
+      }
 
-  @keyframes rise{from{opacity:0; transform:translateY(10px)}}
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(10px);
+        }
+      }
 
-  /* 空 / 错误 / 骨架 */
-  .note{text-align:center; color:var(--ink-soft); padding:36px 16px; font-size:15px}
-  .note.err{color:#b04a3a}
-  .skeleton{height:74px; border-radius:14px; background:linear-gradient(100deg,#eef1ec 30%,#f6f8f4 50%,#eef1ec 70%);
-    background-size:200% 100%; animation:shimmer 1.3s infinite; margin-bottom:12px}
-  @keyframes shimmer{to{background-position:-200% 0}}
+      /* 空 / 错误 / 骨架 */
+      .note {
+        text-align: center;
+        color: var(--ink-soft);
+        padding: 36px 16px;
+        font-size: 15px;
+      }
+      .note.err {
+        color: #b04a3a;
+      }
+      .skeleton {
+        height: 74px;
+        border-radius: 14px;
+        background: linear-gradient(100deg, #eef1ec 30%, #f6f8f4 50%, #eef1ec 70%);
+        background-size: 200% 100%;
+        animation: shimmer 1.3s infinite;
+        margin-bottom: 12px;
+      }
+      @keyframes shimmer {
+        to {
+          background-position: -200% 0;
+        }
+      }
 
-  footer{text-align:center; color:#9aa69e; font-size:12.5px; margin-top:54px}
-  footer code{font-family:ui-monospace,monospace}
+      footer {
+        text-align: center;
+        color: #9aa69e;
+        font-size: 12.5px;
+        margin-top: 54px;
+      }
+      footer code {
+        font-family: ui-monospace, monospace;
+      }
 
-  @media (prefers-reduced-motion: reduce){
-    *{animation-duration:.001ms !important; transition-duration:.001ms !important}
-  }
-</style>
-</head>
-<body>
-<div class="wrap">
-  <header>
-    <span class="badge"><span class="dot"></span>本地 RAG · 1508 门课 · 335 个专业</span>
-    <h1>问问 UQ 的<em>课</em></h1>
-    <p class="sub">用大白话提问 —— 找相关课程、筛有无考试、查某门课是哪些专业的必修。</p>
-    <div class="searchcard">
-      <svg class="lead" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input id="q" placeholder="比如:跟机器学习相关、没有考试的课" autocomplete="off" enterkeyhint="search">
-      <button id="ask"><span class="ask-spin"></span><span class="ask-label">提问</span>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </button>
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          animation-duration: 0.001ms !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <span class="badge"><span class="dot"></span>本地 RAG · 1508 门课 · 335 个专业</span>
+        <h1>问问 UQ 的<em>课</em></h1>
+        <p class="sub">用大白话提问 —— 找相关课程、筛有无考试、查某门课是哪些专业的必修。</p>
+        <div class="searchcard">
+          <svg
+            class="lead"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+          >
+            <circle cx="11" cy="11" r="7" />
+            <path d="m21 21-4.3-4.3" />
+          </svg>
+          <input
+            id="q"
+            placeholder="比如:跟机器学习相关、没有考试的课"
+            autocomplete="off"
+            enterkeyhint="search"
+          />
+          <button id="ask">
+            <span class="ask-spin"></span><span class="ask-label">提问</span>
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
+          </button>
+        </div>
+        <div class="chips" id="chips"></div>
+      </header>
+      <main id="out" aria-live="polite"></main>
+      <footer>本地 qwen2.5-coder + bge-m3 · 数据为 S1 / St Lucia / In Person</footer>
     </div>
-    <div class="chips" id="chips"></div>
-  </header>
-  <main id="out" aria-live="polite"></main>
-  <footer>本地 qwen2.5-coder + bge-m3 · 数据为 S1 / St Lucia / In Person</footer>
-</div>
 
-<script>
-const EXAMPLES = [
-  "跟机器学习相关、没有考试的课",
-  "有哪些2学分的研究生课程",
-  "CSSE1001是哪些专业的必修",
-  "想了解网络安全有哪些课",
-  "Bachelor of Computer Science 要修哪些核心课",
-];
-const $ = s => document.querySelector(s);
-const out = $('#out'), input = $('#q'), btn = $('#ask');
-const esc = s => (s??'').toString().replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-// 把回答里的课程码包成 <code>
-const codeify = s => esc(s).replace(/\b([A-Z]{4}\d{4})\b/g, '<code>$1</code>');
+    <script>
+      const EXAMPLES = [
+        '跟机器学习相关、没有考试的课',
+        '有哪些2学分的研究生课程',
+        'CSSE1001是哪些专业的必修',
+        '想了解网络安全有哪些课',
+        'Bachelor of Computer Science 要修哪些核心课',
+      ]
+      const $ = (s) => document.querySelector(s)
+      const out = $('#out'),
+        input = $('#q'),
+        btn = $('#ask')
+      const esc = (s) =>
+        (s ?? '')
+          .toString()
+          .replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c])
+      // 把回答里的课程码包成 <code>
+      const codeify = (s) => esc(s).replace(/\b([A-Z]{4}\d{4})\b/g, '<code>$1</code>')
 
-const chips = $('#chips');
-EXAMPLES.forEach(t=>{
-  const b=document.createElement('button'); b.className='chip'; b.textContent=t;
-  b.onclick=()=>{ input.value=t; ask(); };
-  chips.appendChild(b);
-});
+      const chips = $('#chips')
+      EXAMPLES.forEach((t) => {
+        const b = document.createElement('button')
+        b.className = 'chip'
+        b.textContent = t
+        b.onclick = () => {
+          input.value = t
+          ask()
+        }
+        chips.appendChild(b)
+      })
 
-function skeleton(){
-  out.innerHTML = '<div class="skeleton"></div>'.repeat(4);
-}
-function levelZh(l){ return l==='Postgraduate Coursework'?'研究生':l==='Undergraduate'?'本科':(l||''); }
+      function skeleton() {
+        out.innerHTML = '<div class="skeleton"></div>'.repeat(4)
+      }
+      function levelZh(l) {
+        return l === 'Postgraduate Coursework' ? '研究生' : l === 'Undergraduate' ? '本科' : l || ''
+      }
 
-const DISPLAY_CAP = 40;
-function moreNote(total, cap, unit){
-  return total>cap ? `<div class="note" style="padding:20px 16px 4px">还有 ${total-cap} ${unit}未显示 —— 缩小条件能得到更精确的结果</div>` : '';
-}
-function cnNum(k){return ({2:'二',3:'三',4:'四',5:'五',6:'六',7:'七',8:'八',9:'九',10:'十'})[k]||k;}
-function collapseSlots(rows){
-  // 把 equivalence(二选一)组按 (course_list, equiv_group) 折成 1 个槽位;standalone 各自成槽。
-  // filter/semantic 的课无 equiv_group,等价于原样逐条返回。
-  const slots=[], groups={};
-  for(const c of rows){
-    const g = c.equiv_group || '';
-    if(!g){ slots.push({group:false, members:[c]}); continue; }
-    const key = (c.course_list||'')+' '+g;
-    let s = groups[key];
-    if(!s){ s={group:true, members:[]}; groups[key]=s; slots.push(s); }
-    s.members.push(c);
-  }
-  return slots;
-}
-function courseCard(c,i){
-  const tags=[];
-  if(c.level) tags.push(`<span class="tag">${esc(levelZh(c.level))}</span>`);
-  if(c.units!=null) tags.push(`<span class="tag">${esc(c.units)} 学分</span>`);
-  if(c.semester) tags.push(`<span class="tag">${esc(c.semester)}</span>`);
-  if(c.has_exam===true) tags.push('<span class="tag exam">有考试</span>');
-  if(c.has_exam===false) tags.push('<span class="tag">无考试</span>');
-  if(c.requirement_type==='core') tags.push('<span class="tag req">必修</span>');
-  if(c.requirement_type==='elective') tags.push('<span class="tag elec">选修</span>');
-  const sim = c.sim!=null ? `<span class="sim">${(c.sim*100).toFixed(0)}%</span>` : '';
-  return `<div class="course" style="animation-delay:${Math.min(i*45,400)}ms">
+      const DISPLAY_CAP = 40
+      function moreNote(total, cap, unit) {
+        return total > cap
+          ? `<div class="note" style="padding:20px 16px 4px">还有 ${total - cap} ${unit}未显示 —— 缩小条件能得到更精确的结果</div>`
+          : ''
+      }
+      function cnNum(k) {
+        return (
+          { 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十' }[k] ||
+          k
+        )
+      }
+      function collapseSlots(rows) {
+        // 把 equivalence(二选一)组按 (course_list, equiv_group) 折成 1 个槽位;standalone 各自成槽。
+        // filter/semantic 的课无 equiv_group,等价于原样逐条返回。
+        const slots = [],
+          groups = {}
+        for (const c of rows) {
+          const g = c.equiv_group || ''
+          if (!g) {
+            slots.push({ group: false, members: [c] })
+            continue
+          }
+          const key = (c.course_list || '') + ' ' + g
+          let s = groups[key]
+          if (!s) {
+            s = { group: true, members: [] }
+            groups[key] = s
+            slots.push(s)
+          }
+          s.members.push(c)
+        }
+        return slots
+      }
+      function courseCard(c, i) {
+        const tags = []
+        if (c.level) tags.push(`<span class="tag">${esc(levelZh(c.level))}</span>`)
+        if (c.units != null) tags.push(`<span class="tag">${esc(c.units)} 学分</span>`)
+        if (c.semester) tags.push(`<span class="tag">${esc(c.semester)}</span>`)
+        if (c.has_exam === true) tags.push('<span class="tag exam">有考试</span>')
+        if (c.has_exam === false) tags.push('<span class="tag">无考试</span>')
+        if (c.requirement_type === 'core') tags.push('<span class="tag req">必修</span>')
+        if (c.requirement_type === 'elective') tags.push('<span class="tag elec">选修</span>')
+        const sim = c.sim != null ? `<span class="sim">${(c.sim * 100).toFixed(0)}%</span>` : ''
+        return `<div class="course" style="animation-delay:${Math.min(i * 45, 400)}ms">
     <span class="code">${esc(c.code)}</span>
-    <div class="cmain"><div class="ctitle">${esc(c.title)||'<span style="color:#9aa69e">(本学期无开课信息)</span>'}</div>
-      ${tags.length?`<div class="ctags">${tags.join('')}</div>`:''}</div>
-    ${sim}</div>`;
-}
-function groupCard(s,i){
-  const choice = cnNum(s.members.length)+'选一';
-  const reqTag = s.members[0].requirement_type==='core'
-    ? `<span class="tag req2">${choice}核心</span>`
-    : `<span class="tag elec">选修·${choice}</span>`;
-  const lines = s.members.map(m=>
-    `<div class="gline"><span class="gcode">${esc(m.code)}</span><span>${esc(m.title)||''}</span></div>`
-  ).join('<div class="oror">或</div>');
-  return `<div class="course grp" style="animation-delay:${Math.min(i*45,400)}ms">
-    <div class="cmain">${lines}<div class="ctags">${reqTag}</div></div></div>`;
-}
-function renderCourses(rows){
-  if(!rows.length) return '<div class="note">没有命中课程。换个说法或放宽条件试试。</div>';
-  const slots = collapseSlots(rows);
-  const shown = slots.slice(0, DISPLAY_CAP);
-  return '<div class="grid">' + shown.map((s,i)=> s.group ? groupCard(s,i) : courseCard(s.members[0],i)).join('')
-    + '</div>' + moreNote(slots.length, DISPLAY_CAP, '门');
-}
+    <div class="cmain"><div class="ctitle">${esc(c.title) || '<span style="color:#9aa69e">(本学期无开课信息)</span>'}</div>
+      ${tags.length ? `<div class="ctags">${tags.join('')}</div>` : ''}</div>
+    ${sim}</div>`
+      }
+      function groupCard(s, i) {
+        const choice = cnNum(s.members.length) + '选一'
+        const reqTag =
+          s.members[0].requirement_type === 'core'
+            ? `<span class="tag req2">${choice}核心</span>`
+            : `<span class="tag elec">选修·${choice}</span>`
+        const lines = s.members
+          .map(
+            (m) =>
+              `<div class="gline"><span class="gcode">${esc(m.code)}</span><span>${esc(m.title) || ''}</span></div>`,
+          )
+          .join('<div class="oror">或</div>')
+        return `<div class="course grp" style="animation-delay:${Math.min(i * 45, 400)}ms">
+    <div class="cmain">${lines}<div class="ctags">${reqTag}</div></div></div>`
+      }
+      function renderCourses(rows) {
+        if (!rows.length) return '<div class="note">没有命中课程。换个说法或放宽条件试试。</div>'
+        const slots = collapseSlots(rows)
+        const shown = slots.slice(0, DISPLAY_CAP)
+        return (
+          '<div class="grid">' +
+          shown.map((s, i) => (s.group ? groupCard(s, i) : courseCard(s.members[0], i))).join('') +
+          '</div>' +
+          moreNote(slots.length, DISPLAY_CAP, '门')
+        )
+      }
 
-const PROG_CAP = 24;
-function renderPrograms(rows){
-  if(!rows.length) return '<div class="note">这门课不在任何已收录专业的课表里。</div>';
-  const shown = rows.slice(0, PROG_CAP);
-  return '<div class="grid">' + shown.map((p,i)=>{
-    const req = p.requirement_type==='core'
-      ? (p.equiv_group ? `<span class="tag req2">${cnNum(p.equiv_group.split('|').length)}选一核心</span>` : '<span class="tag req">必修</span>')
-      : '<span class="tag elec">选修</span>';
-    const via = p.via_plan ? ` · 经 ${esc(p.plan_subtype||p.via_plan)}` : '';
-    return `<div class="prog" style="animation-delay:${Math.min(i*40,400)}ms">
+      const PROG_CAP = 24
+      function renderPrograms(rows) {
+        if (!rows.length) return '<div class="note">这门课不在任何已收录专业的课表里。</div>'
+        const shown = rows.slice(0, PROG_CAP)
+        return (
+          '<div class="grid">' +
+          shown
+            .map((p, i) => {
+              const req =
+                p.requirement_type === 'core'
+                  ? p.equiv_group
+                    ? `<span class="tag req2">${cnNum(p.equiv_group.split('|').length)}选一核心</span>`
+                    : '<span class="tag req">必修</span>'
+                  : '<span class="tag elec">选修</span>'
+              const via = p.via_plan ? ` · 经 ${esc(p.plan_subtype || p.via_plan)}` : ''
+              return `<div class="prog" style="animation-delay:${Math.min(i * 40, 400)}ms">
       ${req}
       <div class="ptitle">${esc(p.title)}
-        <span class="sub2">${esc(p.course_list)||''}${via}</span></div>
-    </div>`;
-  }).join('') + '</div>' + moreNote(rows.length, PROG_CAP, '个专业');
-}
+        <span class="sub2">${esc(p.course_list) || ''}${via}</span></div>
+    </div>`
+            })
+            .join('') +
+          '</div>' +
+          moreNote(rows.length, PROG_CAP, '个专业')
+        )
+      }
 
-const MODE_ZH = {filter:'结构化筛选', semantic:'语义检索', hybrid:'混合检索', program:'专业关系', empty:'需更具体'};
+      const MODE_ZH = {
+        filter: '结构化筛选',
+        semantic: '语义检索',
+        hybrid: '混合检索',
+        program: '专业关系',
+        empty: '需更具体',
+      }
 
-function render(res){
-  const isProgList = res.mode==='program' && res.program_facts && Array.isArray(res.program_facts);
-  const hasCourses = res.courses && res.courses.length;
-  // program 模式但无列表(如 permit 许可查询)只展示回答卡
-  const answerOnly = res.mode==='empty' || (res.mode==='program' && !isProgList && !hasCourses);
-  let html = `<div class="meta"><span class="pill" data-m="${res.mode}">${MODE_ZH[res.mode]||res.mode}</span>`;
-  const hasList = isProgList || hasCourses;
-  const n = isProgList ? res.program_facts.length : (hasCourses ? collapseSlots(res.courses).length : 0);
-  if(res.mode!=='empty' && hasList) html += `<span class="count">${n} 条结果</span>`;
-  html += `</div>`;
+      function render(res) {
+        const isProgList =
+          res.mode === 'program' && res.program_facts && Array.isArray(res.program_facts)
+        const hasCourses = res.courses && res.courses.length
+        // program 模式但无列表(如 permit 许可查询)只展示回答卡
+        const answerOnly =
+          res.mode === 'empty' || (res.mode === 'program' && !isProgList && !hasCourses)
+        let html = `<div class="meta"><span class="pill" data-m="${res.mode}">${MODE_ZH[res.mode] || res.mode}</span>`
+        const hasList = isProgList || hasCourses
+        const n = isProgList
+          ? res.program_facts.length
+          : hasCourses
+            ? collapseSlots(res.courses).length
+            : 0
+        if (res.mode !== 'empty' && hasList) html += `<span class="count">${n} 条结果</span>`
+        html += `</div>`
 
-  if(res.answer){
-    html += `<div class="answer"><h3>回答</h3><div class="body">${codeify(res.answer)}</div></div>`;
-  }
-  if(isProgList) html += renderPrograms(res.program_facts);
-  else if(answerOnly) {/* 仅回答 */}
-  else html += renderCourses(res.courses);
-  out.innerHTML = html;
-}
+        if (res.answer) {
+          html += `<div class="answer"><h3>回答</h3><div class="body">${codeify(res.answer)}</div></div>`
+        }
+        if (isProgList) html += renderPrograms(res.program_facts)
+        else if (answerOnly) {
+          /* 仅回答 */
+        } else html += renderCourses(res.courses)
+        out.innerHTML = html
+      }
 
-async function ask(){
-  const q = input.value.trim();
-  if(!q || document.body.classList.contains('loading')) return;
-  document.body.classList.add('loading'); btn.disabled=true; skeleton();
-  try{
-    const r = await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({question:q, generate:true})});
-    const data = await r.json();
-    if(!r.ok || data.error){ out.innerHTML = `<div class="note err">出错了:${esc(data.error||r.status)}</div>`; }
-    else render(data);
-  }catch(e){
-    out.innerHTML = `<div class="note err">连不上服务:${esc(e.message)}<br><span style="color:#9aa69e">确认 server.py 正在运行</span></div>`;
-  }finally{
-    document.body.classList.remove('loading'); btn.disabled=false;
-  }
-}
-btn.onclick = ask;
-input.addEventListener('keydown', e=>{ if(e.key==='Enter') ask(); });
-input.focus();
-</script>
-</body>
+      async function ask() {
+        const q = input.value.trim()
+        if (!q || document.body.classList.contains('loading')) return
+        document.body.classList.add('loading')
+        btn.disabled = true
+        skeleton()
+        try {
+          const r = await fetch('/api/ask', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ question: q, generate: true }),
+          })
+          const data = await r.json()
+          if (!r.ok || data.error) {
+            out.innerHTML = `<div class="note err">出错了:${esc(data.error || r.status)}</div>`
+          } else render(data)
+        } catch (e) {
+          out.innerHTML = `<div class="note err">连不上服务:${esc(e.message)}<br><span style="color:#9aa69e">确认 server.py 正在运行</span></div>`
+        } finally {
+          document.body.classList.remove('loading')
+          btn.disabled = false
+        }
+      }
+      btn.onclick = ask
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') ask()
+      })
+      input.focus()
+    </script>
+  </body>
 </html>
