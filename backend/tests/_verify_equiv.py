@@ -1,6 +1,6 @@
 import json
 import psycopg
-from simulator import PlanSimulator, DSN
+from app.services.simulator import PlanSimulator, DSN
 
 
 def find_math_equiv_rule(rules):

@@ -16,7 +16,7 @@ import argparse
 
 import psycopg
 
-import qa
+from app.services import qa
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
 
@@ -139,8 +139,8 @@ def evaluate(conn, verbose=False):
 
 def regression_checks(conn) -> bool:
     """对抗审查修复的回归断言(逐条 assert,锁住已修 bug)。"""
-    import retrieval
-    import answer
+    from app.services import retrieval
+    from app.services import answer
     checks = []
 
     # 1. 枚举守卫:非 St Lucia 校区绝不返回全库
@@ -173,7 +173,7 @@ def regression_checks(conn) -> bool:
     checks.append(("CJK相邻课码抽取", bool(p) and p.get("course_code") == "CSSE1001",
                    f"code={p and p.get('course_code')}"))
 
-    import program_lookup
+    from app.services import program_lookup
 
     # 7. equivalence 折叠(绕过 planner,确定性):BCompSc 核心=12 槽/2 组,答案渲染「MATH1061 或 MATH1081」
     rows = program_lookup.courses_for_program(conn, "2559", requirement_type="core")
@@ -221,7 +221,7 @@ def regression_checks(conn) -> bool:
                    f"2561={program_lookup.has_plan_level_core(conn, '2561')} 2033={program_lookup.has_plan_level_core(conn, '2033')}"))
 
     # 12. C:确定性 program 强制(含双学位复数名)+ 不误伤普通课程查询
-    import planner
+    from app.services import planner
     f1 = planner._force_program_route("Bachelors of Mathematics / Computer Science 要修哪些核心课")
     f2 = planner._force_program_route("CSSE1001是哪些专业的必修")
     f3 = planner._force_program_route("CS有哪些课程没有考试")
@@ -273,7 +273,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
-    import retrieval
+    from app.services import retrieval
     with psycopg.connect(DSN) as conn:
         retrieval.ensure_fts_index(conn)        # 读路径不再建索引,启动时建一次
         evaluate(conn, args.verbose)

@@ -2,7 +2,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-import server
+from app import main as server
 
 
 @pytest.fixture(scope="module")
@@ -63,7 +63,7 @@ def test_schedule_smoke(client):
 
 
 def test_advise_guardrail_strips_invented_codes(client, monkeypatch):
-    import sim_advise
+    from app.services import sim_advise
     monkeypatch.setattr(sim_advise.llm, "call",
                         lambda *a, **k: "1. ZZZZ9999 编造课 —— 应被剥除\n2. 真实建议见下")
     d = client.post("/api/sim/advise",

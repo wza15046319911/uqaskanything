@@ -14,7 +14,7 @@ scheduler.py — 阶段三a:按学期排课(确定性状态无关函数,不调 L
 from __future__ import annotations
 import re
 
-from simulator import DEFAULT_UNITS
+from app.services.simulator import DEFAULT_UNITS
 
 
 def _level(code: str) -> int:

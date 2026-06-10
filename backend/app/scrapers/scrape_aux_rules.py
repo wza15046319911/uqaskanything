@@ -14,7 +14,7 @@ import argparse
 
 import psycopg
 
-import program_scraper as ps
+from app.scrapers import program_scraper as ps
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
 

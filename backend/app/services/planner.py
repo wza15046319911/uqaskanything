@@ -26,7 +26,7 @@ import argparse
 
 import psycopg
 
-import llm
+from app.services import llm
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
 

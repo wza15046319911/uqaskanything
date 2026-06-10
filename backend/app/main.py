@@ -15,11 +15,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-import qa
-import retrieval
-import simulator
-import scheduler
-import sim_advise
+from app.services import qa, retrieval, simulator, scheduler, sim_advise
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
 WEB = pathlib.Path(__file__).parent / "web"

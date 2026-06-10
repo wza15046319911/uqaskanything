@@ -12,7 +12,7 @@ answer.py — 阶段五:grounded 答案生成
   - LLM 只做语言活:把事实清单组织成自然中文回答
 
 用法:
-    from answer import answer
+    from app.services.answer import answer
     answer("有哪些机器学习的课", courses, program_facts=None) -> str
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import json
 
 import requests
 
-import llm
+from app.services import llm
 
 # 课程码模式:四个大写字母 + 四位数字(如 COMP4702),用于护栏越界校验
 _COURSE_CODE_RE = re.compile(r"\b[A-Z]{4}\d{4}\b")

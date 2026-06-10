@@ -1,5 +1,5 @@
 """排课回归:拓扑序 / cap / offering 钉死 / 环 / 零静默丢。无 DB 依赖。"""
-import scheduler
+from app.services import scheduler
 
 
 def _placed_index(res):

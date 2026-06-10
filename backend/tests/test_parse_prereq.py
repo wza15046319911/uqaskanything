@@ -1,5 +1,5 @@
 """先修解析回归:AND/OR 树 / 括号 / 缩写展开 / raw 兜底 / 空。无 DB 依赖。"""
-from scraper import parse_prereq
+from app.scrapers.scraper import parse_prereq
 
 
 def test_or_tree():
@@ -43,7 +43,7 @@ def test_empty_is_none():
 
 
 def test_satisfied_soft_gate():
-    from simulator import satisfied
+    from app.services.simulator import satisfied
     ok, why = satisfied(None, set())
     assert ok and why is None                       # 无先修 = 解锁
     ok, why = satisfied({"op": "raw", "unparsed": "x"}, set())

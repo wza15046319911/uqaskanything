@@ -14,10 +14,8 @@ LLM 只在这个固定候选集内排序和说明,永远不能引入集合外的
 from __future__ import annotations
 import re
 
-import answer
-import llm
-import retrieval
-from simulator import PlanSimulator
+from app.services import answer, llm, retrieval
+from app.services.simulator import PlanSimulator
 
 MAX_CANDIDATES = 8
 MIN_SIM = 0.45            # semantic_search 默认地板;召回 <3 时降到 0.30 重试一次
@@ -131,7 +129,7 @@ if __name__ == "__main__":
     import sys
 
     import psycopg
-    from simulator import DSN
+    from app.services.simulator import DSN
 
     goal = sys.argv[1] if len(sys.argv) > 1 else "我想做 AI 和机器学习"
     with psycopg.connect(DSN) as conn:

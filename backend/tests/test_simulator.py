@@ -4,8 +4,8 @@
 import psycopg
 import pytest
 
-import simulator
-from simulator import PlanSimulator, parse_rule_logic, _logic_refs
+from app.services import simulator
+from app.services.simulator import PlanSimulator, parse_rule_logic, _logic_refs
 
 
 @pytest.fixture(scope="module")

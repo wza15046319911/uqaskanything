@@ -20,10 +20,7 @@ import argparse
 
 import psycopg
 
-import planner
-import retrieval
-import program_lookup
-import answer
+from app.services import planner, retrieval, program_lookup, answer
 
 DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433/uq_courses")
 ANSWER_CAP = 20      # 喂给答案模型的最多课程数(过多无意义且拉长 prompt)
