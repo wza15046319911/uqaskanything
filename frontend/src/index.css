@@ -41,6 +41,27 @@ body {
   background: var(--mint-soft);
   color: var(--mint-ink);
 }
+.topnav {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  padding: 16px 20px 0;
+}
+.topnav a {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  text-decoration: none;
+  padding: 7px 15px;
+  border-radius: 999px;
+  transition: all 0.15s;
+}
+.topnav a:hover,
+.topnav a.active {
+  color: var(--mint-ink);
+  background: var(--mint-soft);
+}
+
 .wrap {
   max-width: 760px;
   margin: 0 auto;
