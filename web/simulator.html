@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UQ 选课模拟器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#f6f7f3; --paper:#ffffff; --ink:#1c2620; --ink-soft:#5a675f; --line:#e6e9e2;
+    --mint:#1f8a6d; --mint-soft:#e7f3ee; --mint-ink:#0f5740;
+    --amber:#c8743a; --amber-soft:#f7ebe1; --red:#b04a3a; --red-soft:#fbeae6;
+    --radius:16px;
+    --shadow:0 1px 2px rgba(28,38,32,.04), 0 10px 30px -12px rgba(28,38,32,.12);
+    --shadow-lift:0 1px 2px rgba(28,38,32,.05), 0 22px 48px -16px rgba(28,38,32,.20);
+  }
+  *{box-sizing:border-box}
+  body{margin:0; min-height:100dvh; background:var(--bg); color:var(--ink);
+    font-family:"Plus Jakarta Sans",-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.55; letter-spacing:-.005em; -webkit-font-smoothing:antialiased;
+    background-image:radial-gradient(120% 70% at 50% -10%, #ecf4ef 0%, rgba(236,244,239,0) 55%);}
+  ::selection{background:var(--mint-soft); color:var(--mint-ink)}
+  .wrap{max-width:1180px; margin:0 auto; padding:clamp(20px,4vw,40px) 20px 80px}
+
+  header{text-align:center; margin-bottom:22px}
+  .badge{display:inline-flex; align-items:center; gap:7px; font-size:12px; font-weight:600;
+    color:var(--mint-ink); background:var(--mint-soft); padding:5px 12px; border-radius:999px; margin-bottom:12px}
+  .badge .dot{width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 3px rgba(31,138,109,.18)}
+  h1{font-family:"Fraunces",Georgia,serif; font-weight:500; font-size:clamp(26px,5vw,40px);
+    line-height:1.05; margin:0 0 6px; letter-spacing:-.02em}
+  h1 em{font-style:italic; color:var(--mint)}
+  .sub{color:var(--ink-soft); font-size:14px; max-width:48ch; margin:0 auto; text-wrap:balance}
+
+  /* 程序搜索 */
+  .search{position:relative; max-width:460px; margin:18px auto 0}
+  .search input{width:100%; font:inherit; padding:12px 16px; border:1px solid var(--line);
+    border-radius:12px; background:var(--paper); color:var(--ink); box-shadow:var(--shadow); outline:none}
+  .search input:focus{border-color:#cfe0d8; box-shadow:var(--shadow-lift)}
+  .drop{position:absolute; left:0; right:0; top:calc(100% + 6px); background:var(--paper);
+    border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-lift); max-height:300px;
+    overflow:auto; z-index:30; display:none; text-align:left}
+  .drop.on{display:block}
+  .opt{padding:10px 14px; cursor:pointer; font-size:14px; border-bottom:1px solid #f1f3ee}
+  .opt:last-child{border-bottom:none}
+  .opt:hover,.opt.hi{background:var(--mint-soft); color:var(--mint-ink)}
+  .opt small{color:#9aa69e; margin-left:6px}
+  .curprog{margin-top:10px; font-size:13px; color:var(--ink-soft)}
+  .curprog b{color:var(--ink); font-weight:600}
+
+  /* 双栏 */
+  .layout{display:grid; grid-template-columns:minmax(0,0.95fr) minmax(0,1.25fr); gap:18px; margin-top:22px; align-items:start}
+  @media (max-width:900px){ .layout{grid-template-columns:1fr} }
+  .pane{background:var(--paper); border:1px solid var(--line); border-radius:var(--radius); box-shadow:var(--shadow); padding:16px; min-width:0}
+  /* 右栏时间表:课表很长时钉在视口里跟随滚动,内部自滚,消除右侧整片空白 */
+  @media (min-width:901px){
+    .layout>.pane:last-child{position:sticky; top:16px; align-self:start;
+      max-height:calc(100dvh - 32px); overflow:auto}
+  }
+  .panehead{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+  .panehead h2{margin:0; font-size:13px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--mint)}
+  .panehead .hint{margin-left:auto; font-size:12px; color:#9aa69e}
+
+  /* 左:规则段 + 课卡 */
+  .rulesec{margin-bottom:14px}
+  .rulehead{display:flex; align-items:baseline; gap:8px; margin-bottom:7px}
+  .rref{font-family:ui-monospace,Menlo,monospace; font-weight:700; font-size:11px; color:var(--mint-ink);
+    background:var(--mint-soft); padding:3px 7px; border-radius:7px}
+  .rtitle{font-weight:600; font-size:13.5px}
+  .runits{margin-left:auto; font-size:12px; color:var(--ink-soft); font-variant-numeric:tabular-nums; white-space:nowrap; flex:none}
+  .pbar{height:6px; border-radius:999px; background:#eef1ea; overflow:hidden; margin-bottom:8px}
+  .pbar>i{display:block; height:100%; background:var(--mint); border-radius:999px; transition:width .35s}
+  .pbar.over>i{background:var(--amber)}
+  .donebadge{color:var(--mint-ink); background:var(--mint-soft); font-weight:600; font-size:11px; padding:2px 7px; border-radius:6px}
+
+  .clist{display:flex; flex-direction:column; gap:7px}
+  .ccard{display:flex; align-items:center; gap:9px; background:var(--paper); border:1px solid var(--line);
+    border-radius:10px; padding:8px 10px; cursor:grab; transition:border-color .15s, transform .12s, box-shadow .15s}
+  .ccard:hover{border-color:#cfe0d8; transform:translateY(-1px); box-shadow:var(--shadow)}
+  .ccard:active{cursor:grabbing}
+  .ccard.locked{opacity:.6}
+  .ccard.dragging{opacity:.4}
+  .ccode{flex:none; font-family:ui-monospace,Menlo,monospace; font-weight:600; font-size:12px;
+    color:var(--mint-ink); background:var(--mint-soft); padding:4px 7px; border-radius:7px}
+  .ctitle{flex:1; min-width:0; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .coff{flex:none; font-size:10.5px; color:#8a8275; background:#f1f3ee; padding:2px 6px; border-radius:6px; font-weight:600}
+  .clock{flex:none; font-size:10.5px; color:#a8742f; background:#f7efe4; border:1px solid #ecdcc4; padding:2px 6px; border-radius:6px; font-weight:600}
+  .clock.unk{color:#7a6f5e; background:#f1efea; border-color:#e3ddd0}
+  .equiv{border-style:dashed}
+  .equiv .or{font-size:10px; color:#9aa69e; font-weight:700; padding:0 4px}
+
+  /* 方向(major) */
+  .major{display:flex; align-items:center; gap:9px; border:1px solid var(--line); border-radius:9px;
+    padding:8px 10px; cursor:pointer; margin-bottom:6px; transition:border-color .15s}
+  .major:hover{border-color:#cfe0d8}
+  .major.on{border-color:var(--mint); box-shadow:0 0 0 2px var(--mint-soft) inset}
+  .radio{width:15px;height:15px;border-radius:50%;border:2px solid #c3cdc6;flex:none;display:grid;place-items:center}
+  .major.on .radio{border-color:var(--mint)}
+  .major.on .radio::after{content:"";width:7px;height:7px;border-radius:50%;background:var(--mint)}
+
+  /* 右:时间表 */
+  .ttbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px}
+  .ttbar label{font-size:12.5px; color:var(--ink-soft)}
+  .ttbar input,.ttbar select{font:inherit; font-size:13px; padding:6px 9px; border:1px solid var(--line);
+    border-radius:9px; background:var(--paper)}
+  .ttbar input[type=number]{width:78px}
+  .btn{border:1px solid var(--line); background:var(--paper); color:var(--ink-soft); cursor:pointer;
+    font:inherit; font-size:12.5px; font-weight:600; padding:7px 12px; border-radius:9px; transition:all .15s}
+  .btn:hover{color:var(--mint-ink); border-color:#cfe0d8; background:var(--mint-soft)}
+  .btn.warn:hover{color:var(--amber); border-color:#edcdb0; background:var(--amber-soft)}
+  .overall{margin-left:auto; font-size:12.5px; color:var(--ink-soft); font-variant-numeric:tabular-nums}
+
+  .ttgrid{display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:10px}
+  .ttcell{border:1.5px dashed #dfe4dc; border-radius:12px; padding:9px 10px; min-height:96px; min-width:0; background:#fcfdfb;
+    transition:border-color .15s, background .15s}
+  .ttcell.over{border-color:var(--mint); background:var(--mint-soft); border-style:solid}
+  .ttcell.blocked{border-color:var(--red); background:var(--red-soft)}
+  .ttcell.capover{border-color:var(--amber)}
+  .ttcellhead{display:flex; align-items:baseline; gap:6px; margin-bottom:7px}
+  .ttlabel{font-weight:600; font-size:12.5px; color:var(--mint-ink)}
+  .ttu{margin-left:auto; font-size:11.5px; color:var(--ink-soft); font-variant-numeric:tabular-nums}
+  .ttu.bad{color:var(--amber); font-weight:600}
+  .ttempty{color:#b9c2bb; font-size:12px; font-style:italic; padding:6px 2px}
+
+  .chip{display:flex; align-items:center; gap:7px; background:var(--paper); border:1px solid var(--line);
+    border-radius:8px; padding:6px 8px; margin-bottom:5px; cursor:grab; font-size:12.5px}
+  .chip:active{cursor:grabbing}
+  .chip.dragging{opacity:.4}
+  .chip.bad{border-color:var(--red); background:var(--red-soft)}
+  .chip .ccode{font-size:11px; padding:3px 6px}
+  .chip .ct{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .chip .x{flex:none; cursor:pointer; color:#b9c2bb; font-size:15px; line-height:1; padding:0 2px}
+  .chip .x:hover{color:var(--red)}
+  .badwhy{font-size:11px; color:var(--red); margin:-2px 0 6px 4px}
+
+  .brtoggle{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:14px 0 6px; padding:8px 10px;
+    background:var(--paper); border:1px dashed var(--line); border-radius:10px; font-size:12.5px}
+  .brtoggle .lbl{color:var(--ink-soft); white-space:nowrap; flex:none}
+  .brpill{padding:5px 12px; border:1px solid var(--line); border-radius:999px; cursor:pointer; background:#fff;
+    white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis}
+  .brpill.on{background:var(--mint-soft); border-color:var(--mint-ink); color:var(--mint-ink); font-weight:600}
+  .childsec{margin-left:14px; border-left:2px solid var(--line); padding-left:10px}
+  .csearch input{width:100%; box-sizing:border-box; padding:7px 10px; border:1px solid var(--line);
+    border-radius:8px; font-size:13px; margin:6px 0 4px; background:#fff}
+  .unatt{margin:10px 0; padding:8px 10px; background:var(--amber-soft, #fdf3e0); border:1px solid #e8c77f;
+    border-radius:8px; font-size:12.5px; color:#8a6d1d}
+  .note{text-align:center; color:var(--ink-soft); padding:24px 12px; font-size:14px}
+  .note.err{color:var(--red)}
+  .toast{position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background:var(--ink); color:#fff;
+    padding:10px 16px; border-radius:10px; font-size:13px; box-shadow:var(--shadow-lift); z-index:50;
+    opacity:0; transition:opacity .2s; pointer-events:none}
+  .toast.on{opacity:.96}
+  footer{text-align:center; color:#9aa69e; font-size:12px; margin-top:36px}
+  footer a{color:var(--mint-ink)}
+  @media (prefers-reduced-motion: reduce){ *{animation-duration:.001ms!important; transition-duration:.001ms!important} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <span class="badge"><span class="dot"></span>选课模拟器 · 拖课进时间表</span>
+    <h1>排你的<em>修读计划</em></h1>
+    <p class="sub">搜专业 → 左边是能修的课,拖进右边的学期格。开课学期硬拦,先修/学分/互斥软提示。</p>
+    <div class="search">
+      <input id="psearch" placeholder="搜专业,如 Computer Science…" autocomplete="off">
+      <div class="drop" id="pdrop"></div>
+      <div class="curprog" id="curprog"></div>
+    </div>
+  </header>
+
+  <div class="layout" id="layout" style="display:none">
+    <section class="pane">
+      <div class="panehead"><h2>能修的课</h2><span class="hint" id="lefthint">拖到右侧 / 点一下自动放</span></div>
+      <div class="csearch" style="display:flex;gap:6px;align-items:center">
+        <input id="goal" placeholder="AI 建议:说说目标,如「想做 AI 安全」…" autocomplete="off" style="flex:1">
+        <button class="btn" id="advise">建议</button>
+      </div>
+      <div id="adviseout"></div>
+      <div id="left"></div>
+    </section>
+    <section class="pane">
+      <div class="panehead"><h2>时间表</h2><span class="overall" id="overall"></span></div>
+      <div class="ttbar">
+        <label>起始年 <input type="number" id="startyear" value="2026" min="2020" max="2035"></label>
+        <label>年数 <input type="number" id="years" value="3" min="1" max="6"></label>
+        <label>每学期上限 <input type="number" id="cap" value="8" min="2" max="16" step="2">学分</label>
+        <button class="btn" id="auto">一键自动排</button>
+        <button class="btn warn" id="clear">清空</button>
+      </div>
+      <div class="ttgrid" id="ttgrid"></div>
+    </section>
+  </div>
+  <div id="bootnote" class="note">先在上方搜一个专业开始。</div>
+
+  <footer>本地引擎 <code>simulator.py</code> + <code>scheduler.py</code> · 数据 S1 / St Lucia · <a href="/">课程问答</a></footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const LS='uq_sim_v2';
+const $=s=>document.querySelector(s);
+const esc=s=>(s??'').toString().replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const semKind=i=> i%2===0?'S1':'S2';
+
+let PROGRAMS=[];           // 全部专业(搜索用)
+let DATA=null;             // 最近一次 /api/sim/state 响应
+let dragCode=null;         // 正在拖的课程码
+
+let state = load() || {program_id:'2559', chosen_plans:[], branch:[], placement:{}, start_year:2026, years:3, units_cap:8};
+if(!state.branch) state.branch=[];   // 旧 localStorage 兼容
+function load(){ try{return JSON.parse(localStorage.getItem(LS));}catch(e){return null;} }
+function save(){ localStorage.setItem(LS, JSON.stringify(state)); }
+function nSem(){ return state.years*2; }
+
+let toastT;
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('on');
+  clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('on'),1800); }
+
+/* ---------- 专业搜索 ---------- */
+async function loadPrograms(){
+  try{ PROGRAMS = await (await fetch('/api/sim/programs')).json(); }catch(e){ PROGRAMS=[]; }
+}
+function renderDrop(q){
+  const dd=$('#pdrop');
+  if(!q){ dd.classList.remove('on'); dd.innerHTML=''; return; }
+  const ql=q.toLowerCase();
+  const hits=PROGRAMS.filter(p=>p.title.toLowerCase().includes(ql)||p.program_id.includes(ql)).slice(0,30);
+  if(!hits.length){ dd.innerHTML='<div class="opt" style="color:#9aa69e">无匹配</div>'; dd.classList.add('on'); return; }
+  dd.innerHTML=hits.map((p,i)=>`<div class="opt${i===0?' hi':''}" data-id="${esc(p.program_id)}">${esc(p.title)}<small>${esc(p.program_id)} · ${p.total_units}u</small></div>`).join('');
+  dd.classList.add('on');
+}
+function pickProgram(id){
+  const p=PROGRAMS.find(x=>x.program_id===id); if(!p) return;
+  state={program_id:id, chosen_plans:[], branch:[], placement:{}, start_year:state.start_year, years:state.years, units_cap:state.units_cap};
+  save(); $('#psearch').value=''; $('#pdrop').classList.remove('on');
+  $('#curprog').innerHTML=`当前:<b>${esc(p.title)}</b> <small>(${esc(id)} · ${p.total_units}学分)</small>`;
+  refresh();
+}
+$('#psearch').addEventListener('input', e=>renderDrop(e.target.value.trim()));
+$('#psearch').addEventListener('keydown', e=>{
+  const dd=$('#pdrop'); const opts=[...dd.querySelectorAll('.opt[data-id]')]; if(!opts.length) return;
+  let hi=opts.findIndex(o=>o.classList.contains('hi'));
+  if(e.key==='ArrowDown'){ e.preventDefault(); opts[hi]?.classList.remove('hi'); opts[Math.min(hi+1,opts.length-1)].classList.add('hi'); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); opts[hi]?.classList.remove('hi'); opts[Math.max(hi-1,0)].classList.add('hi'); }
+  else if(e.key==='Enter'){ e.preventDefault(); const sel=dd.querySelector('.opt.hi')||opts[0]; if(sel) pickProgram(sel.dataset.id); }
+  else if(e.key==='Escape'){ dd.classList.remove('on'); }
+});
+$('#pdrop').addEventListener('click', e=>{ const o=e.target.closest('.opt[data-id]'); if(o) pickProgram(o.dataset.id); });
+document.addEventListener('click', e=>{ if(!e.target.closest('.search')) $('#pdrop').classList.remove('on'); });
+
+/* ---------- 与后端同步 ---------- */
+async function refresh(){
+  $('#bootnote').style.display='none'; $('#layout').style.display='grid';
+  $('#startyear').value=state.start_year; $('#years').value=state.years; $('#cap').value=state.units_cap;
+  const body={program_id:state.program_id, selected:Object.keys(state.placement),
+    chosen_plans:state.chosen_plans, branch:state.branch, placement:state.placement,
+    units_cap:state.units_cap, n_semesters:nSem()};
+  try{
+    const r=await fetch('/api/sim/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const d=await r.json();
+    if(!r.ok||d.error){ $('#left').innerHTML=`<div class="note err">出错:${esc(d.error||r.status)}</div>`; return; }
+    DATA=d; render();
+  }catch(e){ $('#left').innerHTML=`<div class="note err">连不上服务:${esc(e.message)}</div>`; }
+}
+function meta(c){ return (DATA.courses&&DATA.courses[c])||{code:c,title:null}; }
+function offered(c){ return (DATA.offerings&&DATA.offerings[c])||null; }   // null=未知
+function ctitle(c){ const m=meta(c); return m.title?esc(m.title):'<span style="color:#9aa69e">(无开课信息)</span>'; }
+
+/* ---------- 左:能修的课 ---------- */
+function offTag(c){ const o=offered(c); return o?`<span class="coff">${o.join('·')}</span>`:''; }
+function lockTag(c){ const l=DATA.locks&&DATA.locks[c]; if(!l) return '';
+  if(l.state==='unknown') return '<span class="clock unk">先修待核</span>';
+  return `<span class="clock" title="${esc(l.reason||'')}">需先修</span>`; }
+function leftCard(c, equiv){
+  const lk=DATA.locks&&DATA.locks[c]&&DATA.locks[c].state==='locked'?' locked':'';
+  return `<div class="ccard${lk}" draggable="true" data-code="${esc(c)}">
+    <span class="ccode">${esc(c)}</span><span class="ctitle">${ctitle(c)}</span>
+    ${offTag(c)}${lockTag(c)}</div>`;
+}
+function equivCard(opts){
+  return `<div class="ccard equiv" draggable="false">
+    <div style="flex:1;min-width:0">${opts.map((c,i)=>
+      `<div style="display:flex;align-items:center;gap:8px;min-width:0;${i?'margin-top:5px':''}">
+        <div draggable="true" data-code="${esc(c)}" style="display:flex;align-items:center;gap:8px;flex:1;min-width:0;cursor:grab">
+        <span class="ccode">${esc(c)}</span><span class="ctitle">${ctitle(c)}</span>${offTag(c)}${lockTag(c)}</div></div>`
+      ).join('<div class="or">— 二选一 —</div>')}</div></div>`;
+}
+let csQuery={}, csResults={};   // 开放规则(E/F)搜索框的查询与结果缓存(重渲染后恢复)
+function resCard(x){
+  const off=x.offerings&&x.offerings.length?`<span class="coff">${x.offerings.join('·')}</span>`:'';
+  return `<div class="ccard" draggable="true" data-code="${esc(x.code)}">
+    <span class="ccode">${esc(x.code)}</span><span class="ctitle">${x.title?esc(x.title):'(无信息)'}</span>${off}</div>`;
+}
+function searchSection(rule){
+  const picked=(DATA.selected_by_rule&&DATA.selected_by_rule[rule.ref])||[];
+  const ph=rule.open_scope==='program'?'搜程序课表内的课(码/课名)…':'搜全校任意课程(码/课名)…';
+  return `${picked.length?`<div class="clist">${picked.map(c=>leftCard(c)).join('')}</div>`:''}
+    <div class="csearch"><input data-csearch="${esc(rule.ref)}" placeholder="${ph}" autocomplete="off"
+      value="${esc(csQuery[rule.ref]||'')}">
+    <div class="clist" data-cres="${esc(rule.ref)}">${(csResults[rule.ref]||[]).map(resCard).join('')}</div></div>`;
+}
+function renderLeft(){
+  const rules=DATA.rules, abr=DATA.available_by_rule||{};
+  const ov=DATA.overall||{};
+  const groups=ov.branch_groups||[], chosenBr=ov.branch||{};
+  const groupOf={}; groups.forEach(g=>g.forEach(r=>groupOf[r]=g));
+  const toggled=new Set();
+  let html='';
+  if((ov.unattributed||[]).length){
+    html+=`<div class="unatt">⚠ ${ov.unattributed.length} 门课未计入任何规则(超出上限或不在课程库):${ov.unattributed.map(esc).join('、')}</div>`;
+  }
+  for(const rule of rules){
+    const g=groupOf[rule.ref];
+    if(g){
+      const key=g.join('|');
+      if(!toggled.has(key)){
+        toggled.add(key);
+        const cur=chosenBr[key];
+        html+=`<div class="brtoggle"><span class="lbl">二选一路径:</span>${g.map(ref=>{
+          const r2=rules.find(x=>x.ref===ref)||{title:ref};
+          return `<span class="brpill${ref===cur?' on':''}" data-branch="${esc(ref)}">${esc(ref)} · ${esc(r2.title)}</span>`;
+        }).join('')}</div>`;
+      }
+    }
+    if(rule.inactive) continue;            // 未选中的分支(含其子规则)不渲染
+    const slots=abr[rule.ref]||[];
+    const isMajor=!!rule.plan_options;
+    const typeTag=rule.select_type==='all'?'必修':'选修';
+    // 区间选修(有 units_max):显示 min–max,进度条按上限填;固定要求:显示 counted/required
+    const hasMax=rule.units_max!=null, cnt=rule.units_counted, mn=rule.units_required, mx=rule.units_max;
+    let label, pct, tail='';
+    if(!hasMax){
+      label=`${cnt}/${mn}`; pct=mn>0?Math.min(cnt/mn*100,100):(cnt>0?100:0);
+      if(rule.done) tail=' ✓';
+    } else {
+      label = mn>0 ? `${cnt} · 需 ${mn}–${mx}` : `${cnt} · 可选 0–${mx}`;
+      pct = mx>0?Math.min(cnt/mx*100,100):0;
+      if(rule.over_max) tail=' ·超上限'; else if(mn>0 && cnt>=mn) tail=' ·达下限';
+    }
+    html+=`<div class="rulesec${rule.child_of?' childsec':''}"><div class="rulehead"><span class="rref">${esc(rule.ref)}</span>
+      <span class="rtitle">${esc(rule.title)}</span>
+      <span class="runits">${typeTag} ${label}${tail}</span></div>
+      <div class="pbar${rule.over_max?' over':''}"><i style="width:${pct}%"></i></div>`;
+    if(isMajor){
+      const chosen=new Set(rule.chosen_plans||[]);
+      html+=rule.plan_options.map(po=>`<div class="major${chosen.has(po.code)?' on':''}" data-plan="${esc(po.code)}">
+        <span class="radio"></span><span style="flex:1">${esc(po.name)}</span>
+        <span class="runits">${po.units_min}u</span></div>`).join('');
+    }
+    if(slots.length){
+      html+=`<div class="clist">${slots.map(s=>s.kind==='equiv'?equivCard(s.options):leftCard(s.code)).join('')}</div>`;
+    } else if(rule.open){
+      html+=searchSection(rule);           // 开放规则(E=程序课表内任选 / F=任意课):搜索选课
+    } else if(rule.children_refs){
+      html+=`<div class="ttempty">由 ${rule.children_refs.map(esc).join(' + ')} 组成,总量 ${mn}–${mx} 学分</div>`;
+    } else if(!isMajor){
+      html+=`<div class="ttempty">${hasMax&&mx>0?`可修任意课程,最多 ${mx} 学分,本表不逐一枚举`:(rule.done?'已满足':'可修任意课程,不逐一枚举')}</div>`;
+    }
+    html+='</div>';
+  }
+  $('#left').innerHTML=html||'<div class="note">没有可选课程。</div>';
+}
+
+/* ---------- 右:时间表 ---------- */
+function renderGrid(){
+  const n=nSem(), val=DATA.validation||{by_course:{},semester_units:[],cap_over:[],cap:state.units_cap};
+  const capOver=new Set(val.cap_over||[]);
+  const placedBy={}; for(const [c,i] of Object.entries(state.placement)) (placedBy[i]=placedBy[i]||[]).push(c);
+  let cells='';
+  for(let i=0;i<n;i++){
+    const year=state.start_year+Math.floor(i/2), kind=semKind(i);
+    const u=(val.semester_units&&val.semester_units[i])||0;
+    const over=capOver.has(i);
+    const chips=(placedBy[i]||[]).map(c=>{
+      const bad=val.by_course&&val.by_course[c];
+      const why=bad?bad.map(b=>b.msg).join('；'):'';
+      return `<div class="chip${bad?' bad':''}" draggable="true" data-code="${esc(c)}">
+        <span class="ccode">${esc(c)}</span><span class="ct">${ctitle(c)}</span>
+        <span class="x" data-remove="${esc(c)}">×</span></div>${bad?`<div class="badwhy">${esc(why)}</div>`:''}`;
+    }).join('');
+    cells+=`<div class="ttcell${over?' capover':''}" data-cell="${i}">
+      <div class="ttcellhead"><span class="ttlabel">${kind} ${year}</span>
+        <span class="ttu${over?' bad':''}">${u}/${val.cap}u</span></div>
+      ${chips||'<div class="ttempty">拖课到这里</div>'}</div>`;
+  }
+  $('#ttgrid').innerHTML=cells;
+}
+function renderOverall(){
+  const codes=Object.keys(state.placement);
+  const ov=DATA.overall||{};
+  // 总学分用引擎 overall(子规则不重复计、失活分支不计、E/F 归属已含)
+  const u=ov.total_counted!=null?ov.total_counted:DATA.rules.reduce((a,r)=>a+(r.units_counted||0),0);
+  const nbad=Object.keys((DATA.validation||{by_course:{}}).by_course).length;
+  const caps=(DATA.level_caps||[]).map(c=>{   // 数据驱动:程序级 + 选修范围两种 scope
+    const t=`${c.scope==='electives'?'选修':''}L${c.level} ${c.used}/${c.max_units}`;
+    return c.over?`<span style="color:var(--red)" title="${esc(c.text)}">${t}⚠</span>`:t;
+  }).join(' · ');
+  $('#overall').innerHTML=`已排 ${codes.length} 门 · ${u}/${DATA.total_units}学分`
+    +(ov.formula_satisfied?' · <span style="color:var(--mint-ink)">学位要求满足✓</span>':'')
+    +(caps?` · ${caps}`:'')
+    +((ov.unattributed||[]).length?` · <span style="color:#8a6d1d">${ov.unattributed.length} 门未计入</span>`:'')
+    +(nbad?` · <span style="color:var(--red)">${nbad} 处冲突</span>`:'');
+}
+function render(){ renderLeft(); renderGrid(); renderOverall(); }
+
+/* ---------- 拖拽 ---------- */
+function place(code, cell){ state.placement[code]=cell; save(); refresh(); }
+function unplace(code){ delete state.placement[code]; save(); refresh(); }
+
+document.addEventListener('dragstart', e=>{
+  const el=e.target.closest('[data-code]'); if(!el){ return; }
+  dragCode=el.dataset.code; el.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', dragCode);
+});
+document.addEventListener('dragend', e=>{ const el=e.target.closest('[data-code]'); el&&el.classList.remove('dragging'); dragCode=null;
+  document.querySelectorAll('.ttcell.over,.ttcell.blocked').forEach(c=>c.classList.remove('over','blocked')); });
+
+$('#ttgrid').addEventListener('dragover', e=>{
+  const cell=e.target.closest('.ttcell'); if(!cell||!dragCode) return;
+  const i=+cell.dataset.cell, o=offered(dragCode);
+  const blocked = o && !o.includes(semKind(i));      // 开课硬拦:已知不在该学期开
+  document.querySelectorAll('.ttcell.over,.ttcell.blocked').forEach(c=>{ if(c!==cell) c.classList.remove('over','blocked'); });
+  if(blocked){ cell.classList.add('blocked'); cell.classList.remove('over'); /* 不 preventDefault -> 禁止落 */ }
+  else { e.preventDefault(); cell.classList.add('over'); cell.classList.remove('blocked'); }
+});
+$('#ttgrid').addEventListener('dragleave', e=>{ const cell=e.target.closest('.ttcell'); if(cell&&!cell.contains(e.relatedTarget)) cell.classList.remove('over','blocked'); });
+$('#ttgrid').addEventListener('drop', e=>{
+  const cell=e.target.closest('.ttcell'); if(!cell) return; e.preventDefault();
+  const code=dragCode||e.dataTransfer.getData('text/plain'); if(!code) return;
+  const i=+cell.dataset.cell, o=offered(code);
+  if(o && !o.includes(semKind(i))){ toast(`${code} 不在 ${semKind(i)} 开课(开:${o.join('/')})`); return; }
+  place(code, i);
+});
+/* 点左侧课卡 = 自动放到最早可开学期;分支药丸 = 切路径 */
+$('#left').addEventListener('click', e=>{
+  const pill=e.target.closest('[data-branch]'); if(pill){
+    state.branch=[pill.dataset.branch]; save(); refresh(); return; }
+  const plan=e.target.closest('[data-plan]'); if(plan){ const p=plan.dataset.plan;
+    state.chosen_plans = state.chosen_plans.includes(p)?[]:[p]; save(); refresh(); return; }
+  const card=e.target.closest('[data-code]'); if(!card) return;
+  autoPlace(card.dataset.code);
+});
+function autoPlace(code){
+  const o=offered(code), n=nSem();
+  let target=-1;
+  for(let i=0;i<n;i++){ if(!o||o.includes(semKind(i))){ target=i; break; } }
+  if(target<0) target=0;
+  place(code, target);
+}
+/* AI 建议卡:点选同样自动放(在 #left 之外,单独绑) */
+$('#adviseout').addEventListener('click', e=>{
+  const card=e.target.closest('[data-code]'); if(card) autoPlace(card.dataset.code);
+});
+/* 时间表里:× 移除;拖 chip 到别的格 = 移动(drop 已处理) */
+$('#ttgrid').addEventListener('click', e=>{ const x=e.target.closest('[data-remove]'); if(x) unplace(x.dataset.remove); });
+
+/* 开放规则(E/F)的课程搜索:防抖 250ms;结果 offerings 并入 DATA 供拖拽硬拦 */
+let csTimer;
+$('#left').addEventListener('input', e=>{
+  const inp=e.target.closest('[data-csearch]'); if(!inp) return;
+  const ref=inp.dataset.csearch, q=inp.value.trim();
+  csQuery[ref]=q;
+  clearTimeout(csTimer);
+  const box=document.querySelector(`[data-cres="${ref}"]`);
+  if(q.length<2){ csResults[ref]=[]; if(box) box.innerHTML=''; return; }
+  csTimer=setTimeout(async()=>{
+    const rule=(DATA.rules||[]).find(r=>r.ref===ref);
+    const params=new URLSearchParams({q});
+    if(rule&&rule.open_scope==='program') params.set('in_program', state.program_id);
+    try{
+      const r=await fetch('/api/sim/courses?'+params);
+      const rows=await r.json();
+      if(!r.ok||rows.error){ toast('搜索出错:'+(rows.error||r.status)); return; }
+      csResults[ref]=rows;
+      DATA.offerings=DATA.offerings||{};
+      rows.forEach(x=>{ if(x.offerings&&x.offerings.length) DATA.offerings[x.code]=x.offerings; });
+      const b=document.querySelector(`[data-cres="${ref}"]`);
+      if(b) b.innerHTML=rows.length?rows.map(resCard).join(''):'<div class="ttempty">无匹配</div>';
+    }catch(err){ toast('搜索失败:'+err.message); }
+  }, 250);
+});
+
+/* ---------- AI 建议 ---------- */
+$('#advise').onclick=async ()=>{
+  const goal=$('#goal').value.trim();
+  if(!goal){ toast('先写一句目标'); return; }
+  const btn=$('#advise'), out=$('#adviseout');
+  btn.disabled=true; out.innerHTML='<div class="ttempty">AI 思考中…(本地模型,约 30–60 秒)</div>';
+  try{
+    const r=await fetch('/api/sim/advise',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({program_id:state.program_id, selected:Object.keys(state.placement),
+        chosen_plans:state.chosen_plans, branch:state.branch, goal})});
+    const d=await r.json();
+    if(!r.ok||d.error){ out.innerHTML=`<div class="note err">建议出错:${esc(d.error||r.status)}</div>`; return; }
+    DATA.offerings=DATA.offerings||{};
+    Object.entries(d.offerings||{}).forEach(([c,o])=>DATA.offerings[c]=o);
+    const cards=(d.candidates||[]).map(c=>resCard({...c, offerings:(d.offerings||{})[c.code]||[]})).join('');
+    out.innerHTML=
+      (d.advice?`<div class="unatt" style="background:#eef6ef;border-color:var(--mint-ink);color:var(--ink);white-space:pre-line">${esc(d.advice)}</div>`:
+        `<div class="ttempty">${esc(d.note||'没有候选')}</div>`)
+      +(cards?`<div class="clist">${cards}</div>`:'')
+      +(d.unreachable_count?`<div class="ttempty">另有 ${d.unreachable_count} 门可选课无本学期数据,已排除:${d.unreachable_codes.map(esc).join('、')}</div>`:'');
+  }catch(e){ out.innerHTML=`<div class="note err">连不上服务:${esc(e.message)}</div>`; }
+  finally{ btn.disabled=false; }
+};
+$('#goal').addEventListener('keydown', e=>{ if(e.key==='Enter') $('#advise').click(); });
+
+/* ---------- 时间表参数 + 按钮 ---------- */
+$('#startyear').addEventListener('change', e=>{ state.start_year=+e.target.value||2026; save(); render(); });
+$('#years').addEventListener('change', e=>{ state.years=Math.max(1,Math.min(6,+e.target.value||3)); save(); refresh(); });
+$('#cap').addEventListener('change', e=>{ state.units_cap=+e.target.value||8; save(); refresh(); });
+$('#clear').onclick=()=>{ state.placement={}; save(); refresh(); };
+$('#auto').onclick=async ()=>{
+  const sel=Object.keys(state.placement);
+  if(!sel.length){ toast('先把课拖进来或点进来,再自动排'); return; }
+  $('#auto').disabled=true;
+  try{
+    const r=await fetch('/api/sim/schedule',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({program_id:state.program_id, selected:sel, chosen_plans:state.chosen_plans, units_cap:state.units_cap})});
+    const d=await r.json();
+    if(!r.ok||d.error){ toast('排课出错:'+(d.error||r.status)); return; }
+    const np={}; d.semesters.forEach((s,i)=>s.courses.forEach(x=>{ np[x.code]=i; }));
+    d.unplaced.forEach(u=>{ if(!(u.code in np)) np[u.code]=0; });   // 放不下的先扔 Y1,标红待调
+    state.placement=np;
+    if(d.semesters.length>nSem()){ state.years=Math.ceil(d.semesters.length/2); }
+    save(); refresh();
+    if(d.unplaced.length) toast(`${d.unplaced.length} 门排不下(学期/上限不够),已置 Y1 待调`);
+  }finally{ $('#auto').disabled=false; }
+};
+
+/* ---------- 启动 ---------- */
+(async()=>{
+  await loadPrograms();
+  const p=PROGRAMS.find(x=>x.program_id===state.program_id);
+  if(p) $('#curprog').innerHTML=`当前:<b>${esc(p.title)}</b> <small>(${esc(p.program_id)} · ${p.total_units}学分)</small>`;
+  refresh();
+})();
+</script>
+</body>
+</html>

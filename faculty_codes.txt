@@ -1,0 +1,16 @@
+# UQ programs-courses faculty 代码(已用 program_scraper.list_programs 实测验证)
+# URL 模板: https://programs-courses.uq.edu.au/search.html?keywords=&searchType=program&CourseParameters%5Bsemester%5D=2026%3A1&year=2026&faculty=<code>
+# 验证年/学期: 2026:1 (不含 archived)
+# 实测日期: 2026-06-10
+#
+# code   programs   faculty 全称
+eait     84         Engineering, Architecture & Information Technology
+hss      91         Humanities, Arts & Social Sciences (HASS;URL 码是 hss 不是 hass)
+hmbs     90         Health, Medicine and Behavioural Sciences
+bel      82         Business, Economics & Law
+sci      97         Science
+#
+# 旧码 med = 10:全部是 hmbs 的子集(且与每个 faculty 都重叠的联合学位壳),抓取时可忽略,用 hmbs 覆盖。
+#
+# 5 个 faculty 去重后 program 总数 = 349(含跨院联合学位,故 < 84+91+90+82+97=444)。
+# 无效码(返回 0):hass, health, business, bus, law, economics, commerce, science, sci 之外的 art/arts/humanities/medicine/nursing/pharmacy/eng/it 等。

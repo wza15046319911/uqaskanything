@@ -1,0 +1,20 @@
+# 密钥/本地配置:绝不提交
+.env
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 备份/临时
+*.bak
+
+# 前端
+node_modules/
+dist/
+
+# 系统
+.DS_Store
+
+# Claude 运行时锁
+.claude/scheduled_tasks.lock
