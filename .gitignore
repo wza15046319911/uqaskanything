@@ -12,9 +12,10 @@ __pycache__/
 # 前端
 node_modules/
 dist/
+*.tsbuildinfo
 
 # 系统
 .DS_Store
 
-# Claude 运行时锁
-.claude/scheduled_tasks.lock
+# Claude 运行时锁(任意层级)
+**/scheduled_tasks.lock
