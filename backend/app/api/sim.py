@@ -24,6 +24,7 @@ class SimState(BaseModel):
     placement: dict[str, int] = {}     # code -> 学期格索引(0=Y1S1, 1=Y1S2, ...);时间表用
     units_cap: float = 8.0
     n_semesters: int = 6
+    start_sem: str = "S1"              # 入学学期:"S1" 或 "S2"(决定格 0 是 S1 还是 S2)
 
 
 def _offerings(conn, codes) -> dict:
@@ -42,10 +43,11 @@ def _offerings(conn, codes) -> dict:
     return {c: sorted(s) for c, s in off.items()}
 
 
-def _validate(sim, placement, offerings, inc_map, n_sem, cap) -> dict:
+def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1") -> dict:
     """时间表落位校验(确定性):开课学期 / 先修按更早学期 / 学分上限 / 互斥。"""
     um = sim.units_map()
-    kind = lambda i: "S1" if i % 2 == 0 else "S2"
+    _other = "S2" if start_sem == "S1" else "S1"
+    kind = lambda i: start_sem if i % 2 == 0 else _other
     sem_units = [0.0] * n_sem
     placed = {c: i for c, i in placement.items() if isinstance(i, int)}
     by_course: dict[str, list] = {}
@@ -157,7 +159,7 @@ def sim_state(body: SimState):
                     if inc:
                         inc_map.setdefault(code, set()).update(inc)
             validation = _validate(sim, body.placement, offerings, inc_map,
-                                   body.n_semesters, body.units_cap)
+                                   body.n_semesters, body.units_cap, body.start_sem)
             return {
                 "program_id": body.program_id,
                 "title": sim.title,
@@ -212,6 +214,7 @@ class SimSchedule(BaseModel):
     selected: list[str] = []
     chosen_plans: list[str] = []
     units_cap: float = 8.0
+    start_sem: str = "S1"
 
 
 def _prereq_codes(tree) -> set[str]:
@@ -259,7 +262,7 @@ def sim_schedule(body: SimSchedule):
             result = scheduler.schedule(
                 body.selected, prereq_map=prereq_map, units_map=units,
                 incompatible_map=inc_map, offering_map=offering_map or None,
-                units_cap=body.units_cap)
+                units_cap=body.units_cap, start_sem=body.start_sem)
             result["courses"] = _hydrate(conn, set(body.selected))
             return result
     except Exception as e:

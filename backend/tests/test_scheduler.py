@@ -60,3 +60,17 @@ def test_incompatible_warns():
         ["AAAA1001", "BBBB1001"],
         incompatible_map={"AAAA1001": {"BBBB1001"}})
     assert any("互斥" in w for w in res["warnings"])
+
+
+def test_intake_s2_flips_offering():
+    # S2 入学:格 0=S2,故 S2-only 课落偶数格、S1-only 落奇数格(与 S1 入学相反)
+    res = scheduler.schedule(
+        ["AAAA1001", "BBBB1001"],
+        offering_map={"AAAA1001": {"S2"}, "BBBB1001": {"S1"}},
+        start_sem="S2")
+    idx = _placed_index(res)
+    assert idx["AAAA1001"] % 2 == 0, "S2 入学:S2-only 课落偶数格(格0=S2)"
+    assert idx["BBBB1001"] % 2 == 1, "S1-only 课落奇数格"
+    for s in res["semesters"]:
+        for x in s["courses"]:
+            assert x["verified_offering"]

@@ -25,16 +25,17 @@ def _level(code: str) -> int:
 
 def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
              incompatible_map=None, units_cap=8.0, n_semesters=6,
-             semester_labels=None):
+             semester_labels=None, start_sem="S1"):
     selected = list(dict.fromkeys(c for c in selected if c))   # 去重保序
     prereq_map = prereq_map or {}
     offering_map = offering_map or {}
     units_map = units_map or {}
     incompatible_map = incompatible_map or {}
+    # 入学学期决定 S1/S2 交替起点:S1 入学 -> 格 0=S1;S2 入学 -> 格 0=S2
+    _other = "S2" if start_sem == "S1" else "S1"
+    sem_kind = [start_sem if i % 2 == 0 else _other for i in range(n_semesters)]
     if semester_labels is None:
-        semester_labels = [f"Y{i // 2 + 1} {'S1' if i % 2 == 0 else 'S2'}"
-                           for i in range(n_semesters)]
-    sem_kind = ["S1" if i % 2 == 0 else "S2" for i in range(n_semesters)]
+        semester_labels = [f"Y{i // 2 + 1} {sem_kind[i]}" for i in range(n_semesters)]
 
     sel_set = set(selected)
     warnings: list[str] = []
