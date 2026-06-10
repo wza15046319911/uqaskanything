@@ -3,7 +3,7 @@
 后端选择(规则简单):
   - 设了 DEEPSEEK_API_KEY  -> 用 DeepSeek(planner + answer 全程)
   - 没设                    -> 本地 Ollama qwen
-  - LLM_BACKEND=ollama      -> 强制本地(即使有 key,临时回退用)
+  - LLM_ENABLED=false       -> 强制本地 Ollama(即使有 key,临时回退用)
 
 .env:模块导入时自动加载同目录 .env(自带极简解析,无需 python-dotenv);
 真实环境变量优先,不被 .env 覆盖。把 key 写进 .env 即可,别提交 git。
@@ -14,7 +14,7 @@ env:
   DEEPSEEK_MODEL    默认 deepseek-chat
   OLLAMA_URL        默认 http://localhost:11434
   LLM_MODEL         本地模型,默认 qwen2.5-coder:7b
-  LLM_BACKEND       设 'ollama' 可强制本地
+  LLM_ENABLED       默认 true;设 'false' 强制走本地 Ollama(即使有 key 也不走 DeepSeek)
 """
 from __future__ import annotations
 import os
@@ -25,7 +25,7 @@ import requests
 
 def _load_dotenv(name: str = ".env") -> None:
     """极简 .env 加载:KEY=VALUE 每行;# 注释;真实环境变量优先(setdefault,不覆盖)。"""
-    p = pathlib.Path(__file__).parent / name
+    p = pathlib.Path(__file__).resolve().parents[2] / name
     if not p.exists():
         return
     for line in p.read_text(encoding="utf-8").splitlines():
@@ -47,8 +47,8 @@ DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 
 
 def use_deepseek() -> bool:
-    """有 key 就用 DeepSeek;LLM_BACKEND=ollama 强制本地。每次调用实时判断(尊重运行时改 env)。"""
-    if os.environ.get("LLM_BACKEND", "").lower() == "ollama":
+    """有 key 且 LLM_ENABLED 不为 false 时用 DeepSeek;LLM_ENABLED=false 强制本地。每次调用实时判断(尊重运行时改 env)。"""
+    if os.environ.get("LLM_ENABLED", "true").lower() == "false":
         return False
     return bool(os.environ.get("DEEPSEEK_API_KEY"))
 
