@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Alert, toast } from '@heroui/react'
 import ProgramSearch from '../components/sim/ProgramSearch'
 import RulesPane from '../components/sim/RulesPane'
 import Timetable from '../components/sim/Timetable'
@@ -26,14 +27,10 @@ export default function SimPage() {
   const [goal, setGoal] = useState('')
   const [advising, setAdvising] = useState(false)
   const [advice, setAdvice] = useState<AdviseResponse | null>(null)
-  const [toast, setToast] = useState('')
-  const toastTimer = useRef<number | undefined>(undefined)
   const csTimer = useRef<number | undefined>(undefined)
 
   const showToast = (m: string) => {
-    setToast(m)
-    window.clearTimeout(toastTimer.current)
-    toastTimer.current = window.setTimeout(() => setToast(''), 1800)
+    toast(m)
   }
 
   const refresh = async (s: SimLocalState) => {
@@ -92,13 +89,17 @@ export default function SimPage() {
     (data?.offerings && data.offerings[code]) || extraOff[code] || null
 
   const place = (code: string, cell: number) => {
+    apply({ ...state, placement: { ...state.placement, [code]: cell } })
+  }
+
+  const dropPlace = (code: string, cell: number) => {
     const o = offered(code)
     const kind = semKind(state.start_sem, cell)
     if (o && !o.includes(kind)) {
       showToast(`${code} 不在 ${kind} 开课(开:${o.join('/')})`)
       return
     }
-    apply({ ...state, placement: { ...state.placement, [code]: cell } })
+    place(code, cell)
   }
 
   const unplace = (code: string) => {
@@ -110,13 +111,14 @@ export default function SimPage() {
   const autoPlace = (code: string) => {
     const o = offered(code)
     const n = state.years * 2
-    let target = 0
+    let target = -1
     for (let i = 0; i < n; i++) {
       if (!o || o.includes(semKind(state.start_sem, i))) {
         target = i
         break
       }
     }
+    if (target < 0) target = 0
     place(code, target)
   }
 
@@ -210,60 +212,58 @@ export default function SimPage() {
   const current = programs.find((p) => p.program_id === state.program_id)
 
   return (
-    <div className="simpage">
-      <div className="wrap">
-        <header>
-          <span className="badge">
-            <span className="dot"></span>选课模拟器 · 拖课进时间表
-          </span>
-          <h1>
-            排你的<em>修读计划</em>
-          </h1>
-          <p className="sub">
-            搜专业 → 左边是能修的课,拖进右边的学期格。开课学期硬拦,先修/学分/互斥软提示。
-          </p>
-          <ProgramSearch programs={programs} current={current} onPick={pickProgram} />
-        </header>
+    <div className="mx-auto max-w-[1180px] px-5 pt-[clamp(20px,4vw,40px)] pb-20 text-[15px]">
+      <header className="mb-5 text-center">
+        
+        <h1 className="mb-1.5 text-[clamp(26px,5vw,40px)] leading-[1.05] font-semibold tracking-tight">
+          UQ <em className="text-accent not-italic">Program</em> Planner
+        </h1>
+        <ProgramSearch programs={programs} current={current} onPick={pickProgram} />
+      </header>
 
-        {err && <div className="note err">出错:{err}</div>}
-        {!data && !err && <div className="note">先在上方搜一个专业开始。</div>}
+      {err && (
+        <Alert status="danger" className="mb-4">
+          <Alert.Indicator />
+          <Alert.Content>
+            <Alert.Title>出错</Alert.Title>
+            <Alert.Description>{err}</Alert.Description>
+          </Alert.Content>
+        </Alert>
+      )}
+      {!data && !err && (
+        <div className="py-6 text-center text-sm text-muted">先在上方搜一个专业开始。</div>
+      )}
 
-        {data && (
-          <div className="layout">
-            <RulesPane
-              data={data}
-              state={state}
-              csQuery={csQuery}
-              csResults={csResults}
-              offered={offered}
-              goal={goal}
-              advising={advising}
-              advice={advice}
-              onSetBranch={setBranch}
-              onSetPlan={setPlan}
-              onPick={autoPlace}
-              onCsearch={onCsearch}
-              onGoalChange={setGoal}
-              onAdvise={doAdvise}
-            />
-            <Timetable
-              state={state}
-              data={data}
-              offered={offered}
-              onDropCode={place}
-              onRemove={unplace}
-              onParam={setParam}
-              onAuto={doAuto}
-              onClear={doClear}
-            />
-          </div>
-        )}
-
-        <footer>
-          本地引擎 simulator.py + scheduler.py · 数据 S1 / St Lucia · <a href="/">课程问答</a>
-        </footer>
-      </div>
-      <div className={`toast${toast ? ' on' : ''}`}>{toast}</div>
+      {data && (
+        <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
+          <RulesPane
+            data={data}
+            state={state}
+            csQuery={csQuery}
+            csResults={csResults}
+            offered={offered}
+            goal={goal}
+            advising={advising}
+            advice={advice}
+            onSetBranch={setBranch}
+            onSetPlan={setPlan}
+            onPick={autoPlace}
+            onCsearch={onCsearch}
+            onGoalChange={setGoal}
+            onAdvise={doAdvise}
+          />
+          <Timetable
+            state={state}
+            data={data}
+            offered={offered}
+            onDropCode={dropPlace}
+            onRemove={unplace}
+            onParam={setParam}
+            onAuto={doAuto}
+            onClear={doClear}
+          />
+        </div>
+      )}
     </div>
   )
 }

@@ -1,5 +1,7 @@
-import type { DragEvent } from 'react'
-import { type SimLocalState, semKind, semYear } from '../../lib/sim'
+import { useEffect, useState, type DragEvent } from 'react'
+import { Button, Chip, Label, ListBox, NumberField, Select } from '@heroui/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { type SimLocalState, semKind, semYear, getDragCode, setDragCode } from '../../lib/sim'
 import type { SimStateResponse } from '../../api/sim'
 
 interface TimetableProps {
@@ -16,6 +18,7 @@ interface TimetableProps {
 export default function Timetable({
   state,
   data,
+  offered,
   onDropCode,
   onRemove,
   onParam,
@@ -26,16 +29,69 @@ export default function Timetable({
   const val = data.validation
   const capOver = new Set(val.cap_over || [])
   const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
+  const [dragOver, setDragOver] = useState<{ cell: number; blocked: boolean } | null>(null)
+  const reduce = useReducedMotion()
+  const chipAnim = reduce
+    ? {}
+    : {
+        initial: { opacity: 0, scale: 0.96 },
+        animate: { opacity: 1, scale: 1 },
+        exit: { opacity: 0, scale: 0.96 },
+        transition: { duration: 0.18, ease: 'easeOut' as const },
+      }
+
+  useEffect(() => {
+    const clear = () => {
+      setDragCode(null)
+      setDragOver(null)
+    }
+    document.addEventListener('dragend', clear)
+    return () => document.removeEventListener('dragend', clear)
+  }, [])
 
   const placedBy: Record<number, string[]> = {}
   for (const [c, i] of Object.entries(state.placement)) {
     ;(placedBy[i] = placedBy[i] || []).push(c)
   }
 
+  const onCellDragOver = (e: DragEvent, cell: number) => {
+    const code = getDragCode()
+    if (!code) return
+    const o = offered(code)
+    const blocked = !!(o && !o.includes(semKind(state.start_sem, cell)))
+    if (blocked) {
+      setDragOver({ cell, blocked: true })
+    } else {
+      e.preventDefault()
+      setDragOver({ cell, blocked: false })
+    }
+  }
+
+  const onCellDragLeave = (e: DragEvent, cell: number) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setDragOver((d) => (d?.cell === cell ? null : d))
+    }
+  }
+
   const onDrop = (e: DragEvent, cell: number) => {
     e.preventDefault()
-    const code = e.dataTransfer.getData('text/plain')
+    setDragOver(null)
+    const code = getDragCode() || e.dataTransfer.getData('text/plain')
+    setDragCode(null)
     if (code) onDropCode(code, cell)
+  }
+
+  const cellCls = (i: number, over: boolean): string => {
+    let cls =
+      'min-h-24 min-w-0 rounded-xl border-[1.5px] border-dashed border-border bg-background/50 p-2.5 transition-colors'
+    if (dragOver?.cell === i) {
+      cls += dragOver.blocked
+        ? ' border-solid border-danger bg-danger-soft'
+        : ' border-solid border-accent bg-accent-soft'
+    } else if (over) {
+      cls += ' border-warning'
+    }
+    return cls
   }
 
   const ov = data.overall || {}
@@ -45,74 +101,116 @@ export default function Timetable({
   const unatt = ov.unattributed?.length ?? 0
 
   return (
-    <section className="pane">
-      <div className="panehead">
-        <h2>时间表</h2>
-        <span className="overall">
+    <section className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface lg:sticky lg:top-4 lg:max-h-[calc(100dvh-32px)] lg:self-start lg:overflow-auto">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">时间表</h2>
+        <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted tabular-nums">
           已排 {placedN} 门 · {totalU}/{data.total_units}学分
-          {ov.formula_satisfied && <span className="ok-txt"> · 学位要求满足✓</span>}
+          {ov.formula_satisfied && (
+            <Chip size="sm" variant="soft" color="success">
+              学位要求满足✓
+            </Chip>
+          )}
           {data.level_caps
             ?.filter((c) => c.over)
             .map((c) => (
-              <span className="bad-txt" key={`${c.scope}-${c.level}`} title={c.text}>
-                {' '}
-                · L{c.level} {c.used}/{c.max_units}⚠
-              </span>
+              <Chip
+                size="sm"
+                variant="soft"
+                color="danger"
+                key={`${c.scope}-${c.level}`}
+                title={c.text}
+              >
+                L{c.level} {c.used}/{c.max_units}⚠
+              </Chip>
             ))}
-          {unatt > 0 && <span className="warn-txt"> · {unatt} 门未计入</span>}
-          {nbad > 0 && <span className="bad-txt"> · {nbad} 处冲突</span>}
+          {unatt > 0 && (
+            <Chip size="sm" variant="soft" color="warning">
+              {unatt} 门未计入
+            </Chip>
+          )}
+          {nbad > 0 && (
+            <Chip size="sm" variant="soft" color="danger">
+              {nbad} 处冲突
+            </Chip>
+          )}
         </span>
       </div>
 
-      <div className="ttbar">
-        <label>
-          入学学期{' '}
-          <select value={state.start_sem} onChange={(e) => onParam({ start_sem: e.target.value })}>
-            <option value="S1">S1 入学</option>
-            <option value="S2">S2 入学</option>
-          </select>
-        </label>
-        <label>
-          起始年{' '}
-          <input
-            type="number"
-            value={state.start_year}
-            min={2020}
-            max={2035}
-            onChange={(e) => onParam({ start_year: +e.target.value || 2026 })}
-          />
-        </label>
-        <label>
-          年数{' '}
-          <input
-            type="number"
-            value={state.years}
-            min={1}
-            max={6}
-            onChange={(e) => onParam({ years: Math.max(1, Math.min(6, +e.target.value || 3)) })}
-          />
-        </label>
-        <label>
-          每学期上限{' '}
-          <input
-            type="number"
-            value={state.units_cap}
-            min={2}
-            max={16}
-            step={2}
-            onChange={(e) => onParam({ units_cap: +e.target.value || 8 })}
-          />
-          学分
-        </label>
-        <button className="btn" onClick={onAuto}>
+      <div className="mb-3 flex flex-wrap items-end gap-2.5">
+        <Select
+          className="w-32"
+          selectedKey={state.start_sem}
+          onSelectionChange={(k) => k != null && onParam({ start_sem: String(k) })}
+        >
+          <Label>入学学期</Label>
+          <Select.Trigger>
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              <ListBox.Item id="S1" textValue="S1 入学">
+                S1 入学
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+              <ListBox.Item id="S2" textValue="S2 入学">
+                S2 入学
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+            </ListBox>
+          </Select.Popover>
+        </Select>
+        <NumberField
+          value={state.start_year}
+          minValue={2020}
+          maxValue={2035}
+          formatOptions={{ useGrouping: false }}
+          onChange={(v) => onParam({ start_year: Number.isFinite(v) ? v : 2026 })}
+        >
+          <Label>起始年</Label>
+          <NumberField.Group>
+            <NumberField.DecrementButton />
+            <NumberField.Input className="w-14 text-center" />
+            <NumberField.IncrementButton />
+          </NumberField.Group>
+        </NumberField>
+        <NumberField
+          value={state.years}
+          minValue={1}
+          maxValue={6}
+          onChange={(v) => onParam({ years: Number.isFinite(v) ? Math.max(1, Math.min(6, v)) : 3 })}
+        >
+          <Label>年数</Label>
+          <NumberField.Group>
+            <NumberField.DecrementButton />
+            <NumberField.Input className="w-10 text-center" />
+            <NumberField.IncrementButton />
+          </NumberField.Group>
+        </NumberField>
+        <NumberField
+          value={state.units_cap}
+          minValue={2}
+          maxValue={16}
+          step={2}
+          onChange={(v) => onParam({ units_cap: Number.isFinite(v) ? v : 8 })}
+        >
+          <Label>每学期上限(学分)</Label>
+          <NumberField.Group>
+            <NumberField.DecrementButton />
+            <NumberField.Input className="w-10 text-center" />
+            <NumberField.IncrementButton />
+          </NumberField.Group>
+        </NumberField>
+        <Button size="sm" variant="secondary" onPress={onAuto}>
           一键自动排
-        </button>
-        <button className="btn warn" onClick={onClear}>
+        </Button>
+        <Button size="sm" variant="danger-soft" onPress={onClear}>
           清空
-        </button>
+        </Button>
       </div>
 
-      <div className="ttgrid">
+      <div className="grid grid-cols-2 gap-2.5">
         {Array.from({ length: n }, (_, i) => {
           const kind = semKind(state.start_sem, i)
           const year = semYear(state.start_year, state.start_sem, i)
@@ -122,38 +220,66 @@ export default function Timetable({
           return (
             <div
               key={i}
-              className={`ttcell${over ? ' capover' : ''}`}
-              onDragOver={(e) => e.preventDefault()}
+              className={cellCls(i, over)}
+              onDragOver={(e) => onCellDragOver(e, i)}
+              onDragLeave={(e) => onCellDragLeave(e, i)}
               onDrop={(e) => onDrop(e, i)}
             >
-              <div className="ttcellhead">
-                <span className="ttlabel">
+              <div className="mb-1.5 flex items-baseline gap-1.5">
+                <span className="text-xs font-semibold text-accent">
                   {kind} {year}
                 </span>
-                <span className={`ttu${over ? ' bad' : ''}`}>
-                  {u}/{val.cap}u
+                <span
+                  className={`ml-auto text-[11px] tabular-nums ${over ? 'font-semibold text-warning' : 'text-muted'}`}
+                >
+                  {u}/{val.cap}
                 </span>
               </div>
-              {codes.length === 0 && <div className="ttempty">拖课到这里</div>}
-              {codes.map((c) => {
-                const bad = val.by_course?.[c]
-                return (
-                  <div key={c}>
-                    <div
-                      className={`chip${bad ? ' bad' : ''}`}
-                      draggable
-                      onDragStart={(e) => e.dataTransfer.setData('text/plain', c)}
-                    >
-                      <span className="ccode">{c}</span>
-                      <span className="ct">{ctitle(c)}</span>
-                      <span className="x" onClick={() => onRemove(c)}>
-                        ×
-                      </span>
-                    </div>
-                    {bad && <div className="badwhy">{bad.map((b) => b.msg).join(';')}</div>}
-                  </div>
-                )
-              })}
+              {codes.length === 0 && (
+                <div className="px-0.5 py-1.5 text-xs text-muted/70 italic">拖课到这里</div>
+              )}
+              <AnimatePresence initial={false}>
+                {codes.map((c) => {
+                  const bad = val.by_course?.[c]
+                  return (
+                    <motion.div key={c} {...chipAnim}>
+                      <div
+                        className={`mb-1.5 flex cursor-grab items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 text-xs active:cursor-grabbing ${
+                          bad ? 'border-danger bg-danger-soft' : 'border-border'
+                        }`}
+                        draggable
+                        onDragStart={(e) => {
+                          setDragCode(c)
+                          e.dataTransfer.setData('text/plain', c)
+                        }}
+                      >
+                        <Chip
+                          size="sm"
+                          color="accent"
+                          variant="soft"
+                          className="shrink-0 font-mono"
+                        >
+                          {c}
+                        </Chip>
+                        <span className="min-w-0 flex-1 truncate">{ctitle(c)}</span>
+                        <button
+                          type="button"
+                          aria-label="Remove"
+                          className="shrink-0 cursor-pointer px-0.5 text-[15px] leading-none text-muted transition-colors hover:text-danger"
+                          onClick={() => onRemove(c)}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      {bad && (
+                        <div className="-mt-0.5 mb-1.5 ml-1 text-[11px] text-danger">
+                          {bad.map((b) => b.msg).join(';')}
+                        </div>
+                      )}
+                    </motion.div>
+                  )
+                })}
+              </AnimatePresence>
             </div>
           )
         })}

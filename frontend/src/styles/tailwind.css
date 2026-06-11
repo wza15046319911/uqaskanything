@@ -1,0 +1,29 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+
+html {
+  background-color: var(--background);
+}
+
+/* RulesPane 跳转定位高亮(JS 加 .flash 类) */
+.flash {
+  animation: flash-ring 1.2s ease;
+}
+@keyframes flash-ring {
+  0% {
+    box-shadow: 0 0 0 0 var(--accent);
+  }
+  25% {
+    box-shadow: 0 0 0 3px var(--accent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
