@@ -145,13 +145,15 @@ def _ans_permit(code: str, title: str, excluded: bool, owns: list) -> str:
             f"能否作为通选(general elective)计入要看学分/层级分布规则——本库暂未覆盖该判定。")
 
 
-def run(conn, question: str, generate: bool = True) -> dict:
+def _retrieve(conn, question: str) -> dict:
+    """检索 + 路由,返回结构化结果(不含 LLM 生成的 answer);program 模式确定性回答放 prog_answer。
+    mode='empty' 时其余字段为空。run 与 run_stream 共用,避免重复整段路由逻辑。"""
     try:
         schema = planner.build_schema_doc(conn)
         p = planner.plan(question, schema, conn)
     except ValueError as e:                     # 宽泛/无法规划 -> 优雅兜底,不抛 traceback
         return {"plan": None, "mode": "empty", "meta": str(e), "courses": [],
-                "program_facts": None, "answer": EMPTY_MSG if generate else None}
+                "program_facts": None, "prog_answer": None}
 
     mode = p["mode"]
     courses: list[dict] = []
@@ -225,13 +227,49 @@ def run(conn, question: str, generate: bool = True) -> dict:
                 eg = excl_progs[0][1]
                 prog_answer += f" 另有 {len(excl_progs)} 个专业明确禁修该课(不计学分),如 {eg}。"
 
+    return {"plan": p, "mode": mode, "meta": meta,
+            "courses": courses, "program_facts": program_facts, "prog_answer": prog_answer}
+
+
+def run(conn, question: str, generate: bool = True) -> dict:
+    r = _retrieve(conn, question)
+    if r["mode"] == "empty":
+        return {"plan": None, "mode": "empty", "meta": r["meta"], "courses": [],
+                "program_facts": None, "answer": EMPTY_MSG if generate else None}
     ans = None
     if generate:
-        ans = prog_answer if mode == "program" else \
-            answer.answer(question, courses[:ANSWER_CAP], _gen_facts(courses, program_facts))
+        ans = r["prog_answer"] if r["mode"] == "program" else \
+            answer.answer(question, r["courses"][:ANSWER_CAP],
+                          _gen_facts(r["courses"], r["program_facts"]))
+    return {"plan": r["plan"], "mode": r["mode"], "meta": r["meta"],
+            "courses": r["courses"], "program_facts": r["program_facts"], "answer": ans}
 
-    return {"plan": p, "mode": mode, "meta": meta,
-            "courses": courses, "program_facts": program_facts, "answer": ans}
+
+def run_stream(conn, question: str):
+    """流式问答,依次 yield (event, data):
+       ('meta', {mode, meta, courses, program_facts}) -> ('token', delta)... -> ('done', 完整答案)。
+       empty 给固定兜底句;program 答案确定性(单块);其余模式逐 token 流式 + 收尾护栏。"""
+    r = _retrieve(conn, question)
+    mode = r["mode"]
+    yield ("meta", {"mode": mode, "meta": r["meta"],
+                    "courses": r["courses"], "program_facts": r["program_facts"]})
+
+    if mode == "empty":
+        yield ("token", EMPTY_MSG)
+        yield ("done", EMPTY_MSG)
+        return
+    if mode == "program":
+        ans = r["prog_answer"] or ""
+        yield ("token", ans)
+        yield ("done", ans)
+        return
+
+    capped = r["courses"][:ANSWER_CAP]
+    acc: list[str] = []
+    for delta in answer.answer_stream(question, capped, _gen_facts(r["courses"], r["program_facts"])):
+        acc.append(delta)
+        yield ("token", delta)
+    yield ("done", answer.guard_citations("".join(acc), capped))
 
 
 def _gen_facts(courses: list[dict], program_facts):

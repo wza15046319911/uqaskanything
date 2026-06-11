@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import json
+from collections.abc import Iterator
 
 import requests
 
@@ -176,6 +177,19 @@ def answer(question: str, courses: list[dict], program_facts=None) -> str:
     ]).strip()
     # 生产护栏:越界引用校验(原先只在 __main__,现移入生产路径)
     return guard_citations(out, courses)
+
+
+def answer_stream(question: str, courses: list[dict], program_facts=None) -> Iterator[str]:
+    """流式 grounded 生成:逐 token yield 原始增量。无任何事实时 yield 固定句。
+    护栏 guard_citations 需全文,由调用方(qa.run_stream)在收尾时对完整文本兜底。"""
+    if not courses and not program_facts:
+        yield EMPTY_ANSWER
+        return
+    facts = build_facts(courses, program_facts)
+    yield from llm.call_stream([
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": USER_TMPL.format(q=question, facts=facts)},
+    ])
 
 
 if __name__ == "__main__":

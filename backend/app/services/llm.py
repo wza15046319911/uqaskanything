@@ -18,7 +18,9 @@ env:
 """
 from __future__ import annotations
 import os
+import json
 import pathlib
+from collections.abc import Iterator
 
 import requests
 
@@ -95,3 +97,57 @@ def _deepseek(messages: list[dict], json_mode: bool, temperature: float) -> str:
                       headers={"Authorization": f"Bearer {key}"}, timeout=120)
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"]
+
+
+def call_stream(messages: list[dict], *, temperature: float = 0.0) -> Iterator[str]:
+    """流式对话:逐 token yield content 增量(仅答案生成用,不支持 json_mode)。
+    后端按 use_deepseek() 选;调用方负责拼接全文与收尾护栏。"""
+    if use_deepseek():
+        yield from _deepseek_stream(messages, temperature)
+    else:
+        yield from _ollama_stream(messages, temperature)
+
+
+def _ollama_stream(messages: list[dict], temperature: float) -> Iterator[str]:
+    body = {
+        "model": OLLAMA_MODEL,
+        "messages": messages,
+        "stream": True,
+        "options": {"temperature": temperature},
+    }
+    with requests.post(f"{OLLAMA}/api/chat", json=body, timeout=300, stream=True) as r:
+        r.raise_for_status()
+        for line in r.iter_lines(decode_unicode=True):
+            if not line:
+                continue
+            obj = json.loads(line)                 # Ollama /api/chat 流式是逐行 JSON
+            piece = obj.get("message", {}).get("content")
+            if piece:
+                yield piece
+            if obj.get("done"):
+                break
+
+
+def _deepseek_stream(messages: list[dict], temperature: float) -> Iterator[str]:
+    key = os.environ.get("DEEPSEEK_API_KEY")
+    if not key:
+        raise RuntimeError("use_deepseek() 为真但缺 DEEPSEEK_API_KEY")
+    body = {
+        "model": DEEPSEEK_MODEL,
+        "messages": messages,
+        "stream": True,
+        "temperature": temperature,
+    }
+    with requests.post(f"{DEEPSEEK_BASE}/chat/completions", json=body,
+                       headers={"Authorization": f"Bearer {key}"},
+                       timeout=300, stream=True) as r:
+        r.raise_for_status()
+        for line in r.iter_lines(decode_unicode=True):      # SSE: 每行 data: {...}
+            if not line or not line.startswith("data:"):
+                continue
+            data = line[len("data:"):].strip()
+            if data == "[DONE]":
+                break
+            piece = json.loads(data)["choices"][0].get("delta", {}).get("content")
+            if piece:
+                yield piece
