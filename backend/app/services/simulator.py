@@ -469,13 +469,18 @@ class PlanSimulator:
 
     # ---------- 开放规则与计划外课归属 ----------
     def _open_rule(self, rule: dict) -> bool:
-        """开放规则:select 型、有 units_max、无可枚举项(空 items=程序课表内任选,
-        如 E;仅 wildcard=任意课,如 F)。进度来自 attribution(),不来自 items。"""
-        if rule.get("select_type") != "select" or rule.get("units_max") is None:
+        """开放规则:select 型、无可枚举项(空 items=程序课表内任选,如 E;仅 wildcard=任意课,
+        如 F / 2557 A.6)。进度来自 attribution(),不来自 items。
+        units_max 为 None 时:仅放开「纯 wildcard」自由选修(任意课,如 A.6 'General Elective');
+        空表规则(E,程序课表内任选)无上限会成无限吸口,不放开。"""
+        if rule.get("select_type") != "select" or rule.get("children_refs"):
             return False
-        if rule.get("children_refs"):
+        items = rule.get("items", [])
+        if not all(it.get("kind") == "wildcard" for it in items):
             return False
-        return all(it.get("kind") == "wildcard" for it in rule.get("items", []))
+        if rule.get("units_max") is None:
+            return bool(items)
+        return True
 
     def _enum_codes(self, rule: dict) -> set:
         """规则枚举到的全部课程码(course+equivalence 全选项;含已选定 plan 分支递归)。"""
@@ -526,7 +531,8 @@ class PlanSimulator:
                 cap_lv = self._open_level_cap(r)
                 if cap_lv is not None and lvl is not None and lvl > cap_lv:
                     continue
-                if fill[ref] + u > float(r["units_max"]):
+                mx = self._units_max(r)            # None = 无上限(纯 wildcard 自由选修)
+                if mx is not None and fill[ref] + u > mx:
                     continue
                 assigned[code] = ref
                 fill[ref] += u
