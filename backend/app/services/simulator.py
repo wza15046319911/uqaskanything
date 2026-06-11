@@ -467,7 +467,7 @@ class PlanSimulator:
             return float("inf")
         codes = set(self._claimable_codes(rule))
         avail = sum(self._course_units.get(c, DEFAULT_UNITS) for c in codes)
-        return max(0.0, avail - self._required(rule))
+        return max(0.0, avail - self._effective_required(rule))
 
     def _ordered_rules(self) -> list:
         """认领顺序:按松弛度升序(紧/必修规则先认领共享课),同松弛度保持原树序。
@@ -492,7 +492,7 @@ class PlanSimulator:
             if not codes:
                 continue
             rule_codes[ref] = codes
-            rule_req[ref] = self._required(rule)
+            rule_req[ref] = self._effective_required(rule)
             order.append(ref)
 
         assign: dict[str, str] = {}
@@ -578,6 +578,25 @@ class PlanSimulator:
         """规则/分支的必需学分 = units_min(None 视为 0)。"""
         m = rule_or_plan.get("units_min")
         return float(m) if m is not None else 0.0
+
+    def _effective_required(self, rule: dict) -> float:
+        """规则在「认领/松弛度」口径下的真实必需学分,与 _base_entry 的 required 保持一致。
+
+        含 plan 项的规则:规则自身 units_min 为 None 时,其真实需求来自所选 major/minor 分支
+        (from-plans 选修,如 2460 的 A.2.1:自身 None,选了 major 后需修满该 major 的 16u);
+        已选分支取各分支 min 的最大,未选分支取各分支 min 的最小。规则自身有 units_min 则用它。
+        无 plan 项的规则退回 _required。用于 _claim_slack / _claims 给共享课定优先级,
+        否则 None 的规则会被当成「松」(slack 偏大),被同码的低 min 规则抢走应得的课。"""
+        plan_items = [
+            it for it in rule.get("items", [])
+            if it.get("kind") == "plan" and not self._is_self_program(it)
+        ]
+        if not plan_items or rule.get("units_min") is not None:
+            return self._required(rule)
+        chosen_here = [p for p in plan_items if p.get("code") in self.chosen_plans]
+        if chosen_here:
+            return max(self._required(p) for p in chosen_here)
+        return min((self._required(p) for p in plan_items), default=0.0)
 
     def _units_max(self, rule_or_plan: dict) -> float | None:
         """规则/分支的学分上限 = units_max(None 表示不封顶)。"""
