@@ -170,6 +170,7 @@ class PlanSimulator:
         self.rules = row[2] or []          # 顶层规则列表(JSONB 已反序列化为 list[dict])
         self.selected: set[str] = set()     # 已选课程码
         self.chosen_plans: set[str] = set()  # 已选定的 plan 分支码
+        self._bin_of: dict[str, int] = {}    # code -> 认领归属叶子规则 id(status() 时由 _assign 填)
 
         # 程序级禁课(No credit will be given for…):从可选列表剔除。表未建时为空集(不报错)。
         self.excluded: set[str] = set()
@@ -580,70 +581,142 @@ class PlanSimulator:
         return [r for _, r in sorted(enumerate(self.rules),
                                      key=lambda ir: (self._claim_slack(ir[1]), ir[0]))]
 
-    def _claims(self) -> dict[str, str]:
-        """已选码 -> 计数归属规则 ref。共享课用增广匹配分配:紧/必修规则优先达到自身
-        units_min(可从有富余的规则手里腾挪一门,腾挪方再递归补一门),尽量让更多规则同时
-        达标;再把剩余已选课归并到列出它的规则(供 over_max/总分)。失活/父规则不参与认领。
-        防一码计两组(如 DECO2801 同时在 major 课表与 D 枚举表)。"""
-        inactive = self._inactive_refs()
-        rule_codes: dict[str, list] = {}
-        rule_req: dict[str, float] = {}
-        order: list[str] = []
-        for rule in self._ordered_rules():
-            ref = rule.get("ref")
-            if ref in inactive or rule.get("children_refs"):
-                continue
-            codes = [c for c in dict.fromkeys(self._claimable_codes(rule)) if c in self.selected]
-            if not codes:
-                continue
-            rule_codes[ref] = codes
-            rule_req[ref] = self._effective_required(rule)
-            order.append(ref)
+    def _direct_codes(self, rule: dict) -> list:
+        """规则自身直接列出的 course/equivalence 课码(不下钻 plan;plan 另成 bin)。"""
+        out: list = []
+        for it in rule.get("items", []):
+            if it.get("kind") in ("course", "equivalence"):
+                out += self._item_codes(it)
+        return out
 
-        assign: dict[str, str] = {}
-        counted: dict[str, float] = {ref: 0.0 for ref in order}
+    def _assign(self) -> dict:
+        """全局叶子级认领:把每门已选课唯一归属到一个「叶子 bin」,各 bin 不超自身 units_max,
+        按顶层规则紧度做增广匹配,让尽量多顶层规则达到 _effective_required。返回 code -> bin_id
+        (bin_id = id(叶子规则 dict))。计数层据此判每门课算在哪条规则——取代旧「顶层只认领、
+        plan 内部子规则再各自封顶求和」的两层割裂(后者既会跨子规则重复计数,又会把课堆进有上限
+        子规则被截掉、其它子规则空着导致 major 计不满)。
+
+        叶子 bin = 顶层非父、非失活、非开放规则自身(计其直接 course/equiv);该规则下已选定 plan
+        分支递归展开的每条子规则(top 仍记为该顶层规则,用于上卷)。开放规则(E/F/A.6)走
+        attribution 不进认领;父规则只聚合不直接认领。"""
+        inactive = self._inactive_refs()
+        bins: dict[int, dict] = {}        # bin_id -> {top, cap, codes}
+        top_bins: dict[str, list] = {}    # top_ref -> [bin_id,...]
+        code_bins: dict[str, list] = {}   # code -> [bin_id,...]
+        top_req: dict[str, float] = {}
+
+        def add_bin(rule: dict, top: str):
+            bid = id(rule)
+            codes: list = []
+            for it in rule.get("items", []):           # equiv 组折叠成一个代表,口径同 _item_done_units
+                k = it.get("kind")
+                if k == "course" and it.get("code") in self.selected:
+                    codes.append(it["code"])
+                elif k == "equivalence":
+                    picked = [o["code"] for o in it.get("options", [])
+                              if o.get("code") in self.selected]
+                    if picked:
+                        codes.append(max(picked, key=lambda c: self._course_units.get(c, DEFAULT_UNITS)))
+            # 按 units 降序:大学分课先填,避免小课占满有上限 bin 后大课进不来(装箱次优)
+            codes = sorted(dict.fromkeys(codes),
+                           key=lambda c: self._course_units.get(c, DEFAULT_UNITS), reverse=True)
+            bins[bid] = {"top": top, "cap": self._units_max(rule), "codes": codes}
+            top_bins.setdefault(top, []).append(bid)
+            for c in codes:
+                code_bins.setdefault(c, []).append(bid)
+
+        def walk_plan(plan: dict, top: str):
+            for sr in plan.get("rules", []):
+                add_bin(sr, top)
+                for it in sr.get("items", []):
+                    if (it.get("kind") == "plan" and not self._is_self_program(it)
+                            and it.get("code") in self.chosen_plans):
+                        walk_plan(it, top)
+
+        for rule in self.rules:
+            ref = rule.get("ref")
+            if ref in inactive or rule.get("children_refs") or self._open_rule(rule):
+                continue
+            add_bin(rule, ref)
+            top_req[ref] = self._effective_required(rule)
+            for it in rule.get("items", []):
+                if (it.get("kind") == "plan" and not self._is_self_program(it)
+                        and it.get("code") in self.chosen_plans):
+                    walk_plan(it, ref)
+
+        assign: dict[str, int] = {}
+        bin_load: dict[int, float] = {bid: 0.0 for bid in bins}
+        top_load: dict[str, float] = {top: 0.0 for top in top_bins}
 
         def units(c):
             return self._course_units.get(c, DEFAULT_UNITS)
 
-        def augment(ref, visited):
-            for c in rule_codes[ref]:
-                if c in visited:
-                    continue
-                visited.add(c)
-                owner = assign.get(c)
-                if owner is None:
-                    assign[c] = ref
-                    counted[ref] += units(c)
-                    return True
-                while counted[owner] - units(c) < rule_req[owner] and augment(owner, visited):
-                    pass
-                if counted[owner] - units(c) >= rule_req[owner]:
-                    counted[owner] -= units(c)
-                    assign[c] = ref
-                    counted[ref] += units(c)
-                    return True
+        def can_add(bid, u):
+            cap = bins[bid]["cap"]
+            return cap is None or bin_load[bid] + u <= cap
+
+        def place(c, bid):
+            assign[c] = bid
+            bin_load[bid] += units(c)
+            top_load[bins[bid]["top"]] += units(c)
+
+        def unplace(c):
+            bid = assign.pop(c)
+            bin_load[bid] -= units(c)
+            top_load[bins[bid]["top"]] -= units(c)
+
+        def augment(top, visited):
+            """给 top 增加一门已选课(进它某条未满 cap 的 bin),必要时从别的 top 腾挪
+            (腾走方掉到 req 以下时先递归补回)。"""
+            for bid in top_bins[top]:
+                for c in bins[bid]["codes"]:
+                    if c in visited:
+                        continue
+                    visited.add(c)
+                    owner = assign.get(c)
+                    if owner is None:
+                        if can_add(bid, units(c)):
+                            place(c, bid)
+                            return True
+                        continue
+                    if not can_add(bid, units(c)) or bins[owner]["top"] == top:
+                        continue
+                    donor = bins[owner]["top"]
+                    while top_load[donor] - units(c) < top_req[donor] and augment(donor, visited):
+                        pass
+                    if top_load[donor] - units(c) >= top_req[donor]:
+                        unplace(c)
+                        place(c, bid)
+                        return True
             return False
 
-        for ref in order:                          # 已按松弛度升序:紧的先匹配到达标
-            while counted[ref] < rule_req[ref] and augment(ref, set()):
+        def top_slack(top):
+            codes: set = set()
+            for bid in top_bins[top]:
+                codes |= set(bins[bid]["codes"])
+            return sum(units(c) for c in codes) - top_req[top]
+
+        for top in sorted(top_bins, key=top_slack):    # 紧的顶层规则先达标
+            while top_load[top] < top_req[top] and augment(top, set()):
                 pass
-        for ref in order:                          # 剩余已选课归并到列出它的规则
-            for c in rule_codes[ref]:
-                assign.setdefault(c, ref)
+        for c, locs in code_bins.items():              # 剩余已选课归并(供 over_max/总分)
+            if c in assign:
+                continue
+            for bid in locs:
+                if can_add(bid, units(c)):
+                    place(c, bid)
+                    break
+            else:
+                place(c, locs[0])
         return assign
 
-    def _item_done_units(self, item: dict, claims: dict | None = None,
-                         owner: str | None = None) -> float:
-        """某 item 已贡献的学分。
-
-        course:选了就计该门 units。
-        equivalence:选了任一选项,只按那一门计一次(取已选选项里 units 最大的一门,
-                    通常组内同分,口径是「满足该项即得该项学分」)。
-        传入 claims/owner 时,只计认领归属本规则的码(防跨规则重复计数)。
-        """
+    def _item_done_units(self, item: dict, rule_id: int | None = None) -> float:
+        """某 item 已贡献的学分。course:选了即计;equivalence:选了任一选项只按一门计(取已选
+        选项里 units 最大的)。传 rule_id 时只计经 _assign 归属本规则(id)的码(防跨规则重复计数);
+        rule_id=None 时只看是否已选(供 equivalence 是否已满足的判断)。"""
         def mine(code):
-            return code in self.selected and (claims is None or claims.get(code) == owner)
+            return code in self.selected and (
+                rule_id is None or self._bin_of.get(code) == rule_id)
 
         k = item.get("kind")
         if k == "course":
@@ -653,30 +726,21 @@ class PlanSimulator:
             return _units(max(picked, key=_units)) if picked else 0.0
         return 0.0
 
-    def _rule_units_done(self, rule: dict, claims: dict | None = None,
-                         owner: str | None = None) -> float:
-        """一条规则内,所有 course/equivalence 项已贡献学分之和。"""
-        return sum(self._item_done_units(it, claims, owner) for it in rule.get("items", []))
+    def _rule_units_done(self, rule: dict) -> float:
+        """一条规则内,认领归属本规则(id)的 course/equivalence 项已贡献学分之和。"""
+        return sum(self._item_done_units(it, id(rule)) for it in rule.get("items", []))
 
-    def _plan_units_done(self, plan: dict, claims: dict | None = None,
-                         owner: str | None = None) -> float:
-        """一个已选定 plan 分支:其子规则全部 course/equivalence 已贡献学分之和。
-
-        每条子规则按自身 units_max 封顶后再累加;超额学分不计入分支进度。
-        子规则里再嵌的 plan,只有同样被 choose_plan 时才递归计入。
-        """
+    def _plan_units_done(self, plan: dict) -> float:
+        """一个已选定 plan 分支:其各子规则(按 id 认领)已贡献学分之和,逐子规则按 units_max
+        封顶;子规则里再嵌的已选 plan 递归计入。每门课经 _assign 唯一归属,不重复不浪费。"""
         total = 0.0
         for sr in plan.get("rules", []):
-            sr_done, _ = self._capped(self._rule_units_done(sr, claims, owner),
-                                      self._units_max(sr))
+            sr_done, _ = self._capped(self._rule_units_done(sr), self._units_max(sr))
             total += sr_done
             for it in sr.get("items", []):
-                if (
-                    it.get("kind") == "plan"
-                    and not self._is_self_program(it)
-                    and it.get("code") in self.chosen_plans
-                ):
-                    total += self._plan_units_done(it, claims, owner)
+                if (it.get("kind") == "plan" and not self._is_self_program(it)
+                        and it.get("code") in self.chosen_plans):
+                    total += self._plan_units_done(it)
         return total
 
     def _required(self, rule_or_plan: dict) -> float:
@@ -758,12 +822,12 @@ class PlanSimulator:
         """
         att = self.attribution()
         inactive = self._inactive_refs()
-        claims = self._claims()
+        self._bin_of = self._assign()
         entries: dict[str, dict] = {}
         for rule in self.rules:
             if rule.get("children_refs"):
                 continue                              # 父规则后算(依赖子 entry)
-            entries[rule.get("ref")] = self._base_entry(rule, att, inactive, claims)
+            entries[rule.get("ref")] = self._base_entry(rule, att, inactive)
         parents = [r for r in self.rules if r.get("children_refs")]
         parents.sort(key=lambda r: self._rule_depth(r.get("ref")), reverse=True)
         for rule in parents:
@@ -809,7 +873,7 @@ class PlanSimulator:
                 "inactive": ref in inactive,
                 "child_of": self._child_of.get(ref)}
 
-    def _base_entry(self, rule: dict, att: dict, inactive: set, claims: dict) -> dict:
+    def _base_entry(self, rule: dict, att: dict, inactive: set) -> dict:
         ref = rule.get("ref")
         title = rule.get("title") or ""
         select_type = rule.get("select_type")
@@ -819,7 +883,7 @@ class PlanSimulator:
             done_units = sum(self._course_units.get(c, DEFAULT_UNITS)
                              for c, r2 in att["assigned"].items() if r2 == ref)
         else:
-            done_units = self._rule_units_done(rule, claims, ref)
+            done_units = self._rule_units_done(rule)
 
         entry: dict = {
             "ref": ref,
@@ -852,7 +916,7 @@ class PlanSimulator:
             if chosen_here:
                 if rule.get("units_min") is None:
                     required = max(self._required(p) for p in chosen_here)
-                done_units += sum(self._plan_units_done(p, claims, ref) for p in chosen_here)
+                done_units += sum(self._plan_units_done(p) for p in chosen_here)
             elif rule.get("units_min") is None:
                 required = min((self._required(p) for p in plan_items), default=0.0)
             # plan 分支自身的封顶已在 _plan_units_done 内逐子规则处理,这里不再对整组封顶
