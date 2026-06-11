@@ -250,6 +250,11 @@ class PlanSimulator:
         }
         self._all_codes = set(self._course_units)
 
+        # 跨程序「Program 型引用」展开:把指向整 program 的空 plan 引用(如 5257 A.4
+        # 「2u from MCyberSec program electives」、2560 B.3 引用 5257)就地替换成被引
+        # program 的课程池。必须在 _index_plans 前做(展开后这些引用不再作为可选 major)。
+        self._expand_program_refs(conn)
+
         # 选修范围 level cap(规则 notes:"no more than N units at level L",如 2559 选修 L1≤14)
         self.elective_caps: list[dict] = []
         _seen_caps: set = set()
@@ -280,6 +285,100 @@ class PlanSimulator:
             return True
         subtype = node.get("subtype") or ""
         return "Program" in subtype
+
+    # ---------- 内部:跨程序 Program 引用展开 ----------
+    @staticmethod
+    def _is_program_ref(it: dict) -> bool:
+        """是否「Program 型」plan 引用(指向整 program,非 major/minor 分支):
+        code 是纯数字 program_id,或 subtype 文本含 'Program',且 rules 未展开(空)。"""
+        if it.get("kind") != "plan" or it.get("rules"):
+            return False
+        code = str(it.get("code") or "")
+        return code.isdigit() or "Program" in (it.get("subtype") or "")
+
+    def _program_pools(self, conn, codes: set) -> dict:
+        """被引 program 的课程池:{program_code: set(course_codes)}。只收直接 course/equiv
+        码并下钻普通 major/minor plan,遇 Program 型引用即停(防自引用/互引成环)。"""
+        rows = conn.execute(
+            "SELECT program_id, rules FROM programs WHERE program_id = ANY(%s)",
+            (list(codes),)).fetchall()
+        have = {pid: rules for pid, rules in rows}
+
+        def collect(rules, acc):
+            for r in rules or []:
+                for it in r.get("items", []):
+                    k = it.get("kind")
+                    if k == "course" and it.get("code"):
+                        acc.add(it["code"])
+                    elif k == "equivalence":
+                        acc.update(o["code"] for o in it.get("options", []) if o.get("code"))
+                    elif k == "plan" and not self._is_program_ref(it):
+                        collect(it.get("rules"), acc)
+        pools: dict[str, set] = {}
+        for pid in codes:
+            if pid in have:
+                acc: set = set()
+                collect(have[pid], acc)
+                pools[pid] = {c for c in acc if c in self._all_codes}
+        return pools
+
+    def _expand_program_refs(self, conn) -> None:
+        """就地把 Program 型引用替换成被引 program 的课程池(course items)。
+
+        self-ref(code==program_id)= 本 program 自己的课池;cross-ref 同理引用别的 program。
+        被引 program 不在库或课池为空 -> 该引用保持原样(下游仍按自引用跳过),
+        并记入 self.unresolved_program_refs(不静默)。需在 _course_units 后、_index_plans 前调用。"""
+        self.unresolved_program_refs: list = []
+        refs: set = set()
+
+        def walk_collect(rules):
+            for r in rules or []:
+                for it in r.get("items", []):
+                    if self._is_program_ref(it):
+                        refs.add(str(it["code"]))
+                    elif it.get("kind") == "plan" and it.get("rules"):
+                        walk_collect(it["rules"])
+        walk_collect(self.rules)
+        if not refs:
+            return
+        pools = self._program_pools(conn, refs)
+
+        def plan_codes(rules) -> set:
+            """一组规则(某 plan 的全部子规则)里显式列出的 course/equiv 码。"""
+            acc: set = set()
+            for r in rules or []:
+                for it in r.get("items", []):
+                    acc.update(self._item_codes(it))
+                    if it.get("kind") == "plan" and it.get("rules"):
+                        acc |= plan_codes(it["rules"])
+            return acc
+
+        def walk_replace(rules, exclude: set):
+            """exclude:同一 plan 内已显式列出/已展开过的课码。顶层调用 exclude 为空
+            (顶层电选规则保持全池,跨规则去重交给 _claims);进入某 plan 时 exclude 取该
+            plan 的显式课码,避免「专业内 program 电选」重复列出专业必修课导致 _plan_units_done
+            重复计数。展开一处引用后,把已用课码并入 exclude,防同 plan 内多处引用再次重列。"""
+            for r in rules or []:
+                new_items: list = []
+                for it in r.get("items", []):
+                    if self._is_program_ref(it):
+                        pool = pools.get(str(it["code"]))
+                        pool = {c for c in pool if c not in exclude} if pool else set()
+                        if not pool:
+                            self.unresolved_program_refs.append(
+                                {"ref": r.get("ref"), "code": str(it["code"])})
+                            new_items.append(it)
+                            continue
+                        for c in sorted(pool):
+                            new_items.append(
+                                {"kind": "course", "code": c, "units": self._course_units[c]})
+                        exclude |= pool
+                    else:
+                        if it.get("kind") == "plan" and it.get("rules"):
+                            walk_replace(it["rules"], exclude | plan_codes(it["rules"]))
+                        new_items.append(it)
+                r["items"] = new_items
+        walk_replace(self.rules, set())
 
     # ---------- 内部:索引 ----------
     def _index_plans(self, rules: list, visited: set | None = None) -> None:
