@@ -5,11 +5,15 @@
 必须能明确解释成"真实学制约束"而非引擎/数据缺陷。
 
 ## 当前状态(2026-06,分支 `fix/sim-rule-engine`)
-- 已修 **7 个引擎 bug**(见 commit dc56486 + afe8f1c,详见 memory `sim-rule-engine.md`):
-  嵌套上卷、OR-done branchable、共享课增广匹配、畸形 rule_logic 健壮性、负 semIndex、
-  augment 非均匀学分腾挪、from-plans 选修错继承 plan min。
-- 广测 68 个 EAIT 程序:**0 崩溃 / 0 静默丢课 / pytest 42 过**;**49/68 可排满**(原 42)。
-- 剩余 **19 个**排不满,根因已分类(见下)。基本是数据层长尾,不是引擎。
+- 已修 **10 个引擎 bug**(详见 memory `sim-rule-engine.md`):
+  前 7 个(嵌套上卷、OR-done branchable、共享课增广匹配、畸形 rule_logic、负 semIndex、
+  augment 非均匀学分腾挪、from-plans 错继承 plan min);本轮再修 3 个:
+  - **P1-2 认领层 plan 感知 required**(`_effective_required`):救活 2460 数学单(commit a0e34ba)。
+  - **P1-1 跨程序 Program 引用展开**(`_expand_program_refs`):救活工程类 + 5257/2560
+    跨程序双学位(commit 2594fa3)。
+  - **无上限纯 wildcard 按开放规则**:救活 2557 A.6 自由选修(commit fcf1483)。
+- 广测 68 个 EAIT 程序:**0 崩溃 / 0 静默丢课 / pytest 42 过**;**63/68 可排满**(原 42→49→63)。
+- 剩余 **5 个**排不满。根因已精确定位(见下):**不是数据,是引擎两层归属的局限**。
 
 ## 验证基线(每步必做)
 - `cd backend && PYTHONPATH=. python3 -m pytest -q`(须保持 42 过)。
@@ -19,58 +23,56 @@
 
 ---
 
-## 剩余 19 程序 · 按优先级的修复计划
+## P1 已完成(本轮)
 
-### P1 — 引擎可控,高杠杆
+- **P1-2 / 2460**:`_effective_required` —— 认领层(`_claim_slack`/`_claims`)原用 `_required`
+  只读原始 `units_min`,对 from-plans 选修(自身 None、需求来自所选 major)当成 required=0,
+  被同码低 min 规则抢光。抽出 plan 感知的 required 给认领层定优先级。✅ commit a0e34ba。
+- **P1-1 / 跨程序**:`_expand_program_refs` —— init 时把「Program 型引用」(空 rules,指向整
+  program)就地解析成被引 program 的课程池;嵌套在 plan 内的引用剔除该 plan 已列课防
+  `_plan_units_done` 重复计数。被引 program(2455/2559/5257/2350/2320)及其课**都在库,不用重爬**。
+  ✅ commit 2594fa3。救活工程类一大批 + 5257/2560。
+- **2557 A.6 wildcard**:`_open_rule` 放开「无上限纯 wildcard」自由选修。✅ commit fcf1483。
 
-**任务 1:展开 Program 型跨程序引用**(2560 B.3、5257 A.4 自引用、2557 A.6)
-- 现状:规则 body 是 `CurriculumReference → 整个 program`(数字 code,如 5257,subtype=Postgraduate Program),
-  引擎只展开 Course / Plan 型,不展开 Program 型 → 该规则池永远空(0/2)。且 5257 的 12 门选修课
-  (CSSE7030/7231、INFS7901、LAWS7023、MATH7051/7307/7308/7861、MGTS7303/7601/7619、STAT7203)
-  **根本不在 `courses` 表**。
-- 三步(缺一不可):
-  1. **引擎**:`_claimable_codes / _collect_codes / _claims / _base_entry` 把"plan item 且 `code.isdigit()`
-     (Program 引用,非 `_is_self_program`)"当**自动展开池**(无需 chosen_plans),不列为 UI 可选 major。
-  2. **scraper**:`program_scraper.py:fetch_plan_rules` 对数字 code 用 `program_list.html?acad_prog=` 端点
-     (现统一用 `plan_display.html?acad_plan=`,对 program 引用抓错)。
-  3. **数据**:补抓 5257 等被引用 program 的选修课入 `courses` 表 → 重爬 2560/2557/5257,重建这几行。
-- 验收:2560/2557/5257 可排满。
+完成率 42→49→**63/68**;pytest 42 过,0 崩溃 0 静默丢课。
 
-**任务 2:2460 数学单 A.2.1=0/16**
-- 现状:所选 major 的 16u 被无 units_max 上限的 A.3.1 吸光(18–26u),A.2.1 永远 0。
-- 修:给无上限的选修规则(如 A.3.1)在 attribution 时**补隐式 units_max 帽子**(= 其在父规则下的剩余配额),
-  或让 `_claims` 匹配时优先喂"更专属/更紧"的规则(核心/major 优先于通用 elective)。
-- 注意:这是已修的"增广匹配优先级"的延伸,改动须回归全部 CS/数学程序。
-- 验收:2460 可排满;CS/数学无回归。
-
-### P2 — 数据对账(逐程序 + 可能重爬)
-
-**任务 3:工程 discipline major `A.2.1=34/36`(~12 程序)**
-2485/2487/2488/2569/2556/2490/2575/2492/2493/2455/2544/2486。
-- 现状非干净 bug:ENGG4901/4902(Professional Practice A/B)**官方本就是 EquivalenceGroup**(二选一,2u),
-  但我库里**又把它们各自当独立 course 重复存了**(equiv + 两个 course 同时存在),计数口径混乱。
-- 做法:
-  1. 写脚本对**每个工程 plan 页**做"官方学分 vs 我库 `_claimable_codes` 学分"逐规则对账,
-     定位每个 34/36 缺的 2u 到底是 (a) equiv 算一份/两份口径、(b) 某课归错规则、(c) 课/units 缺。
-  2. 按对账结论分别修:scraper 去重(同课别同时进 equiv 和 course)/ 归位 / 补 units。
-  3. 重爬受影响工程程序。
-- 验收:逐程序排满,或证明官方该 major 就是 34u(则 require=36 是我 scrape 错,改 require)。
-
-**任务 4:商/理双 major 短 2u**(2564 B.2、2566 B.2.1/B.3.1、2499 B.2)
-- 疑似与任务 3 同类(equiv 口径 / attribution)。对账后并入任务 2 或 3 的修法。
-
-### P3 — 数据补全(并入上面重爬)
-- 缺课归位:CHEM1100 → 2455 B.1(现错归到规则 I);ENGG4902 → 2569 A.2.1;Civil/Elec/Mechtr/Mech breadth 池补课。
-- units 元数据:COMP2200 `units=None`(应 2u),扫一遍 `courses` 表所有 units 为空的课补齐。
+> 注:原计划把"5257 的 12 门课不在库""ENGG4901/4902 equiv 重复存"列为数据缺口 —— 经本轮核查
+> **均不成立**(课都在库;34/36 不是 equiv 口径问题)。下方根因已更新。
 
 ---
 
-## 执行顺序与里程碑
-1. **P1 任务 2(2460)** — 纯引擎,先做(无网络依赖),回归后并入分支。
-2. **P1 任务 1(跨程序)** — 引擎+scraper+补课+重爬;先引擎与 scraper 改好,再小批重爬验证。
-3. **P2 任务 3/4** — 写对账脚本批量出诊断,再统一修 scraper + 重爬。
-4. **P3** — 随 P2 重爬一并补。
-- 每个里程碑跑验证基线;完成率目标逐步逼近 68/68。
+## 剩余 5 程序 · 根因(已精确定位:引擎,非数据)
+
+### 核心限制:两层归属无法对 plan 内部子规则的 cap 做全局最优
+
+`_claims` 在**顶层规则 ref 粒度**把共享课认领给某顶层规则(如工程 major `A.3.1`),
+但 `_plan_units_done` 再把这些课摊到该 plan 的**内部子规则**(核心 all + 研究 max4 +
+进阶 max4 + program 电选无上限)时,认领层选"给 A.3.1 哪些课"时**看不到**这些子规则 cap,
+给的课分布不好 → 课堆进有上限的子规则被截掉、其它子规则空着 → major 计不满(34/36)。
+另外 `_plan_units_done` 现实现按子规则**各自封顶求和**,同一门课若被多条子规则列出会**重复计数**。
+
+- **工程双学位 A.x.1=34/36**(2544/2492/2493 等):上述限制。一个真实学生**选对课**(把电选填进
+  无上限子规则而非堆进 max4 的)能排满 36;问题是引擎/harness 的自动归属次优,**不是不可完成**。
+- **2566 商/理双**(B.2.1/B.3.1 短 2u):同类。
+- **2557**:仅 A.6=0/2,**纯 wildcard 自由选修,引擎已正确**(手动补任意 2u 即 done);
+  harness 无法自动挑自由选修课,是 harness 局限不是引擎缺陷。
+
+### 真正修复 = 统一全局归属(比 P1 大,需单独立项)
+
+把"顶层认领 + plan 内分摊"两层合并成**一次跨全部叶子规则(含 plan 子规则展开)的全局增广匹配**,
+每门课唯一归属、各叶子规则不超自身 cap、最大化已满足规则数。
+- 本轮试过的**局部修**(只把 `_plan_units_done` 改成 plan 内 greedy 最优分配):pytest 过、batch 仍
+  63/68 **不回退也不前进**(A.3.1 32→30,更不重复计数但 greedy 次优),且不修好任何 program →
+  已还原(遵守"最小改动/不过度工程")。证明**必须动认领层本身**,局部修无效。
+- 风险:认领层是全引擎最核心、最易回归处(所有含 plan 的 program 都过它);需大量回归。
+
+---
+
+## 执行顺序与里程碑(更新)
+1. ✅ P1-2(2460)、P1-1(跨程序)、2557 wildcard —— 已并入分支。
+2. **统一全局归属重构** —— 唯一通往 68/68 的路;先在 2492/2544/2566 上验证设计,再全量回归。
+   是独立的大改,建议确认后单独立项。
+3. 验证基线每步必跑;harness 需补"自由选修自动补课"能力才能把 2557 也算进自动完成。
 
 ## 风险/注意
 - 重爬依赖 UQ 外网(可达)+ `program_scraper` / `build_programs` / `build_db` 管线;先在少量程序上验证再批量。
