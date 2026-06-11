@@ -446,30 +446,85 @@ class PlanSimulator:
             return [o["code"] for o in item.get("options", []) if o.get("code")]
         return []
 
+    def _claimable_codes(self, rule: dict) -> list:
+        """一条规则可认领的全部课程码(course + equivalence 各选项 + 已选定 plan 分支的课),
+        与计数口径对齐(对照 _claims/_rule_units_done)。不按是否已选过滤。"""
+        out: list = []
+        for it in rule.get("items", []):
+            k = it.get("kind")
+            if k in ("course", "equivalence"):
+                out += self._item_codes(it)
+            elif (k == "plan" and not self._is_self_program(it)
+                    and it.get("code") in self.chosen_plans):
+                for sr in it.get("rules", []):
+                    out += self._claimable_codes(sr)
+        return out
+
+    def _claim_slack(self, rule: dict) -> float:
+        """规则的松弛度 = 可选学分 - 必需学分(父规则/无可枚举课不参与认领,记 +inf)。
+        松弛度越小越「紧」(必修,或备选恰好够),越该优先认领共享课。"""
+        if rule.get("children_refs"):
+            return float("inf")
+        codes = set(self._claimable_codes(rule))
+        avail = sum(self._course_units.get(c, DEFAULT_UNITS) for c in codes)
+        return max(0.0, avail - self._required(rule))
+
+    def _ordered_rules(self) -> list:
+        """认领顺序:按松弛度升序(紧/必修规则先认领共享课),同松弛度保持原树序。
+        仅用于共享课去重分配;各调用方输出按 ref 映射,与 UI 展示顺序无关。"""
+        return [r for _, r in sorted(enumerate(self.rules),
+                                     key=lambda ir: (self._claim_slack(ir[1]), ir[0]))]
+
     def _claims(self) -> dict[str, str]:
-        """已选码 -> 计数归属的顶层规则 ref(树序先到先得,防一码计两组,
-        如 DECO2801 同时在 major 课表与 D 枚举表)。失活分支不参与认领。"""
+        """已选码 -> 计数归属规则 ref。共享课用增广匹配分配:紧/必修规则优先达到自身
+        units_min(可从有富余的规则手里腾挪一门,腾挪方再递归补一门),尽量让更多规则同时
+        达标;再把剩余已选课归并到列出它的规则(供 over_max/总分)。失活/父规则不参与认领。
+        防一码计两组(如 DECO2801 同时在 major 课表与 D 枚举表)。"""
         inactive = self._inactive_refs()
-        claims: dict[str, str] = {}
-
-        def claim(rule, owner):
-            for it in rule.get("items", []):
-                k = it.get("kind")
-                if k in ("course", "equivalence"):
-                    for c in self._item_codes(it):
-                        if c in self.selected and c not in claims:
-                            claims[c] = owner
-                elif (k == "plan" and not self._is_self_program(it)
-                        and it.get("code") in self.chosen_plans):
-                    for sr in it.get("rules", []):
-                        claim(sr, owner)
-
-        for rule in self.rules:
+        rule_codes: dict[str, list] = {}
+        rule_req: dict[str, float] = {}
+        order: list[str] = []
+        for rule in self._ordered_rules():
             ref = rule.get("ref")
             if ref in inactive or rule.get("children_refs"):
                 continue
-            claim(rule, ref)
-        return claims
+            codes = [c for c in dict.fromkeys(self._claimable_codes(rule)) if c in self.selected]
+            if not codes:
+                continue
+            rule_codes[ref] = codes
+            rule_req[ref] = self._required(rule)
+            order.append(ref)
+
+        assign: dict[str, str] = {}
+        counted: dict[str, float] = {ref: 0.0 for ref in order}
+
+        def units(c):
+            return self._course_units.get(c, DEFAULT_UNITS)
+
+        def augment(ref, visited):
+            for c in rule_codes[ref]:
+                if c in visited:
+                    continue
+                visited.add(c)
+                owner = assign.get(c)
+                if owner is None:
+                    assign[c] = ref
+                    counted[ref] += units(c)
+                    return True
+                if counted[owner] - units(c) >= rule_req[owner] or augment(owner, visited):
+                    counted[owner] -= units(c)
+                    assign[c] = ref
+                    counted[ref] += units(c)
+                    return True
+            return False
+
+        for ref in order:                          # 已按松弛度升序:紧的先匹配到达标
+            while counted[ref] < rule_req[ref] and augment(ref, set()):
+                pass
+        for ref in order:                          # 剩余已选课归并到列出它的规则
+            for c in rule_codes[ref]:
+                assign.setdefault(c, ref)
+        return assign
 
     def _item_done_units(self, item: dict, claims: dict | None = None,
                          owner: str | None = None) -> float:
@@ -533,9 +588,11 @@ class PlanSimulator:
             return cap, True
         return done, False
 
-    def _eval_logic(self, tree: dict | None, done_map: dict) -> bool:
-        """公式求值:leaf=该规则 done;and=全真;or=按 branch_state 选定分支的 done
-        (可切换组),复合 OR 退化为 any。tree=None -> 全部非子规则 done(AND-all)。"""
+    def _eval_logic(self, tree: dict | None, done_map: dict, branchable: bool = True) -> bool:
+        """公式求值:leaf=该规则 done;and=全真;or=任一真。tree=None -> 全部非子规则 done。
+        branchable=True(程序级公式)时,全 part 的 OR 组按 branch_state 选定分支求值
+        (UI 二选一,如 B OR C);branchable=False(子规则内部公式,如 B.1 OR B.2)时,
+        OR 一律取 any-of —— 子规则内部 OR 不暴露为可切换分支组,不应依赖 branch_state。"""
         if tree is None:
             return all(v for k, v in done_map.items() if k not in self._child_of)
         op = tree.get("op")
@@ -543,13 +600,25 @@ class PlanSimulator:
             return bool(done_map.get(tree["ref"], False))
         kids = tree.get("children", [])
         if op == "and":
-            return all(self._eval_logic(c, done_map) for c in kids)
+            return all(self._eval_logic(c, done_map, branchable) for c in kids)
         if op == "or":
-            if all(c.get("op") == "part" for c in kids):
+            if branchable and all(c.get("op") == "part" for c in kids):
                 chosen = self.branch_state().get("|".join(c["ref"] for c in kids))
                 return bool(done_map.get(chosen, False))
-            return any(self._eval_logic(c, done_map) for c in kids)
+            return any(self._eval_logic(c, done_map, branchable) for c in kids)
         return False
+
+    def _logic_refs(self, tree: dict | None) -> set:
+        """取出已解析公式里引用的全部规则 ref。用于丢弃引用了非本规则子规则的畸形公式
+        (官方数据偶有笔误,如把 A.1.3 误写成 A.2.3),避免该规则永远判不出 done。"""
+        if not tree:
+            return set()
+        if tree.get("op") == "part":
+            return {tree["ref"]}
+        out: set = set()
+        for c in tree.get("children", []):
+            out |= self._logic_refs(c)
+        return out
 
     def status(self) -> list:
         """每条顶层规则的进度。
@@ -569,11 +638,22 @@ class PlanSimulator:
             if rule.get("children_refs"):
                 continue                              # 父规则后算(依赖子 entry)
             entries[rule.get("ref")] = self._base_entry(rule, att, inactive, claims)
-        for rule in self.rules:
-            if not rule.get("children_refs"):
-                continue
+        parents = [r for r in self.rules if r.get("children_refs")]
+        parents.sort(key=lambda r: self._rule_depth(r.get("ref")), reverse=True)
+        for rule in parents:
             entries[rule.get("ref")] = self._parent_entry(rule, entries, inactive)
         return [entries[r.get("ref")] for r in self.rules]
+
+    def _rule_depth(self, ref) -> int:
+        """规则在子规则树中的深度(顶层=0)。父规则按深度从深到浅计算,
+        确保算某父规则前其子规则(含本身也是父规则的中间节点)已先算好,
+        否则父规则会漏掉尚未计算的子父规则的 counted。"""
+        d, cur, seen = 0, ref, set()
+        while self._child_of.get(cur) and cur not in seen:
+            seen.add(cur)
+            cur = self._child_of[cur]
+            d += 1
+        return d
 
     def _parent_entry(self, rule: dict, entries: dict, inactive: set) -> dict:
         """SubRule 父规则(如 C「No Major Option」8–24):counted=子规则 counted 之和
@@ -585,7 +665,9 @@ class PlanSimulator:
         raw = sum(k["units_done"] for k in kids)
         effective, over_max = self._capped(sum(k["units_counted"] for k in kids), units_max)
         sub = parse_rule_logic(rule.get("rule_logic"))
-        kids_ok = (self._eval_logic(sub, {k["ref"]: k["done"] for k in kids})
+        if sub and self._logic_refs(sub) - {k["ref"] for k in kids}:
+            sub = None
+        kids_ok = (self._eval_logic(sub, {k["ref"]: k["done"] for k in kids}, branchable=False)
                    if sub else all(k["done"] for k in kids))
         if ref in inactive:
             raw = effective = 0.0
@@ -766,7 +848,7 @@ class PlanSimulator:
         seen: set[str] = set()
         st = {e["ref"]: e for e in self.status()}
         out: dict[str, list] = {}
-        for rule in self.rules:
+        for rule in self._ordered_rules():
             ref = rule.get("ref")
             if st[ref].get("inactive") or self._closed(st[ref]):
                 continue
@@ -812,7 +894,7 @@ class PlanSimulator:
         out: dict[str, list] = {}
         inactive = self._inactive_refs()
         att = self.attribution()
-        for rule in self.rules:
+        for rule in self._ordered_rules():
             ref = rule.get("ref")
             if ref in inactive:
                 continue

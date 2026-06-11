@@ -32,6 +32,7 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
     units_map = units_map or {}
     incompatible_map = incompatible_map or {}
     # 入学学期决定 S1/S2 交替起点:S1 入学 -> 格 0=S1;S2 入学 -> 格 0=S2
+    start_sem = "S2" if start_sem == "S2" else "S1"
     _other = "S2" if start_sem == "S1" else "S1"
     sem_kind = [start_sem if i % 2 == 0 else _other for i in range(n_semesters)]
     if semester_labels is None:

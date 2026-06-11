@@ -46,10 +46,11 @@ def _offerings(conn, codes) -> dict:
 def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1") -> dict:
     """时间表落位校验(确定性):开课学期 / 先修按更早学期 / 学分上限 / 互斥。"""
     um = sim.units_map()
+    start_sem = "S2" if start_sem == "S2" else "S1"
     _other = "S2" if start_sem == "S1" else "S1"
     kind = lambda i: start_sem if i % 2 == 0 else _other
     sem_units = [0.0] * n_sem
-    placed = {c: i for c, i in placement.items() if isinstance(i, int)}
+    placed = {c: i for c, i in placement.items() if isinstance(i, int) and 0 <= i < n_sem}
     by_course: dict[str, list] = {}
     for c, i in placed.items():
         # 树外课(E/F 搜索来的)学分查全库,树内查规则树,都缺才用默认
