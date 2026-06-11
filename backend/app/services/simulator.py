@@ -511,7 +511,9 @@ class PlanSimulator:
                     assign[c] = ref
                     counted[ref] += units(c)
                     return True
-                if counted[owner] - units(c) >= rule_req[owner] or augment(owner, visited):
+                while counted[owner] - units(c) < rule_req[owner] and augment(owner, visited):
+                    pass
+                if counted[owner] - units(c) >= rule_req[owner]:
                     counted[owner] -= units(c)
                     assign[c] = ref
                     counted[ref] += units(c)
@@ -720,13 +722,14 @@ class PlanSimulator:
             ]
             chosen_here = [p for p in plan_items if p.get("code") in self.chosen_plans]
             entry["chosen_plans"] = [p.get("code") for p in chosen_here]
-            # 择一语义:必需学分 = 修满 1 个分支。
-            # 已选分支 -> 取该分支(同 group 互斥,最多一个)的 units_min;
-            # 未选 -> 取各分支里最小的 units_min(至少修满一个分支)。
+            # 必需学分:规则自身有 units_min 就用它(如 from-plans 选修 A.3.2 自身=0,父规则
+            # 才是真实需求);仅当规则自身无 units_min 时才退回 plan 的 min(择一修满一个分支:
+            # 已选取该分支 min,未选取各分支最小 min)。
             if chosen_here:
-                required = max(self._required(p) for p in chosen_here)
+                if rule.get("units_min") is None:
+                    required = max(self._required(p) for p in chosen_here)
                 done_units += sum(self._plan_units_done(p, claims, ref) for p in chosen_here)
-            else:
+            elif rule.get("units_min") is None:
                 required = min((self._required(p) for p in plan_items), default=0.0)
             # plan 分支自身的封顶已在 _plan_units_done 内逐子规则处理,这里不再对整组封顶
             effective_done = done_units
