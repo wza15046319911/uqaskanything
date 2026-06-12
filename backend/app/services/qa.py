@@ -16,6 +16,7 @@ mode 路由:
 """
 from __future__ import annotations
 import os
+import re
 import argparse
 
 import psycopg
@@ -25,6 +26,12 @@ from app.services import planner, retrieval, program_lookup, answer
 from app.core.config import DSN
 ANSWER_CAP = 20      # 喂给答案模型的最多课程数(过多无意义且拉长 prompt)
 PROGRAM_CAP = 15     # course_to_programs 喂给答案模型的最多 program 数
+KB_PREFER_SIM = 0.55  # 课程语义 top sim 低于此且知识库召回更强时,转知识库(FAQ/article)
+KB_STRONG_SIM = 0.62  # filter 命中空时,知识库 top sim 达此高门槛才转(防弱相关误转,如校区课查询)
+# 日期/时点意图词:问的是「什么时候/哪天」而非课程本身 -> 即便 filter 命中课也该转知识库(学术日历)
+_DATE_INTENT = re.compile(r"什么时候|何时|哪天|几号|日期|开学|开课|放假|census|截止|deadline|when|start\s*date", re.I)
+# 真正的课程筛选维度:where 含这些才算「在查课程」;只有 year/semester 则是时间限定,非课程筛选
+_COURSE_DIM = re.compile(r"\b(level|units|has_exam|has_hurdle|location|attendance_mode)\b", re.I)
 EMPTY_MSG = "问题太宽泛或无法形成检索条件,请补充学科方向或筛选条件(如学期 / 有无考试 / 专业)。"
 REQ_LABEL = {"core": "必修", "elective": "选修"}
 _CN_NUM = {2: "二", 3: "三", 4: "四", 5: "五", 6: "六", 7: "七", 8: "八", 9: "九", 10: "十"}
@@ -151,9 +158,14 @@ def _retrieve(conn, question: str) -> dict:
     try:
         schema = planner.build_schema_doc(conn)
         p = planner.plan(question, schema, conn)
-    except ValueError as e:                     # 宽泛/无法规划 -> 优雅兜底,不抛 traceback
+    except ValueError as e:                     # 无法规划课程查询 -> 先试知识库,再优雅兜底
+        chunks = _kb_or_none(conn, question)
+        if chunks:
+            return {"plan": None, "mode": "kb",
+                    "meta": "kb(无法规划课程查询,转知识库)", "courses": [],
+                    "program_facts": None, "prog_answer": None, "chunks": chunks}
         return {"plan": None, "mode": "empty", "meta": str(e), "courses": [],
-                "program_facts": None, "prog_answer": None}
+                "program_facts": None, "prog_answer": None, "chunks": []}
 
     mode = p["mode"]
     courses: list[dict] = []
@@ -227,22 +239,62 @@ def _retrieve(conn, question: str) -> dict:
                 eg = excl_progs[0][1]
                 prog_answer += f" 另有 {len(excl_progs)} 个专业明确禁修该课(不计学分),如 {eg}。"
 
+    # KB 兜底:课程检索弱/空且知识库召回更强 -> 转知识库 FAQ/article。
+    # - census date / 改密码 这类 FAQ 会让 courses 语义召回到低相关课(sim 0.45~0.5),
+    #   不能只看「courses 是否为空」,要比 top sim(真课程问题如机器学习 top sim 高,不受影响)。
+    # - 日期类(「2026 开学/census 哪天」)常被误判成 filter 且课程命中空;用高 sim 门槛转 KB,
+    #   既能命中学术日历(sim≈0.66),又挡住「Gatton 校区的课」这种弱相关误转(sim≈0.6)。
+    kb_chunks = None
+    if mode in ("semantic", "hybrid"):
+        courses_top = max((c.get("sim") or 0.0 for c in courses), default=0.0)
+        if courses_top < KB_PREFER_SIM:
+            cand = _kb_or_none(conn, question)
+            if cand and cand[0]["sim"] > courses_top:
+                kb_chunks = cand
+    elif mode == "filter":
+        # filter 命中空,或「问的是日期(开学/census)且 where 只是时间限定(无课程筛选维度)」
+        # -> 多半不是课程查询(planner 把 2026/S1 当结构化条件了),知识库召回够强就转。
+        date_q = bool(_DATE_INTENT.search(question))
+        only_time = not _COURSE_DIM.search(p.get("where") or "")
+        if (not courses) or (date_q and only_time):
+            cand = _kb_or_none(conn, question)
+            if cand and cand[0]["sim"] >= KB_STRONG_SIM:
+                kb_chunks = cand
+    if kb_chunks:
+        return {"plan": p, "mode": "kb", "meta": f"kb(课程检索弱/空转知识库;原 {meta})",
+                "courses": [], "program_facts": None, "prog_answer": None, "chunks": kb_chunks}
+
     return {"plan": p, "mode": mode, "meta": meta,
-            "courses": courses, "program_facts": program_facts, "prog_answer": prog_answer}
+            "courses": courses, "program_facts": program_facts,
+            "prog_answer": prog_answer, "chunks": []}
+
+
+def _kb_or_none(conn, question: str) -> list:
+    """知识库语义检索;KB 是增强兜底层,其失败(如向量服务波动)只退化为「无召回」,
+    不拖垮主问答(优雅降级,不是静默成功:无结果时上层会走拒答/empty)。"""
+    try:
+        return retrieval.kb_search(conn, question)
+    except Exception:
+        return []
 
 
 def run(conn, question: str, generate: bool = True) -> dict:
     r = _retrieve(conn, question)
     if r["mode"] == "empty":
         return {"plan": None, "mode": "empty", "meta": r["meta"], "courses": [],
-                "program_facts": None, "answer": EMPTY_MSG if generate else None}
+                "program_facts": None, "chunks": [], "answer": EMPTY_MSG if generate else None}
     ans = None
     if generate:
-        ans = r["prog_answer"] if r["mode"] == "program" else \
-            answer.answer(question, r["courses"][:ANSWER_CAP],
-                          _gen_facts(r["courses"], r["program_facts"]))
+        if r["mode"] == "kb":
+            ans = answer.answer_kb(question, r["chunks"])
+        elif r["mode"] == "program":
+            ans = r["prog_answer"]
+        else:
+            ans = answer.answer(question, r["courses"][:ANSWER_CAP],
+                                _gen_facts(r["courses"], r["program_facts"]))
     return {"plan": r["plan"], "mode": r["mode"], "meta": r["meta"],
-            "courses": r["courses"], "program_facts": r["program_facts"], "answer": ans}
+            "courses": r["courses"], "program_facts": r["program_facts"],
+            "chunks": r.get("chunks", []), "answer": ans}
 
 
 def run_stream(conn, question: str):
@@ -251,8 +303,8 @@ def run_stream(conn, question: str):
        empty 给固定兜底句;program 答案确定性(单块);其余模式逐 token 流式 + 收尾护栏。"""
     r = _retrieve(conn, question)
     mode = r["mode"]
-    yield ("meta", {"mode": mode, "meta": r["meta"],
-                    "courses": r["courses"], "program_facts": r["program_facts"]})
+    yield ("meta", {"mode": mode, "meta": r["meta"], "courses": r["courses"],
+                    "program_facts": r["program_facts"], "chunks": r.get("chunks", [])})
 
     if mode == "empty":
         yield ("token", EMPTY_MSG)
@@ -262,6 +314,21 @@ def run_stream(conn, question: str):
         ans = r["prog_answer"] or ""
         yield ("token", ans)
         yield ("done", ans)
+        return
+    if mode == "kb":                            # 知识库:流式正文 + 收尾确定性附官方来源
+        chunks = r["chunks"]
+        if not chunks:
+            yield ("token", answer.KB_REFUSE)
+            yield ("done", answer.KB_REFUSE)
+            return
+        acc: list[str] = []
+        for delta in answer.answer_kb_stream(question, chunks):
+            acc.append(delta)
+            yield ("token", delta)
+        src = answer.kb_sources_block(chunks)
+        if src:
+            yield ("token", src)
+        yield ("done", "".join(acc) + src)
         return
 
     capped = r["courses"][:ANSWER_CAP]

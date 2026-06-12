@@ -192,6 +192,71 @@ def answer_stream(question: str, courses: list[dict], program_facts=None) -> Ite
     ])
 
 
+# ---------- 知识库(FAQ / article)答案生成 ----------
+# 弱召回拒答(不调 LLM):没检索到相关官方内容时,宁可说不确定 + 给官方入口(红线 3)。
+KB_REFUSE = ("抱歉,我在已收录的 UQ 官方页面里没找到能直接回答这个问题的内容。"
+             "建议到 my.UQ 学生支持页查询:https://my.uq.edu.au/ "
+             "(课程、专业、选课相关的问题也可以直接问我)。")
+
+KB_SYSTEM = """你是 UQ 学生事务助手。只能依据【资料】(来自 UQ 官方页面的片段)用简洁中文回答。
+硬性规则:
+- 资料里有相关内容就据此用简洁中文作答(英文资料要转述成中文),不要回避、不要说「暂无信息」;
+  只有资料确实没提到时才说不确定。绝不编造步骤、数字、日期或网址。
+- 涉及费用、截止日期、census date、退课/休学影响、考试安排等高风险信息,要提醒「以官方页面为准、注意时效」。
+- 简短:不超过 6 句,或用要点列表;不寒暄、不重复问题。
+- 不要自己写网址(系统会自动在末尾附上官方来源链接)。"""
+
+KB_USER_TMPL = """问题:{q}
+
+【资料】(UQ 官方页面片段)
+{facts}
+
+请只依据上面的【资料】用中文回答;若问的是具体日期/时间,从资料的日期清单里找出对应日期直接作答。"""
+
+
+def _kb_facts(chunks: list[dict]) -> str:
+    """把 KB chunk 序列化成编号事实清单(chunk.text 已含「页面标题 > h2 > h3」面包屑前缀)。"""
+    return "\n\n".join(f"[{i}] {(c.get('text') or '').strip()}"
+                       for i, c in enumerate(chunks, 1))
+
+
+def kb_sources_block(chunks: list[dict]) -> str:
+    """按 url 去重列出官方来源(红线 2:每个答案都带可一键核对的官方链接)。无来源返回空串。"""
+    seen: set = set()
+    items: list[str] = []
+    for c in chunks:
+        u = c.get("url")
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        title = c.get("page_title") or c.get("breadcrumb") or u
+        items.append(f"- {title}:{u}")
+    return "\n\n来源(UQ 官方页面,可点击核对):\n" + "\n".join(items) if items else ""
+
+
+def answer_kb(question: str, chunks: list[dict]) -> str:
+    """基于 KB chunk 的 grounded 答案:无 chunk 走拒答句;否则 LLM 生成正文 + 代码确定性附官方来源。"""
+    if not chunks:
+        return KB_REFUSE
+    body = llm.call([
+        {"role": "system", "content": KB_SYSTEM},
+        {"role": "user", "content": KB_USER_TMPL.format(q=question, facts=_kb_facts(chunks))},
+    ]).strip()
+    return body + kb_sources_block(chunks)
+
+
+def answer_kb_stream(question: str, chunks: list[dict]) -> Iterator[str]:
+    """流式 KB 答案:无 chunk yield 拒答句;否则逐 token 流式正文。
+    来源块由调用方(qa.run_stream)在收尾追加,保证 100% 带官方链接。"""
+    if not chunks:
+        yield KB_REFUSE
+        return
+    yield from llm.call_stream([
+        {"role": "system", "content": KB_SYSTEM},
+        {"role": "user", "content": KB_USER_TMPL.format(q=question, facts=_kb_facts(chunks))},
+    ])
+
+
 if __name__ == "__main__":
     # ---- 确定性自测(不依赖 Ollama,覆盖三个修复用例)----
     print("=== 确定性自测 ===")

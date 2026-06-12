@@ -233,6 +233,37 @@ def _fused_search(conn, where, query_en, k, min_sim) -> list[dict]:
     return out
 
 
+# ---------- 知识库(FAQ / article)语义检索 ----------
+KB_COLS = "id, url, source_type, page_title, breadcrumb, text"
+KB_KEYS = ("id", "url", "source_type", "page_title", "breadcrumb", "text")
+
+
+def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.55) -> list[dict]:
+    """知识库 chunk(support FAQ / study article)语义检索:bge-m3 向量近邻,返回 top-k。
+
+    用于课程/专业结构化数据答不了的一般学生事务问题(how-to / 政策 / FAQ)。
+    低于 min_sim 的一律滤掉——宁可不返回也不给弱相关结果(student-facing 红线 3:弱召回拒答)。
+    同一官方页面可能切多个 chunk,这里不去重(answer 层按 url 去重列来源)。
+    """
+    if not query or not query.strip():
+        raise ValueError("query 不能为空")
+    vec = _embed(query)
+    sql = (f"SELECT {KB_COLS}, 1-(embedding<=>%s::vector) AS sim FROM kb_chunks "
+           f"ORDER BY embedding<=>%s::vector LIMIT %s")
+    rows = conn.execute(sql, (vec, vec, k * 4)).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        sim = float(r[-1])
+        if sim < min_sim:
+            continue
+        d = dict(zip(KB_KEYS, r[:len(KB_KEYS)]))
+        d["sim"] = sim
+        out.append(d)
+        if len(out) >= k:
+            break
+    return out
+
+
 if __name__ == "__main__":
     from app.core.config import DSN
 
