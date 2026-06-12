@@ -19,3 +19,11 @@ dist/
 
 # Claude 运行时锁(任意层级)
 **/scheduled_tasks.lock
+
+# 知识库:数据随仓库一起带(换机器继续)。只排垃圾/临时残留。
+backend/data/kb/_smoke*.csv
+backend/data/kb/fetched_faq_seltest.jsonl
+backend/data/kb/fetched.jsonl
+
+# 含敏感浏览器 cookie 的本地实验脚本,绝不提交
+/main.py
