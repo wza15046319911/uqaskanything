@@ -12,5 +12,7 @@ lxml==6.1.1
 # 知识库(KB)爬取/评测专用(较重,按需安装)
 selenium==4.44.0
 undetected-chromedriver==3.5.5
+# uc 3.5.5 import 了 distutils;Python 3.13 已移除,需 setuptools<81 提供兼容垫片
+setuptools<81
 playwright==1.60.0
 sentence-transformers==5.5.1

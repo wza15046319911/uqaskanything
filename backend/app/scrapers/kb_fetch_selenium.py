@@ -16,12 +16,15 @@ REST 全 403。但 **headed 真实 Chrome(非 chromium)+ undetected-chromedriver
     python -m app.scrapers.kb_fetch_selenium --limit 15      # 小批试
     python -m app.scrapers.kb_fetch_selenium                 # 全量(约 1 小时)
     python -m app.scrapers.kb_fetch_selenium --resume        # 续抓
+    每篇渲染等待在 [--delay-min, --delay-max](默认 3–6s)间随机,避免固定间隔被 Akamai 识别;
+    撞限速时加大区间分小批:--resume --limit 30 --delay-min 5 --delay-max 10
 """
 from __future__ import annotations
 import re
 import csv
 import json
 import time
+import random
 import argparse
 from pathlib import Path
 
@@ -72,8 +75,11 @@ def main():
     ap.add_argument("--out-dir", default=str(DATA_DIR / "kb" / "raw" / "support.my.uq.edu.au"))
     ap.add_argument("--manifest", default=str(DATA_DIR / "kb" / "fetched_faq.jsonl"))
     ap.add_argument("--limit", type=int, default=0, help="只抓前 N 个(试)")
-    ap.add_argument("--delay", type=float, default=2.5, help="每篇渲染等待秒")
+    ap.add_argument("--delay-min", type=float, default=3.0, help="每篇渲染等待秒下限")
+    ap.add_argument("--delay-max", type=float, default=6.0, help="每篇渲染等待秒上限(在 [min,max] 间随机)")
     ap.add_argument("--resume", action="store_true", help="跳过 manifest 已抓的 a_id 续抓")
+    ap.add_argument("--stop-after", type=int, default=12,
+                    help="连续失败达此数即停(疑似撞 Akamai 限速,省得空跑)")
     args = ap.parse_args()
 
     aids = _support_aids(Path(args.csv))
@@ -90,17 +96,21 @@ def main():
 
     driver = uc.Chrome(headless=False)
     ok = fail = 0
+    consec_fail = 0
     failed: list[tuple[str, str]] = []
+    stopped = False
     try:
         driver.get(HOME)
         time.sleep(4)
         for i, aid in enumerate(todo, 1):
             canonical = CANON.format(aid=aid)
             try:
-                html = _grab(driver, canonical, args.delay)
+                html = _grab(driver, canonical, random.uniform(args.delay_min, args.delay_max))
                 body = trafilatura.extract(html) or ""
                 if "access denied" in html.lower() or len(body) < 100:
-                    html = _grab(driver, canonical, args.delay + 1.5)   # 重试一次
+                    # 重试用更长等待(上限再加 2s 区间),给被限速的页面更多冷却
+                    html = _grab(driver, canonical,
+                                 random.uniform(args.delay_max, args.delay_max + 2.0))
                     body = trafilatura.extract(html) or ""
                 if "access denied" in html.lower() or len(body) < 100:
                     raise RuntimeError(f"blocked/empty (body={len(body)}c)")
@@ -116,12 +126,19 @@ def main():
                 mf.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 mf.flush()
                 ok += 1
+                consec_fail = 0
             except Exception as e:
                 fail += 1
+                consec_fail += 1
                 failed.append((aid, str(e)[:60]))
+                if consec_fail >= args.stop_after:        # 连续失败 -> 疑似 Akamai 限速,早停省时
+                    stopped = True
+                    print(f"\n连续 {consec_fail} 篇失败,疑似撞 Akamai 限速,提前停止"
+                          f"(已到 {i}/{len(todo)})。等冷却后再 --resume 续抓。")
+                    break
             if i % 20 == 0 or i == len(todo):
                 print(f"  {i}/{len(todo)}  ok={ok} fail={fail}")
-            time.sleep(0.5)
+            time.sleep(random.uniform(0.5, 1.5))
     finally:
         driver.quit()
         mf.close()
