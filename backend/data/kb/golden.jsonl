@@ -1,0 +1,45 @@
+{"q": "Can I still enrol in a course after the census date has passed?", "expect": "a_id/3097"}
+{"q": "What exactly is the census date and why does it matter?", "expect": "a_id/329"}
+{"q": "What's the difference between withdrawing from my studies and interrupting them?", "expect": "a_id/1922"}
+{"q": "I missed my exam, can I apply for a deferred exam?", "expect": "a_id/2179"}
+{"q": "What should I do if I'm unable to sit my exam?", "expect": "a_id/76"}
+{"q": "How do I work out my GPA?", "expect": "a_id/233"}
+{"q": "What does prerequisite mean on a course profile?", "expect": "a_id/2372"}
+{"q": "What is the difference between credit and exemption?", "expect": "a_id/2598"}
+{"q": "Is there any way to get a discount on my tuition fees?", "expect": "a_id/2386"}
+{"q": "How do I transfer credit for study I did at another university?", "expect": "a_id/69"}
+{"q": "When do exam results come out and where can I see my grades?", "expect": "a_id/717"}
+{"q": "Can I take a course that isn't part of my program?", "expect": "a_id/1217"}
+{"q": "Where do I find my Confirmation of Enrolment number?", "expect": "a_id/2423"}
+{"q": "How long does a refund take after I withdraw?", "expect": "a_id/1908"}
+{"q": "I don't think my grade reflects my performance, what can I do?", "expect": "a_id/111"}
+{"q": "How do I resume my program after deferring or interrupting it?", "expect": "a_id/296"}
+{"q": "Who can give me advice about my student visa?", "expect": "a_id/1921"}
+{"q": "Can I go to a later graduation ceremony instead?", "expect": "a_id/39"}
+{"q": "What's the difference between undergraduate and postgraduate programs?", "expect": "a_id/2055"}
+{"q": "What is an academic transcript?", "expect": "a_id/2376"}
+{"q": "How do I request an assignment extension or a deferred exam?", "expect": "a_id/1182"}
+{"q": "What is a graduate certificate?", "expect": "a_id/1618"}
+{"q": "Does going to class count towards my course grade?", "expect": "a_id/2422"}
+{"q": "What is a bridging program?", "expect": "a_id/1681"}
+{"q": "Can I start my degree in the middle of the year?", "expect": "a_id/352"}
+{"q": "What happens to my UQ email after I graduate or stop being enrolled?", "expect": "a_id/3046"}
+{"q": "I arrived late to my exam, what should I do?", "expect": "a_id/2192"}
+{"q": "How can I get feedback on my exam?", "expect": "a_id/505"}
+{"q": "I need help sorting out my timetable, where do I go?", "expect": "a_id/72"}
+{"q": "What letters can I put after my name once I graduate?", "expect": "a_id/2152"}
+{"q": "How do I reset my UQ password?", "expect": "a_id/2535"}
+{"q": "I can't connect to the VPN, what should I do?", "expect": "a_id/2532"}
+{"q": "How do I get a letter confirming my enrolment?", "expect": "a_id/64"}
+{"q": "Do I still graduate if I do honours next year?", "expect": "a_id/33"}
+{"q": "My wifi stopped working after I changed my password", "expect": "a_id/2512"}
+{"q": "How do I query a final grade I think is wrong?", "expect": "querying-result"}
+{"q": "What is the late enrolment fee?", "expect": "late-enrolment-fees"}
+{"q": "Where do I find UQ mobile apps?", "expect": "mobile-apps"}
+{"q": "How can I get financial support or an emergency loan?", "expect": "financial-support"}
+{"q": "What on-campus accommodation options does UQ offer?", "expect": "accommodation"}
+{"q": "What software is free for UQ students?", "expect": "software-content"}
+{"q": "How do I become a UQ student mentor?", "expect": "become-uq-mentor"}
+{"q": "Tropical Cyclone Alfred student updates", "expect": "tropical-cyclone-alfred"}
+{"q": "Entry requirements for non school leavers admission", "expect": "non-school-leavers"}
+{"q": "How do I get an enrolment statement to prove I study at UQ?", "expect": "a_id/64"}
