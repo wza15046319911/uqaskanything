@@ -1,0 +1,12 @@
+{"q": "What exactly is the census date and why does it matter?", "mode": "kb", "source_has": "a_id/329"}
+{"q": "How do I work out my GPA?", "mode": "kb", "source_has": "a_id/233"}
+{"q": "I missed my exam, can I apply for a deferred exam?", "mode": "kb", "source_has": "a_id/2179"}
+{"q": "census date 是什么时候", "mode": "kb", "source_has": "来源"}
+{"q": "怎么重置 UQ 密码", "mode": "kb", "source_has": "来源"}
+{"q": "怎么申请 UQ 的火星交换生项目", "refuse": true}
+{"q": "UQ 量子菠萝研究中心在哪栋楼", "refuse": true}
+{"q": "CSSE1001是哪些专业的必修", "mode": "program", "answer_has": ["CSSE1001"]}
+{"q": "CSSE1001 讲什么", "mode": "course_detail"}
+{"q": "没有考试的研究生课", "mode": "filter"}
+{"q": "跟机器学习相关的课", "mode": "semantic"}
+{"q": "CS有哪些课程没有考试", "mode": "hybrid"}

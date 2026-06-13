@@ -19,3 +19,20 @@ dist/
 
 # Claude 运行时锁(任意层级)
 **/scheduled_tasks.lock
+
+# 大体积数据:本地保留,不入 git(体积大,曾触顶 GitHub 单文件上限)。
+# 换机器需手动拷贝 backend/data/,或重爬 + 本地重建;详见 backend/docs/kb_progress.md。
+# 仍入库的小文件:urls.csv / golden.jsonl / eval/ / *.txt 码表 / aux_rules.jsonl。
+backend/data/courses*.jsonl
+backend/data/programs*.jsonl
+backend/data/kb/raw/
+backend/data/kb/fetched_*.jsonl
+backend/data/kb/chunks.jsonl
+backend/data/kb/chunks_faq.jsonl
+backend/data/kb/chunks_all.jsonl
+backend/data/kb/chunk_vecs.jsonl
+backend/data/kb/kb_vocab.txt
+backend/data/kb/_smoke*.csv
+
+# 含敏感浏览器 cookie 的本地实验脚本,绝不提交
+/main.py

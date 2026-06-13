@@ -1,5 +1,15 @@
-import type { DragEvent, ReactNode } from 'react'
-import type { SimLocalState } from '../../lib/sim'
+import { useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import {
+  Alert,
+  Chip,
+  ComboBox,
+  Input,
+  ListBox,
+  ProgressBar,
+  ToggleButton,
+  ToggleButtonGroup,
+} from '@heroui/react'
+import { type SimLocalState, setDragCode } from '../../lib/sim'
 import type { AdviseResponse, Rule, SimCourse, SimStateResponse } from '../../api/sim'
 
 interface RulesPaneProps {
@@ -19,25 +29,69 @@ interface RulesPaneProps {
   onAdvise: () => void
 }
 
-const dragCode = (e: DragEvent, code: string) => e.dataTransfer.setData('text/plain', code)
+const dragCode = (e: DragEvent, code: string) => {
+  setDragCode(code)
+  e.dataTransfer.setData('text/plain', code)
+}
+
+const CARD_CLS =
+  'flex cursor-grab items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 transition hover:-translate-y-px hover:border-accent active:cursor-grabbing'
 
 export default function RulesPane(props: RulesPaneProps) {
-  const { data, csQuery, csResults, offered, goal, advising, advice } = props
-  const { onSetBranch, onSetPlan, onPick, onCsearch, onGoalChange, onAdvise } = props
+  const { data, csQuery, csResults, offered } = props
+  const { onSetBranch, onSetPlan, onPick, onCsearch } = props
 
   const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
+
+  const paneRef = useRef<HTMLElement>(null)
+  const [jumpQ, setJumpQ] = useState('')
+  const jumpPool = useMemo(() => {
+    const s = new Set<string>()
+    Object.values(data.available_by_rule || {}).forEach((slots) =>
+      slots.forEach((slot) =>
+        slot.kind === 'course' ? s.add(slot.code) : slot.options.forEach((o) => s.add(o)),
+      ),
+    )
+    Object.values(data.selected_by_rule || {}).forEach((arr) => arr.forEach((c) => s.add(c)))
+    return [...s]
+  }, [data])
+  const jq = jumpQ.trim().toLowerCase()
+  const jumpHits = jq
+    ? jumpPool
+        .filter((c) => c.toLowerCase().includes(jq) || ctitle(c).toLowerCase().includes(jq))
+        .slice(0, 12)
+        .map((c) => ({ code: c, title: ctitle(c) }))
+    : []
+  const jumpTo = (code: string) => {
+    setJumpQ('')
+    const el = paneRef.current?.querySelector(`[data-code="${code}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      el.classList.add('flash')
+      window.setTimeout(() => el.classList.remove('flash'), 1200)
+    }
+  }
   const offTag = (c: string) => {
     const o = offered(c)
-    return o ? <span className="coff">{o.join('·')}</span> : null
+    return o ? (
+      <Chip size="sm" variant="soft" className="shrink-0">
+        {o.join('·')}
+      </Chip>
+    ) : null
   }
   const lockTag = (c: string) => {
     const l = data.locks?.[c]
     if (!l) return null
-    if (l.state === 'unknown') return <span className="clock unk">先修待核</span>
+    if (l.state === 'unknown')
+      return (
+        <Chip size="sm" variant="soft" className="shrink-0">
+          先修待核
+        </Chip>
+      )
     return (
-      <span className="clock" title={l.reason || ''}>
+      <Chip size="sm" variant="soft" color="warning" className="shrink-0" title={l.reason || ''}>
         需先修
-      </span>
+      </Chip>
     )
   }
 
@@ -46,13 +100,16 @@ export default function RulesPane(props: RulesPaneProps) {
     return (
       <div
         key={c}
-        className={`ccard${locked ? ' locked' : ''}`}
+        data-code={c}
+        className={`${CARD_CLS}${locked ? ' opacity-60' : ''}`}
         draggable
         onDragStart={(e) => dragCode(e, c)}
         onClick={() => onPick(c)}
       >
-        <span className="ccode">{c}</span>
-        <span className="ctitle">{ctitle(c)}</span>
+        <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
+          {c}
+        </Chip>
+        <span className="min-w-0 flex-1 truncate text-[13px]">{ctitle(c)}</span>
         {offTag(c)}
         {lockTag(c)}
       </div>
@@ -60,19 +117,22 @@ export default function RulesPane(props: RulesPaneProps) {
   }
 
   const equivCard = (options: string[], k: number): ReactNode => (
-    <div key={`eq-${k}`} className="ccard equiv">
-      <div style={{ flex: 1, minWidth: 0 }}>
+    <div key={`eq-${k}`} className={`${CARD_CLS} cursor-default border-dashed`}>
+      <div className="min-w-0 flex-1">
         {options.map((c, i) => (
           <div key={c}>
-            {i > 0 && <div className="or">— 二选一 —</div>}
+            {i > 0 && <div className="px-1 pt-1 text-[10px] font-bold text-muted">— 二选一 —</div>}
             <div
+              data-code={c}
               draggable
               onDragStart={(e) => dragCode(e, c)}
               onClick={() => onPick(c)}
-              style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'grab', minWidth: 0 }}
+              className="flex min-w-0 cursor-grab items-center gap-2 active:cursor-grabbing"
             >
-              <span className="ccode">{c}</span>
-              <span className="ctitle">{ctitle(c)}</span>
+              <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
+                {c}
+              </Chip>
+              <span className="min-w-0 flex-1 truncate text-[13px]">{ctitle(c)}</span>
               {offTag(c)}
               {lockTag(c)}
             </div>
@@ -85,14 +145,21 @@ export default function RulesPane(props: RulesPaneProps) {
   const resCard = (x: SimCourse): ReactNode => (
     <div
       key={x.code}
-      className="ccard"
+      data-code={x.code}
+      className={CARD_CLS}
       draggable
       onDragStart={(e) => dragCode(e, x.code)}
       onClick={() => onPick(x.code)}
     >
-      <span className="ccode">{x.code}</span>
-      <span className="ctitle">{x.title || '(无信息)'}</span>
-      {x.offerings?.length ? <span className="coff">{x.offerings.join('·')}</span> : null}
+      <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
+        {x.code}
+      </Chip>
+      <span className="min-w-0 flex-1 truncate text-[13px]">{x.title || '(无信息)'}</span>
+      {x.offerings?.length ? (
+        <Chip size="sm" variant="soft" className="shrink-0">
+          {x.offerings.join('·')}
+        </Chip>
+      ) : null}
     </div>
   )
 
@@ -102,15 +169,16 @@ export default function RulesPane(props: RulesPaneProps) {
       rule.open_scope === 'program' ? '搜程序课表内的课(码/课名)…' : '搜全校任意课程(码/课名)…'
     return (
       <>
-        {picked.length > 0 && <div className="clist">{picked.map(leftCard)}</div>}
-        <div className="csearch">
-          <input
+        {picked.length > 0 && <div className="flex flex-col gap-1.5">{picked.map(leftCard)}</div>}
+        <div className="mt-1">
+          <Input
             placeholder={ph}
             value={csQuery[rule.ref] || ''}
             onChange={(e) => onCsearch(rule.ref, e.target.value)}
             autoComplete="off"
+            className="mt-1.5 mb-1 w-full"
           />
-          <div className="clist">{(csResults[rule.ref] || []).map(resCard)}</div>
+          <div className="flex flex-col gap-1.5">{(csResults[rule.ref] || []).map(resCard)}</div>
         </div>
       </>
     )
@@ -127,9 +195,14 @@ export default function RulesPane(props: RulesPaneProps) {
 
   if ((ov.unattributed || []).length) {
     nodes.push(
-      <div className="unatt" key="unatt">
-        ⚠ {ov.unattributed!.length} 门课未计入任何规则:{ov.unattributed!.join('、')}
-      </div>,
+      <Alert status="warning" className="my-2.5" key="unatt">
+        <Alert.Indicator />
+        <Alert.Content>
+          <Alert.Description>
+            {ov.unattributed!.length} 门课未计入任何规则:{ov.unattributed!.join('、')}
+          </Alert.Description>
+        </Alert.Content>
+      </Alert>,
     )
   }
 
@@ -141,20 +214,32 @@ export default function RulesPane(props: RulesPaneProps) {
         toggled.add(key)
         const cur = chosenBr[key]
         nodes.push(
-          <div className="brtoggle" key={`br-${key}`}>
-            <span className="lbl">二选一路径:</span>
-            {g.map((ref) => {
-              const r2 = data.rules.find((x) => x.ref === ref)
-              return (
-                <span
-                  className={`brpill${ref === cur ? ' on' : ''}`}
-                  key={ref}
-                  onClick={() => onSetBranch(ref)}
-                >
-                  {ref} · {r2?.title || ref}
-                </span>
-              )
-            })}
+          <div
+            className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-2.5 py-2 text-xs"
+            key={`br-${key}`}
+          >
+            <span className="shrink-0 text-muted">二选一路径:</span>
+            <ToggleButtonGroup
+              selectionMode="single"
+              disallowEmptySelection
+              selectedKeys={new Set(cur ? [cur] : [])}
+              onSelectionChange={(keys: 'all' | Set<string | number>) => {
+                if (keys === 'all') return
+                const k = [...keys][0]
+                if (k != null) onSetBranch(String(k))
+              }}
+            >
+              {g.map((ref) => {
+                const r2 = data.rules.find((x) => x.ref === ref)
+                return (
+                  <ToggleButton key={ref} id={ref} className="max-w-full">
+                    <span className="truncate">
+                      {ref} · {r2?.title || ref}
+                    </span>
+                  </ToggleButton>
+                )
+              })}
+            </ToggleButtonGroup>
           </div>,
         )
       }
@@ -184,7 +269,7 @@ export default function RulesPane(props: RulesPaneProps) {
     let body: ReactNode
     if (slots.length) {
       body = (
-        <div className="clist">
+        <div className="flex flex-col gap-1.5">
           {slots.map((s, i) => (s.kind === 'equiv' ? equivCard(s.options, i) : leftCard(s.code)))}
         </div>
       )
@@ -192,13 +277,13 @@ export default function RulesPane(props: RulesPaneProps) {
       body = searchSection(rule)
     } else if (rule.children_refs) {
       body = (
-        <div className="ttempty">
+        <div className="px-0.5 py-1.5 text-xs text-muted italic">
           由 {rule.children_refs.join(' + ')} 组成,总量 {mn}–{mx} 学分
         </div>
       )
     } else if (!rule.plan_options) {
       body = (
-        <div className="ttempty">
+        <div className="px-0.5 py-1.5 text-xs text-muted italic">
           {hasMax && mx > 0
             ? `可修任意课程,最多 ${mx} 学分,本表不逐一枚举`
             : rule.done
@@ -209,40 +294,97 @@ export default function RulesPane(props: RulesPaneProps) {
     }
 
     nodes.push(
-      <div className={`rulesec${rule.child_of ? ' childsec' : ''}`} key={rule.ref}>
-        <div className="rulehead">
-          <span className="rref">{rule.ref}</span>
-          <span className="rtitle">{rule.title}</span>
-          <span className="runits">
+      <div
+        className={`mb-3.5${rule.child_of ? ' ml-3.5 border-l-2 border-border pl-2.5' : ''}`}
+        key={rule.ref}
+      >
+        <div className="mb-1.5 flex items-baseline gap-2">
+          <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
+            {rule.ref}
+          </Chip>
+          <span className="text-[13.5px] font-semibold">{rule.title}</span>
+          <span className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted tabular-nums">
             {typeTag} {label}
             {tail}
           </span>
         </div>
-        <div className={`pbar${rule.over_max ? ' over' : ''}`}>
-          <i style={{ width: `${pct}%` }}></i>
-        </div>
-        {rule.plan_options?.map((po) => (
-          <div
-            key={po.code}
-            className={`major${(rule.chosen_plans || []).includes(po.code) ? ' on' : ''}`}
-            onClick={() => onSetPlan(po.code)}
+        <ProgressBar
+          aria-label={rule.title}
+          value={pct}
+          size="sm"
+          color={rule.over_max ? 'warning' : 'accent'}
+          className="mb-2"
+        >
+          <ProgressBar.Track>
+            <ProgressBar.Fill />
+          </ProgressBar.Track>
+        </ProgressBar>
+        {rule.plan_options && (
+          <ToggleButtonGroup
+            className="mb-1.5 flex-col items-stretch"
+            selectionMode="single"
+            selectedKeys={new Set(rule.chosen_plans || [])}
+            onSelectionChange={(keys: 'all' | Set<string | number>) => {
+              if (keys === 'all') return
+              const k = [...keys][0]
+              if (k != null) onSetPlan(String(k))
+              else if ((rule.chosen_plans || [])[0]) onSetPlan((rule.chosen_plans || [])[0])
+            }}
           >
-            <span className="radio"></span>
-            <span style={{ flex: 1 }}>{po.name}</span>
-            <span className="runits">{po.units_min}u</span>
-          </div>
-        ))}
+            {rule.plan_options.map((po) => (
+              <ToggleButton key={po.code} id={po.code} className="justify-between gap-2">
+                <span className="min-w-0 flex-1 truncate text-left">{po.name}</span>
+                <span className="shrink-0 text-xs text-muted tabular-nums">{po.units_min}u</span>
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+        )}
         {body}
       </div>,
     )
   }
 
   return (
-    <section className="pane">
-      <div className="panehead">
-        <h2>能修的课</h2>
-        <span className="hint">拖到右侧 / 点一下自动放</span>
+    <section
+      className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface"
+      ref={paneRef}
+    >
+      <div className="mb-3 flex items-center gap-2.5">
+        <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">能修的课</h2>
+        <span className="ml-auto text-xs text-muted">拖到右侧 / 点一下自动放</span>
       </div>
+      <div className="mb-2.5">
+        <ComboBox
+          aria-label="跳到课程:输课程码或课名快速定位…"
+          inputValue={jumpQ}
+          onInputChange={setJumpQ}
+          selectedKey={null}
+          onSelectionChange={(key: string | number | null) => {
+            if (key != null) jumpTo(String(key))
+          }}
+          items={jumpHits}
+          allowsCustomValue
+          menuTrigger="input"
+        >
+          <ComboBox.InputGroup>
+            <Input placeholder="跳到课程:输课程码或课名快速定位…" autoComplete="off" />
+            <ComboBox.Trigger />
+          </ComboBox.InputGroup>
+          <ComboBox.Popover>
+            <ListBox>
+              {(h: { code: string; title: string }) => (
+                <ListBox.Item id={h.code} textValue={`${h.code} ${h.title}`}>
+                  <span className="shrink-0 font-mono text-xs font-semibold text-accent">
+                    {h.code}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[13px]">{h.title}</span>
+                </ListBox.Item>
+              )}
+            </ListBox>
+          </ComboBox.Popover>
+        </ComboBox>
+      </div>
+      {/* AI 建议(暂时隐藏,代码保留以便恢复)
       <div className="csearch advisebar">
         <input
           placeholder="AI 建议:说说目标,如「想做 AI 安全」…"
@@ -266,7 +408,11 @@ export default function RulesPane(props: RulesPaneProps) {
           {advice.candidates?.length ? (
             <div className="clist">
               {advice.candidates.map((c) =>
-                resCard({ code: c.code, title: c.title ?? null, offerings: c.offerings || [] }),
+                resCard({
+                  code: c.code,
+                  title: c.title ?? null,
+                  offerings: advice.offerings?.[c.code] || [],
+                }),
               )}
             </div>
           ) : null}
@@ -277,7 +423,12 @@ export default function RulesPane(props: RulesPaneProps) {
           ) : null}
         </div>
       )}
-      {nodes.length ? nodes : <div className="note">没有可选课程。</div>}
+      */}
+      {nodes.length ? (
+        nodes
+      ) : (
+        <div className="py-5 text-center text-sm text-muted">没有可选课程。</div>
+      )}
     </section>
   )
 }

@@ -108,6 +108,7 @@ export interface ScheduleResponse {
   semesters: { label: string; courses: { code: string }[]; units: number }[]
   unplaced: { code: string; reason: string }[]
   warnings: string[]
+  courses?: Record<string, CourseMeta>
   error?: string
 }
 
@@ -156,7 +157,10 @@ export async function postSimState(req: SimStateReq): Promise<SimStateResponse> 
   return postJson<SimStateResponse>('/api/sim/state', req)
 }
 
-export async function getSimCourses(q: string, inProgram?: string): Promise<SimCourse[]> {
+export async function getSimCourses(
+  q: string,
+  inProgram?: string,
+): Promise<SimCourse[] | { error: string }> {
   const params = new URLSearchParams({ q })
   if (inProgram) params.set('in_program', inProgram)
   const r = await fetch('/api/sim/courses?' + params)

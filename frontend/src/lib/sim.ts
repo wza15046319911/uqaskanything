@@ -13,14 +13,20 @@ export interface SimLocalState {
 
 const OTHER: Record<string, string> = { S1: 'S2', S2: 'S1' }
 
+function normSem(startSem: string): string {
+  return startSem === 'S2' ? 'S2' : 'S1'
+}
+
 // 格 i 是 S1 还是 S2:由入学学期决定起点,之后交替。
 export function semKind(startSem: string, i: number): string {
-  return i % 2 === 0 ? startSem : (OTHER[startSem] ?? 'S2')
+  const s = normSem(startSem)
+  return i % 2 === 0 ? s : OTHER[s]
 }
 
 // 格 i 的日历年:S1 入学每 2 格进 1 年;S2 入学时下一个 S1 已是次年。
 export function semYear(startYear: number, startSem: string, i: number): number {
-  return startSem === 'S1' ? startYear + Math.floor(i / 2) : startYear + Math.floor((i + 1) / 2)
+  const s = normSem(startSem)
+  return s === 'S1' ? startYear + Math.floor(i / 2) : startYear + Math.floor((i + 1) / 2)
 }
 
 const LS_KEY = 'uq_sim_v3'
@@ -50,4 +56,14 @@ export function loadState(): SimLocalState {
 
 export function saveState(s: SimLocalState): void {
   localStorage.setItem(LS_KEY, JSON.stringify(s))
+}
+
+let dragCode: string | null = null
+
+export function setDragCode(code: string | null): void {
+  dragCode = code
+}
+
+export function getDragCode(): string | null {
+  return dragCode
 }

@@ -1,0 +1,108 @@
+# 知识库进度 (KB progress)
+
+> FAQ / 资料页知识库(plan.md)。与 programs/courses 结构化数据互补,做向量路问答。
+> 红线约束见 `.claude/rules/student-facing.md`。
+
+| 项 | 值 |
+|----|----|
+| 阶段一 urls.csv | **1776** 个 URL(support 846 / my.uq 587 / study 343) |
+| article 全量 | 抓 **930/930**(0 失败)→ 解析 **928 页** → **1645 chunk** |
+| support faq | **846/846 (100%)** = selenium headed 783 + Wayback 63;分批冷却抓完(2026-06-13) |
+| chunks 合计 | **2521**(article 1658〔含学术日历 21〕+ faq 863);召回 hit@1 80% / hit@3 98%(45 题) |
+| 入库 + 检索 | **已灌 pgvector `kb_chunks` 2521 行** + **接进问答路由**(qa KB 兜底,带官方 URL);新页实测 top-1 召回 |
+| 最后更新 | 2026-06-13 |
+
+## 阶段一:URL 发现(M1 完成)
+
+`python -m app.scrapers.kb_discover` → `data/kb/urls.csv`。
+
+- **support.my.uq.edu.au** 846(FAQ;robots 整站 Disallow,经授权覆盖,见 `ROBOTS_OVERRIDE`)
+- **my.uq.edu.au** 587(学生服务)
+- **study.uq.edu.au** 343(排除 6967:program/course 详情页 DB 已有 + 营销文)
+- 推迟到阶段四 Playwright:`policies.uq.edu.au`(原 ppl 整域 301 迁来,JS SPA 无 sitemap)、
+  `library.uq.edu.au`(JS SPA);`graduate-school.uq.edu.au` 域名已下线
+
+## M1.5 先导试点:article 端到端(已验收)
+
+40 篇 article(round-robin 跨 40 个 path_pattern),只走 3c trafilatura 兜底解析器。
+
+| 验收点 | 结果 |
+|----|----|
+| 解析成功率 | 100% (40/40),无 <200 字符的 JS 失败页 |
+| 切分 token/chunk 中位 | 365(调贪心打包前 92);落 300–800 区间 57%;过碎 31→1 |
+| chunk 数 | 60(每页 1.5) |
+| 召回 hit@1 / hit@3 | **90% / 100%**(10 个真实问题,bge-m3 内存余弦) |
+
+**结论:article 这条路技术可行,效果达标,可放大。**
+
+## article 全量(已抓+解析)
+
+`kb_fetch --type article --per-pattern 0 --max 0` → 930/930 成功(2 个重定向首页标记下线)。
+`kb_parse` 全量解析:928 页(跳过 2 下线)解析成功率 100%,产 1645 chunk;
+token 中位 520、落 300–800 区间 71%;4 页正文 <200 字符(疑似 JS,归 Playwright 抽查)。
+
+工具:`kb_fetch`(抓 raw)→ `kb_parse`(解析+切分+质量报告)→ `kb_eval`(召回评测)。
+
+数据:`data/kb/{raw/, fetched_*.jsonl}` 是抓取源,**体积大,已不入 git(本地保留)**;
+`urls.csv / golden.jsonl` 仍入库。
+
+## 数据不入 git(体积大,本地保留)
+
+为避免触顶 GitHub 单文件/仓库上限,`backend/data/` 下的大文件已 `.gitignore`、本地保留:
+- 抓取源:`kb/raw/`(渲染后 HTML)、`kb/fetched_*.jsonl`(抓取清单)、
+  `courses*.jsonl` / `programs*.jsonl`(课程/培养方案抓取产出)
+- 派生物:`kb/chunks*.jsonl`、`kb/chunk_vecs.jsonl`
+
+仍入 git 的小文件:`kb/urls.csv`、`kb/golden.jsonl`、`eval/`、各 `*.txt` 码表、`aux_rules.jsonl`。
+
+**换机器**:git 只带代码 + 上述小文件;`backend/data/` 大文件需手动拷贝,或重爬重建。
+
+### 派生物本地重建(有 raw HTML 时无需重爬,需 Ollama 跑 bge-m3)
+
+```bash
+# 1. 解析 raw -> chunks(article + faq 分别跑)
+python -m app.pipelines.kb_parse --manifest data/kb/fetched_article.jsonl --out data/kb/chunks.jsonl     --doc-type article
+python -m app.pipelines.kb_parse --manifest data/kb/fetched_faq.jsonl     --out data/kb/chunks_faq.jsonl --doc-type faq
+# 2. 合并
+cat data/kb/chunks.jsonl data/kb/chunks_faq.jsonl > data/kb/chunks_all.jsonl
+# 3. 增量 embed(按 id 缓存到 chunk_vecs.jsonl,只算新 chunk)
+python -m app.pipelines.kb_eval --chunks data/kb/chunks_all.jsonl --cache data/kb/chunk_vecs.jsonl
+# 4. 灌 pgvector
+python -m app.pipelines.kb_build --chunks data/kb/chunks_all.jsonl
+```
+
+## 已知粗糙点
+
+- **support 反爬:headed 真实 Chrome 可过,但会被限速**。requests / Playwright-headless /
+  后端域 / REST 全 403(Akamai JS sensor)。但 **undetected-chromedriver + headed 真实
+  Chrome(非 chromium)能过**(`kb_fetch_selenium.py`,实测稳定)。限速时返回固定 ~509 字符的
+  Access Denied 页(`blocked/empty body=509c`),脚本连续失败达 `--stop-after`(默认 12)即早停。
+  - **续抓节奏**(2026-06-13):delay 已改成 `--delay-min/--delay-max` 间随机(默认 3–6s,
+    篇间 0.5–1.5s 随机,重试更长),避免固定间隔被识别。一批约抓 50–60 篇后仍会撞 Akamai 限速早停;
+    **等冷却(经验 ≥20–30min)后 `--resume` 再续一批**,可加大 `--delay-min 6 --delay-max 12`。
+    累计 444(selenium)+ Wayback ≈ **498/846**;余 ~348 篇按此分批续。headless 必失败,勿改 headless=True。
+  - **Python 3.13 坑**:`undetected-chromedriver==3.5.5`(已是最新)import 了 3.13 移除的
+    `distutils` → 必须装 `setuptools<81`(提供 distutils 垫片)才能跑。Chrome 149 + uc 3.5.5 实测兼容。
+- 表格页(如 software-content):trafilatura markdown 表格被硬切切碎,正文语义弱,召回偏低。
+  阶段三可针对处理或 `include_tables=False`。
+- fetch 仍是同步 requests、无 SQLite pages 表;全量持续抓时按 plan 上 httpx+asyncio + SQLite。
+- 召回验证是内存余弦;正式入库/检索走 pgvector + `app/services/retrieval.py`(阶段五)。
+
+## 下一步
+
+1. ✅ **阶段五 建表灌库 + 接检索路由完成**:`kb_chunks`(pgvector,bge-m3 1024 维 + hnsw)已灌
+   2174 行(article 1644〔含 about.uq 学术日历 21〕+ faq 530)。`retrieval.kb_search` 向量检索 +
+   `answer.answer_kb`(基于 chunk + 代码确定性附官方 URL + 弱召回拒答,见 `student-facing.md` 红线
+   2/3)。`qa` 做 **KB 兜底路由**:课程语义召回弱(top sim<0.55)、filter 命中空、或「问日期/census
+   而 where 只是时间限定」时,转知识库;真课程问题(机器学习、没考试的课、Gatton 校区课)不误转。
+   `/api/ask` 与 `/api/ask/stream` 自动透出 KB 答案(返回带 `chunks` 来源)。
+   - 已知点:学术日历是逐日长 chunk,qwen2.5-coder:7b 提取具体日期偶有中文表述瑕疵(数字正确);
+     来源回链官方日历兜底。需更准可换 DeepSeek(设 `DEEPSEEK_API_KEY`)或对日历做日期级细切分。
+2. **提升 hit@1**(现 82%):加 rerank(`kb_eval --rerank` cross-encoder 重排 top-30);修
+   software-content 表格被切碎(`include_tables=False` 或专门表格处理)。
+3. ✅ **support 全量抓完 846/846 + 解析入库**(2026-06-13)。抓取分 6 批 + 批间冷却 20→45min
+   (限速随累计收紧,45min 冷却 + delay 7–14s 可恢复满批吞吐)。`kb_parse faq`(846/846 解析,
+   863 chunk)→ 合并 `chunks_all`(2521)→ `kb_eval` 增量 embed(仅 333 新)→ `kb_build` 灌库
+   (kb_chunks 2521)。新页实测 pgvector top-1 召回,检索已覆盖全量 support FAQ。
+4. **policies + library**(JS SPA):Playwright 真实浏览器抓,含 article 4 页 <200c JS 抽查。
+5. 增量更新(阶段六):sitemap diff + content_hash 比对,学期初加密。

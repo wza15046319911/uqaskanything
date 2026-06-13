@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import json
+from collections.abc import Iterator
 
 import requests
 
@@ -176,6 +177,142 @@ def answer(question: str, courses: list[dict], program_facts=None) -> str:
     ]).strip()
     # 生产护栏:越界引用校验(原先只在 __main__,现移入生产路径)
     return guard_citations(out, courses)
+
+
+def answer_stream(question: str, courses: list[dict], program_facts=None) -> Iterator[str]:
+    """流式 grounded 生成:逐 token yield 原始增量。无任何事实时 yield 固定句。
+    护栏 guard_citations 需全文,由调用方(qa.run_stream)在收尾时对完整文本兜底。"""
+    if not courses and not program_facts:
+        yield EMPTY_ANSWER
+        return
+    facts = build_facts(courses, program_facts)
+    yield from llm.call_stream([
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": USER_TMPL.format(q=question, facts=facts)},
+    ])
+
+
+# ---------- 知识库(FAQ / article)答案生成 ----------
+# 弱召回拒答(不调 LLM):没检索到相关官方内容时,宁可说不确定 + 给官方入口(红线 3)。
+KB_REFUSE = ("抱歉,我在已收录的 UQ 官方页面里没找到能直接回答这个问题的内容。"
+             "建议到 my.UQ 学生支持页查询:https://my.uq.edu.au/ "
+             "(课程、专业、选课相关的问题也可以直接问我)。")
+
+KB_SYSTEM = """你是 UQ 学生事务助手。只能依据【资料】(来自 UQ 官方页面的片段)用简洁中文回答。
+硬性规则:
+- 资料里有相关内容就据此用简洁中文作答(英文资料要转述成中文),不要回避、不要说「暂无信息」;
+  只有资料确实没提到时才说不确定。绝不编造步骤、数字、日期或网址。
+- 涉及费用、截止日期、census date、退课/休学影响、考试安排等高风险信息,要提醒「以官方页面为准、注意时效」。
+- 简短:不超过 6 句,或用要点列表;不寒暄、不重复问题。
+- 不要自己写网址(系统会自动在末尾附上官方来源链接)。"""
+
+KB_USER_TMPL = """问题:{q}
+
+【资料】(UQ 官方页面片段)
+{facts}
+
+请只依据上面的【资料】用中文回答;若问的是具体日期/时间,从资料的日期清单里找出对应日期直接作答。"""
+
+
+def _kb_facts(chunks: list[dict]) -> str:
+    """把 KB chunk 序列化成编号事实清单(chunk.text 已含「页面标题 > h2 > h3」面包屑前缀)。"""
+    return "\n\n".join(f"[{i}] {(c.get('text') or '').strip()}"
+                       for i, c in enumerate(chunks, 1))
+
+
+def kb_sources_block(chunks: list[dict]) -> str:
+    """按 url 去重列出官方来源(红线 2:每个答案都带可一键核对的官方链接)。无来源返回空串。"""
+    seen: set = set()
+    items: list[str] = []
+    for c in chunks:
+        u = c.get("url")
+        if not u or u in seen:
+            continue
+        seen.add(u)
+        title = c.get("page_title") or c.get("breadcrumb") or u
+        items.append(f"- {title}:{u}")
+    return "\n\n来源(UQ 官方页面,可点击核对):\n" + "\n".join(items) if items else ""
+
+
+def answer_kb(question: str, chunks: list[dict]) -> str:
+    """基于 KB chunk 的 grounded 答案:无 chunk 走拒答句;否则 LLM 生成正文 + 代码确定性附官方来源。"""
+    if not chunks:
+        return KB_REFUSE
+    body = llm.call([
+        {"role": "system", "content": KB_SYSTEM},
+        {"role": "user", "content": KB_USER_TMPL.format(q=question, facts=_kb_facts(chunks))},
+    ]).strip()
+    return body + kb_sources_block(chunks)
+
+
+def answer_kb_stream(question: str, chunks: list[dict]) -> Iterator[str]:
+    """流式 KB 答案:无 chunk yield 拒答句;否则逐 token 流式正文。
+    来源块由调用方(qa.run_stream)在收尾追加,保证 100% 带官方链接。"""
+    if not chunks:
+        yield KB_REFUSE
+        return
+    yield from llm.call_stream([
+        {"role": "system", "content": KB_SYSTEM},
+        {"role": "user", "content": KB_USER_TMPL.format(q=question, facts=_kb_facts(chunks))},
+    ])
+
+
+# ---------- 单课详情答案(课程介绍,grounded 在官方大纲) ----------
+COURSE_DETAIL_SYSTEM = """你是 UQ 选课助手。根据【课程资料】(UQ 官方课程大纲)用简洁中文介绍这门课。
+硬性规则:
+- 只依据【课程资料】,英文要转述成中文,绝不编造内容。
+- 2-4 句话说清「这门课讲什么、适合谁修」;不要罗列先修/学分/考核(这些另行结构化展示)。
+- 不写网址、不寒暄、不重复课程码。"""
+
+COURSE_DETAIL_USER = """课程:{code} {title}
+
+【课程资料】
+{facts}
+
+请用 2-4 句中文介绍这门课讲什么、适合谁修。"""
+
+
+def _course_detail_facts(course: dict) -> str:
+    """单课内容字段序列化给 LLM(只取介绍相关;先修/考核走确定性展示,不喂 LLM)。"""
+    parts: list[str] = []
+    if course.get("description"):
+        parts.append("课程简介:" + str(course["description"]))
+    if course.get("topics"):
+        parts.append("主题:" + str(course["topics"])[:600])
+    if course.get("learning_outcomes"):
+        parts.append("学习成果:" + str(course["learning_outcomes"])[:600])
+    return "\n\n".join(parts)
+
+
+def answer_course_detail(question: str, course: dict | None) -> str:
+    """单课介绍:有大纲资料则 LLM grounded 生成 2-4 句中文简介,否则确定性短句。
+    先修/学分/考核等结构化事实由前端详情卡确定性展示(红线 1),不经 LLM。"""
+    if not course:
+        return "未找到该课程,请检查课程码是否正确。"
+    facts = _course_detail_facts(course)
+    if not facts.strip():
+        return f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
+    return llm.call([
+        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+        {"role": "user", "content": COURSE_DETAIL_USER.format(
+            code=course["code"], title=course.get("title") or "", facts=facts)},
+    ]).strip()
+
+
+def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[str]:
+    """流式版单课介绍:无课程/无资料时 yield 确定性短句,否则逐 token 流式简介。"""
+    if not course:
+        yield "未找到该课程,请检查课程码是否正确。"
+        return
+    facts = _course_detail_facts(course)
+    if not facts.strip():
+        yield f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
+        return
+    yield from llm.call_stream([
+        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+        {"role": "user", "content": COURSE_DETAIL_USER.format(
+            code=course["code"], title=course.get("title") or "", facts=facts)},
+    ])
 
 
 if __name__ == "__main__":

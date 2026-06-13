@@ -6,3 +6,15 @@ psycopg[binary]==3.3.4
 pydantic==2.13.4
 requests==2.33.1
 beautifulsoup4==4.14.3
+trafilatura==2.1.0
+lxml==6.1.1
+
+# 知识库(KB)爬取/评测专用(较重,按需安装)
+selenium==4.44.0
+undetected-chromedriver==3.5.5
+# uc 3.5.5 import 了 distutils;Python 3.13 已移除,需 setuptools<81 提供兼容垫片
+setuptools<81
+playwright==1.60.0
+sentence-transformers==5.5.1
+# KB 词表(answerability 门)中文分词;纯 CPU,仅 build_kb_vocab 离线建表用
+jieba==0.42.1
