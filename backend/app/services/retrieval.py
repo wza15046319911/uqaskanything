@@ -239,11 +239,13 @@ KB_COLS = "id, url, source_type, page_title, breadcrumb, text"
 KB_KEYS = ("id", "url", "source_type", "page_title", "breadcrumb", "text")
 
 
-def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.55) -> list[dict]:
+def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.62) -> list[dict]:
     """知识库 chunk(support FAQ / study article)语义检索:bge-m3 向量近邻,返回 top-k。
 
     用于课程/专业结构化数据答不了的一般学生事务问题(how-to / 政策 / FAQ)。
     低于 min_sim 的一律滤掉——宁可不返回也不给弱相关结果(student-facing 红线 3:弱召回拒答)。
+    min_sim=0.62 由 threshold_scan 在带负样本评测集上扫出(综合准确率 75%→83%,答全率不降);
+    sim>=0.62 仍有少量编造问题(如"火星交换生" 0.70)挡不住,属阈值天花板,待 answerability/rerank。
     同一官方页面可能切多个 chunk,这里不去重(answer 层按 url 去重列来源)。
     """
     if not query or not query.strip():
