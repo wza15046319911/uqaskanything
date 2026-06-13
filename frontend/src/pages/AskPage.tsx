@@ -3,14 +3,15 @@ import { Alert, Button, InputGroup, Skeleton, Spinner, TextField } from '@heroui
 import { motion, useReducedMotion } from 'motion/react'
 import Results from '../components/Results'
 import { fetchAskStream, type AskMeta, type AskResult } from '../api/ask'
-import { easeOut, riseIn } from '../lib/motion'
+import { easeOut, layoutEase, riseIn } from '../lib/motion'
 
 const EXAMPLES = [
   '跟机器学习相关、没有考试的课',
-  '有哪些2学分的研究生课程',
+  '介绍一下 CSSE1001',
   'CSSE1001是哪些专业的必修',
-  '想了解网络安全有哪些课',
-  'Bachelor of Computer Science 要修哪些核心课',
+  'census date 是什么时候',
+  '怎么申请缓考',
+  'St Lucia 校区停车怎么收费',
 ]
 
 const PLACEHOLDER = '比如:跟机器学习相关、没有考试的课'
@@ -71,18 +72,28 @@ export default function AskPage() {
     answer,
     courses: meta?.courses,
     program_facts: meta?.program_facts,
+    chunks: meta?.chunks,
+    course: meta?.course,
   }
 
   return (
-    <div className={`mx-auto w-full px-5 ${asked ? 'max-w-7xl pt-8 pb-16' : 'flex min-h-[calc(100dvh-72px)] max-w-xl flex-col justify-center pb-16'}`}>
-      <div
-        className={`grid items-start gap-8 ${asked ? 'lg:grid-cols-[minmax(0,340px)_minmax(0,1fr)]' : 'grid-cols-1'}`}
+    <motion.div
+      layout={!reduce}
+      transition={layoutEase}
+      className={`mx-auto w-full px-5 ${asked ? 'max-w-[1600px] pt-8 pb-16' : 'flex min-h-[calc(100dvh-72px)] max-w-xl flex-col justify-center pb-16'}`}
+    >
+      <motion.div
+        layout={!reduce}
+        transition={layoutEase}
+        className={`grid items-start gap-8 ${asked ? 'lg:grid-cols-2' : 'grid-cols-1'}`}
       >
         {/* 左栏 / Hero —— 内容不变,问后桌面端左对齐并垂直居中 */}
-        <div
+        <motion.div
+          layout={!reduce}
+          transition={layoutEase}
           className={
             asked
-              ? 'lg:sticky lg:top-0 lg:flex lg:min-h-[calc(100dvh-64px)] lg:flex-col lg:justify-center'
+              ? 'mx-auto w-full max-w-sm lg:sticky lg:top-0 lg:flex lg:min-h-[calc(100dvh-64px)] lg:flex-col lg:justify-center'
               : ''
           }
         >
@@ -91,9 +102,12 @@ export default function AskPage() {
               {...rise(0.05)}
               className="mb-3 text-[clamp(32px,6vw,48px)] leading-[1.05] font-semibold tracking-tight"
             >
-              Ask UQ <em className="text-accent not-italic">Program and Courses</em>
+              Ask UQ <em className="text-accent not-italic">Anything</em>
             </motion.h1>
-            <motion.div {...rise(0.15)} className="mt-[clamp(20px,4vw,32px)] flex items-center gap-4">
+            <motion.div
+              {...rise(0.15)}
+              className="mt-[clamp(20px,4vw,32px)] flex items-center gap-4"
+            >
               <TextField aria-label={PLACEHOLDER} className="flex-1">
                 <InputGroup>
                   <InputGroup.Prefix>
@@ -163,15 +177,16 @@ export default function AskPage() {
               ))}
             </motion.div>
           </header>
-        </div>
+        </motion.div>
 
         {/* 右栏 / 结果 —— 问后出现:骨架 -> 流式答案 */}
         {asked && (
           <motion.section
+            layout={!reduce}
             initial={reduce ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             transition={easeOut}
-            className="min-w-0"
+            className="mx-auto w-full max-w-2xl min-w-0"
             aria-live="polite"
           >
             {err ? (
@@ -193,7 +208,7 @@ export default function AskPage() {
             )}
           </motion.section>
         )}
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   )
 }

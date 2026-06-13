@@ -20,7 +20,7 @@ export default function App() {
       <Toast.Provider />
       <nav className="relative flex items-center justify-center gap-1 px-5 pt-4">
         <NavLink to="/" end className={navCls}>
-          课程问答
+          UQ 问答
         </NavLink>
         <NavLink to="/sim" className={navCls}>
           选课模拟器

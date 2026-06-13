@@ -20,7 +20,35 @@ export interface ProgramFact {
   plan_subtype?: string | null
 }
 
-export type AskMode = 'filter' | 'semantic' | 'hybrid' | 'program' | 'empty'
+export interface KbChunk {
+  url: string
+  page_title?: string | null
+  breadcrumb?: string | null
+  source_type?: string | null
+}
+
+export interface CourseDetail {
+  code: string
+  title?: string | null
+  units?: number | null
+  level?: string | null
+  prerequisite_raw?: string | null
+  incompatible?: string | null
+  has_exam?: boolean | null
+  has_hurdle?: boolean | null
+  semesters?: string[]
+  locations?: string[]
+  profile_url: string
+}
+
+export type AskMode =
+  | 'filter'
+  | 'semantic'
+  | 'hybrid'
+  | 'program'
+  | 'kb'
+  | 'course_detail'
+  | 'empty'
 
 export interface AskResult {
   mode?: AskMode
@@ -28,6 +56,8 @@ export interface AskResult {
   courses?: Course[]
   // course_to_programs 时是数组;permit 等场景是对象;空时 null
   program_facts?: ProgramFact[] | Record<string, unknown> | null
+  chunks?: KbChunk[]
+  course?: CourseDetail | null
   meta?: string
   error?: string
 }
@@ -47,6 +77,8 @@ export interface AskMeta {
   meta?: string
   courses?: Course[]
   program_facts?: ProgramFact[] | Record<string, unknown> | null
+  chunks?: KbChunk[]
+  course?: CourseDetail | null
 }
 
 export interface AskStreamHandlers {

@@ -1,26 +1,31 @@
 import { Fragment, type ReactNode } from 'react'
 import { Card, Chip } from '@heroui/react'
 import { motion, useReducedMotion } from 'motion/react'
-import type { AskResult, Course, ProgramFact } from '../api/ask'
+import type { AskResult, Course, CourseDetail, KbChunk, ProgramFact } from '../api/ask'
 import { cnNum, collapseSlots, levelZh, type Slot } from '../lib/courses'
 import { easeOut, riseDelay, riseIn } from '../lib/motion'
 
 const DISPLAY_CAP = 40
 const PROG_CAP = 24
 
-const MODE_ZH: Record<string, string> = {
-  filter: '结构化筛选',
-  semantic: '语义检索',
-  hybrid: '混合检索',
-  program: '专业关系',
+// mode -> 来源库标签:对学生有意义的是「答案来自哪个库」,不是检索算法
+const LIB_ZH: Record<string, string> = {
+  filter: '课程库',
+  semantic: '课程库',
+  hybrid: '课程库',
+  course_detail: '课程库',
+  program: '培养方案',
+  kb: '知识库',
   empty: '需更具体',
 }
 
-const MODE_COLOR: Record<string, 'default' | 'accent' | 'warning'> = {
-  filter: 'default',
+const LIB_COLOR: Record<string, 'default' | 'accent' | 'warning'> = {
+  filter: 'accent',
   semantic: 'accent',
   hybrid: 'accent',
+  course_detail: 'accent',
   program: 'warning',
+  kb: 'default',
   empty: 'default',
 }
 
@@ -203,11 +208,107 @@ function ProgramRow({ p, i }: { p: ProgramFact; i: number }) {
   )
 }
 
+function dedupeSources(chunks: KbChunk[]): KbChunk[] {
+  const seen = new Set<string>()
+  const out: KbChunk[] = []
+  for (const c of chunks) {
+    if (!c.url || seen.has(c.url)) continue
+    seen.add(c.url)
+    out.push(c)
+  }
+  return out
+}
+
+function KbSourceCard({ s, i }: { s: KbChunk; i: number }) {
+  return (
+    <Rise i={i}>
+      <a href={s.url} target="_blank" rel="noopener noreferrer" className="block">
+        <Card className="transition-colors hover:bg-default-soft">
+          <div className="text-[15px] leading-snug font-semibold">
+            {s.page_title || s.breadcrumb || s.url}
+          </div>
+          <div className="mt-0.5 truncate text-[12.5px] text-muted">{s.url}</div>
+        </Card>
+      </a>
+    </Rise>
+  )
+}
+
+function CourseDetailCard({ c }: { c: CourseDetail }) {
+  const tags: ReactNode[] = []
+  if (c.level)
+    tags.push(
+      <Chip size="sm" variant="soft" key="lv">
+        {levelZh(c.level)}
+      </Chip>,
+    )
+  if (c.units != null)
+    tags.push(
+      <Chip size="sm" variant="soft" key="u">
+        {c.units} 学分
+      </Chip>,
+    )
+  if (c.semesters && c.semesters.length > 0)
+    tags.push(
+      <Chip size="sm" variant="soft" key="s">
+        {c.semesters.join(' / ')}
+      </Chip>,
+    )
+  if (c.has_exam === true)
+    tags.push(
+      <Chip size="sm" variant="soft" color="warning" key="e">
+        有考试
+      </Chip>,
+    )
+  if (c.has_exam === false)
+    tags.push(
+      <Chip size="sm" variant="soft" key="ne">
+        无考试
+      </Chip>,
+    )
+  if (c.has_hurdle === true)
+    tags.push(
+      <Chip size="sm" variant="soft" color="warning" key="h">
+        有 hurdle
+      </Chip>,
+    )
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <Chip color="accent" variant="soft" className="shrink-0 font-mono">
+          {c.code}
+        </Chip>
+        <div className="min-w-0 flex-1 text-[15.5px] leading-snug font-semibold">{c.title}</div>
+      </div>
+      {tags.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{tags}</div>}
+      <div className="mt-3 text-[14px]">
+        <span className="text-muted">先修:</span> {c.prerequisite_raw || '无先修要求'}
+      </div>
+      {c.locations && c.locations.length > 0 && (
+        <div className="mt-1 text-[14px]">
+          <span className="text-muted">校区:</span> {c.locations.join('、')}
+        </div>
+      )}
+      <a
+        href={c.profile_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-3 inline-block text-[13.5px] font-medium text-accent hover:underline"
+      >
+        查看官方课程页 →
+      </a>
+    </Card>
+  )
+}
+
 export default function Results({ res, streaming = false }: { res: AskResult; streaming?: boolean }) {
+  const isCourseDetail = res.mode === 'course_detail'
+  const isKb = res.mode === 'kb'
   const isProgList = res.mode === 'program' && Array.isArray(res.program_facts)
   const hasCourses = !!(res.courses && res.courses.length)
   const answerOnly = res.mode === 'empty' || (res.mode === 'program' && !isProgList && !hasCourses)
 
+  const kbSources = isKb ? dedupeSources(res.chunks ?? []) : []
   const progFacts = isProgList ? (res.program_facts as ProgramFact[]) : []
   const slots = hasCourses ? collapseSlots(res.courses!) : []
   const hasList = isProgList || hasCourses
@@ -216,11 +317,16 @@ export default function Results({ res, streaming = false }: { res: AskResult; st
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2.5">
-        <Chip size="sm" variant="soft" color={MODE_COLOR[res.mode ?? ''] || 'default'}>
-          {MODE_ZH[res.mode ?? ''] || res.mode}
+        <Chip size="sm" variant="soft" color={LIB_COLOR[res.mode ?? ''] || 'default'}>
+          {LIB_ZH[res.mode ?? ''] || res.mode}
         </Chip>
-        {res.mode !== 'empty' && hasList && (
-          <span className="ml-auto text-[13px] text-muted">{n} 条结果</span>
+        {isKb ? (
+          kbSources.length > 0 && (
+            <span className="ml-auto text-[13px] text-muted">{kbSources.length} 个来源</span>
+          )
+        ) : (
+          res.mode !== 'empty' &&
+          hasList && <span className="ml-auto text-[13px] text-muted">{n} 条结果</span>
         )}
       </div>
 
@@ -245,7 +351,17 @@ export default function Results({ res, streaming = false }: { res: AskResult; st
         </Card>
       )}
 
-      {isProgList ? (
+      {isCourseDetail ? (
+        res.course ? <CourseDetailCard c={res.course} /> : null
+      ) : isKb ? (
+        kbSources.length ? (
+          <div className="grid gap-3">
+            {kbSources.map((s, i) => (
+              <KbSourceCard key={s.url} s={s} i={i} />
+            ))}
+          </div>
+        ) : null
+      ) : isProgList ? (
         progFacts.length ? (
           <>
             <div className="grid gap-3">
