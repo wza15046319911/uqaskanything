@@ -74,3 +74,53 @@ def test_intake_s2_flips_offering():
     for s in res["semesters"]:
         for x in s["courses"]:
             assert x["verified_offering"]
+
+
+def test_year_long_spans_two_consecutive_semesters():
+    # 16u 年课占 [S1, S2] 两格,学分平摊各 8;起始格为 S1(偶数格)
+    res = scheduler.schedule(
+        ["THES7001"], units_map={"THES7001": 16.0},
+        offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},
+        units_cap=8.0, n_semesters=6)
+    starts = [i for i, s in enumerate(res["semesters"])
+              for x in s["courses"] if x.get("part") == "start"]
+    assert len(starts) == 1
+    s = starts[0]
+    assert s % 2 == 0, "年课须 S1 起"
+    cont = res["semesters"][s + 1]["courses"]
+    assert any(x["code"] == "THES7001" and x.get("part") == "continuation" for x in cont)
+    assert res["semesters"][s]["units"] == 8.0
+    assert res["semesters"][s + 1]["units"] == 8.0
+    assert res["semesters"][s]["courses"][0]["full_units"] == 16.0
+    assert not res["unplaced"]
+
+
+def test_year_long_per_semester_load_respects_cap():
+    # 平摊后每格 8u,叠加普通课不得超 cap
+    res = scheduler.schedule(
+        ["THES7001", "CSSE1001"],
+        units_map={"THES7001": 16.0, "CSSE1001": 4.0},
+        offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},
+        units_cap=8.0, n_semesters=6)
+    for s in res["semesters"]:
+        assert s["units"] <= 8.0
+
+
+def test_year_long_unplaced_when_half_exceeds_cap():
+    # 16u 年课平摊后每格 8u,cap=4 容不下 -> 整门 unplaced(不静默)
+    res = scheduler.schedule(
+        ["THES7001"], units_map={"THES7001": 16.0},
+        offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},
+        units_cap=4.0, n_semesters=6)
+    assert {u["code"] for u in res["unplaced"]} == {"THES7001"}
+
+
+def test_year_long_no_silent_drop():
+    sel = ["THES7001", "AAAA1001"]
+    res = scheduler.schedule(
+        sel, units_map={"THES7001": 16.0, "AAAA1001": 4.0},
+        offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},
+        units_cap=8.0, n_semesters=6)
+    placed = {x["code"] for s in res["semesters"] for x in s["courses"]}
+    unplaced = {u["code"] for u in res["unplaced"]}
+    assert placed | unplaced == set(sel)

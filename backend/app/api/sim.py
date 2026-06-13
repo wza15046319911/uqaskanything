@@ -43,9 +43,11 @@ def _offerings(conn, codes) -> dict:
     return {c: sorted(s) for c, s in off.items()}
 
 
-def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1") -> dict:
-    """时间表落位校验(确定性):开课学期 / 先修按更早学期 / 学分上限 / 互斥。"""
+def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1",
+              year_long=None) -> dict:
+    """时间表落位校验(确定性):开课学期 / 先修按更早学期 / 学分上限 / 互斥 / 年课跨两学期。"""
     um = sim.units_map()
+    year_long = set(year_long or ())
     start_sem = "S2" if start_sem == "S2" else "S1"
     _other = "S2" if start_sem == "S1" else "S1"
     kind = lambda i: start_sem if i % 2 == 0 else _other
@@ -55,10 +57,18 @@ def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1") ->
     for c, i in placed.items():
         # 树外课(E/F 搜索来的)学分查全库,树内查规则树,都缺才用默认
         u = float(um.get(c) or sim._course_units.get(c) or simulator.DEFAULT_UNITS)
-        if 0 <= i < n_sem:
-            sem_units[i] += u
+        yl = c in year_long
+        per = u / 2 if yl else u                        # 年课学分平摊到连续两学期
         reasons = []
+        sem_units[i] += per
+        if yl:                                          # 年课占 [i, i+1];末格无承接则报错
+            if i + 1 < n_sem:
+                sem_units[i + 1] += per
+            else:
+                reasons.append({"type": "year_long", "msg": "年课需占后续学期,当前已是最后一格"})
         off = offerings.get(c)
+        if yl and not off:                              # 年课锁 S1 起(无 offering 数据也照锁)
+            off = ["S1"]
         if off and kind(i) not in off:
             reasons.append({"type": "offering", "msg": f"{kind(i)} 不开课(开课:{'/'.join(off)})"})
         tree = sim._prereq.get(c)
@@ -152,15 +162,20 @@ def sim_state(body: SimState):
             offerings = _offerings(conn, codes)
             inc_map: dict[str, set] = {}
             placed = [c for c in body.placement if isinstance(body.placement[c], int)]
+            year_long: set[str] = set()
             if placed:
-                for code, inc in conn.execute(
-                    "SELECT DISTINCT code, incompatible FROM courses WHERE code = ANY(%s)",
+                for code, inc, yl in conn.execute(
+                    "SELECT DISTINCT code, incompatible, is_year_long FROM courses "
+                    "WHERE code = ANY(%s)",
                     (placed,),
                 ).fetchall():
                     if inc:
                         inc_map.setdefault(code, set()).update(inc)
+                    if yl:
+                        year_long.add(code)
             validation = _validate(sim, body.placement, offerings, inc_map,
-                                   body.n_semesters, body.units_cap, body.start_sem)
+                                   body.n_semesters, body.units_cap, body.start_sem,
+                                   year_long)
             return {
                 "program_id": body.program_id,
                 "title": sim.title,
@@ -243,15 +258,18 @@ def sim_schedule(body: SimSchedule):
                 sim.select(c)
             inc_map: dict[str, set] = {}
             offering_map: dict[str, set] = {}
+            year_long: set[str] = set()
             if body.selected:
-                for code, inc, sem in conn.execute(
-                    "SELECT DISTINCT code, incompatible, semester FROM courses "
+                for code, inc, sem, yl in conn.execute(
+                    "SELECT DISTINCT code, incompatible, semester, is_year_long FROM courses "
                     "WHERE code = ANY(%s)", (body.selected,),
                 ).fetchall():
                     if inc:
                         inc_map.setdefault(code, set()).update(inc)
                     if sem:                                  # courses 里的开课学期(S1)
                         offering_map.setdefault(code, set()).add(sem)
+                    if yl:                                   # 年课:横跨连续两学期
+                        year_long.add(code)
                 for c in body.selected:                      # S2 开课:出现在 S2 清单即开
                     if c in S2_CODES:
                         offering_map.setdefault(c, set()).add("S2")
@@ -263,7 +281,8 @@ def sim_schedule(body: SimSchedule):
             result = scheduler.schedule(
                 body.selected, prereq_map=prereq_map, units_map=units,
                 incompatible_map=inc_map, offering_map=offering_map or None,
-                units_cap=body.units_cap, start_sem=body.start_sem)
+                units_cap=body.units_cap, start_sem=body.start_sem,
+                year_long=year_long)
             result["courses"] = _hydrate(conn, set(body.selected))
             return result
     except Exception as e:

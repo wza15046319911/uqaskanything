@@ -5,6 +5,7 @@ scheduler.py — 阶段三a:按学期排课(确定性状态无关函数,不调 L
   - 先修 DAG 决定先后(prereq_map;缺则不约束)
   - 每学期学分上限 units_cap(默认 8)
   - 开课学期 offering_map(缺则任意学期,标 verified_offering=False)
+  - 年课 year_long 锁 S1 起,占连续两学期 [s, s+1],学分平摊两格各半(units/2)
   - incompatible 软检查(同计划内互斥课只给 warning,不阻止放置)
 
 数据现状:courses 仅有 S1 开课、无先修字段,故 offering_map / prereq_map 默认空,
@@ -25,12 +26,13 @@ def _level(code: str) -> int:
 
 def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
              incompatible_map=None, units_cap=8.0, n_semesters=6,
-             semester_labels=None, start_sem="S1"):
+             semester_labels=None, start_sem="S1", year_long=None):
     selected = list(dict.fromkeys(c for c in selected if c))   # 去重保序
     prereq_map = prereq_map or {}
     offering_map = offering_map or {}
     units_map = units_map or {}
     incompatible_map = incompatible_map or {}
+    year_long = set(year_long or ())
     # 入学学期决定 S1/S2 交替起点:S1 入学 -> 格 0=S1;S2 入学 -> 格 0=S2
     start_sem = "S2" if start_sem == "S2" else "S1"
     _other = "S2" if start_sem == "S1" else "S1"
@@ -84,17 +86,38 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
     sems = [{"label": semester_labels[i] if i < len(semester_labels) else f"Sem {i + 1}",
              "courses": [], "units": 0.0} for i in range(n_semesters)]
     sem_index: dict[str, int] = {}
+
+    def end_sem(p):                                    # 年课跨两格,完成于 continuation 格
+        return sem_index[p] + (1 if p in year_long else 0)
+
     for c in order:
         u = units_of(c)
+        yl = c in year_long
+        per = u / 2 if yl else u                        # 年课学分平摊到连续两学期
         min_sem = 0
         for p in deps[c]:
             if p in sem_index:
-                min_sem = max(min_sem, sem_index[p] + 1)
+                min_sem = max(min_sem, end_sem(p) + 1)
         offered = offering_map.get(c)                  # set('S1'/'S2') 或 None=未知
         placed = False
         for s in range(min_sem, n_semesters):
             if offered is not None and sem_kind[s] not in offered:
                 continue
+            if yl:                                     # 年课:锁 S1 起,占 [s, s+1] 各半
+                if sem_kind[s] != "S1" or s + 1 >= n_semesters:
+                    continue
+                if (sems[s]["units"] + per > units_cap
+                        or sems[s + 1]["units"] + per > units_cap):
+                    continue
+                for j, part in ((s, "start"), (s + 1, "continuation")):
+                    sems[j]["courses"].append(
+                        {"code": c, "units": per, "full_units": u,
+                         "verified_offering": offered is not None,
+                         "year_long": True, "part": part})
+                    sems[j]["units"] += per
+                sem_index[c] = s
+                placed = True
+                break
             if sems[s]["units"] + u > units_cap:
                 continue
             sems[s]["courses"].append(
@@ -106,7 +129,8 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
         if not placed:
             unplaced.append({"code": c, "reason": "no_fitting_semester"})
 
-    unverified = sum(1 for s in sems for x in s["courses"] if not x["verified_offering"])
+    unverified = sum(1 for s in sems for x in s["courses"]
+                     if not x["verified_offering"] and x.get("part") != "continuation")
     if unverified:
         warnings.append(
             f"{unverified} 门课开课学期未知(courses 仅 S1 数据),已任意放置并标未核实")
