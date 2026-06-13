@@ -14,6 +14,8 @@ httpx+asyncio + SQLite pages 表。先存 HTML 不解析——改切分策略只
 
 用法(从 backend/ 跑):
     python -m app.scrapers.kb_fetch --type article --per-pattern 4 --max 40
+    python -m app.scrapers.kb_fetch --urls "https://a,https://b" \
+        --manifest data/kb/fetched_article.jsonl   # 直接补抓零散页(追加去重写入 manifest)
 """
 from __future__ import annotations
 import csv
@@ -113,16 +115,31 @@ def main():
     ap.add_argument("--manifest", default=str(DATA_DIR / "kb" / "fetched.jsonl"),
                     help="抓取记录 JSONL")
     ap.add_argument("--delay", type=float, default=0.8, help="请求间隔秒")
+    ap.add_argument("--urls", default="",
+                    help="逗号分隔 URL 直接补抓(跳过 csv 选样);追加去重写入 --manifest")
     args = ap.parse_args()
 
-    csv_path = Path(args.csv)
-    if not csv_path.exists():
-        ap.error(f"找不到 {csv_path};先跑 kb_discover 产出 urls.csv")
-
-    picked = select_urls(csv_path, args.type, args.per_pattern, args.max)
-    patterns = sorted({r["path_pattern"] for r in picked})
-    print(f"选中 {len(picked)} 个 URL,覆盖 {len(patterns)} 个 path_pattern:")
-    print("  " + ", ".join(patterns))
+    if args.urls:
+        targets = [u.strip() for u in args.urls.split(",") if u.strip()]
+        existing: set[str] = set()
+        mpath = Path(args.manifest)
+        if mpath.exists():
+            for ln in mpath.read_text(encoding="utf-8").splitlines():
+                if ln.strip():
+                    existing.add(json.loads(ln)["url"])
+        dup = [u for u in targets if u in existing]
+        picked = [{"url": u, "lastmod": ""} for u in targets if u not in existing]
+        print(f"直接补抓 {len(picked)} 个 URL(--urls),追加写入 {args.manifest}")
+        if dup:
+            print(f"  跳过已在 manifest 的 {len(dup)} 个:{dup}")
+    else:
+        csv_path = Path(args.csv)
+        if not csv_path.exists():
+            ap.error(f"找不到 {csv_path};先跑 kb_discover 产出 urls.csv")
+        picked = select_urls(csv_path, args.type, args.per_pattern, args.max)
+        patterns = sorted({r["path_pattern"] for r in picked})
+        print(f"选中 {len(picked)} 个 URL,覆盖 {len(patterns)} 个 path_pattern:")
+        print("  " + ", ".join(patterns))
 
     out_dir = Path(args.out_dir)
     records: list[dict] = []
@@ -143,7 +160,7 @@ def main():
             print(f"  [{i}/{len(picked)}] FAIL {url}: {str(e)[:80]}")
         time.sleep(args.delay)
 
-    with open(args.manifest, "w", encoding="utf-8") as f:
+    with open(args.manifest, "a" if args.urls else "w", encoding="utf-8") as f:
         for rec in records:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 

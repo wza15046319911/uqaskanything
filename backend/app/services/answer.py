@@ -257,6 +257,64 @@ def answer_kb_stream(question: str, chunks: list[dict]) -> Iterator[str]:
     ])
 
 
+# ---------- 单课详情答案(课程介绍,grounded 在官方大纲) ----------
+COURSE_DETAIL_SYSTEM = """你是 UQ 选课助手。根据【课程资料】(UQ 官方课程大纲)用简洁中文介绍这门课。
+硬性规则:
+- 只依据【课程资料】,英文要转述成中文,绝不编造内容。
+- 2-4 句话说清「这门课讲什么、适合谁修」;不要罗列先修/学分/考核(这些另行结构化展示)。
+- 不写网址、不寒暄、不重复课程码。"""
+
+COURSE_DETAIL_USER = """课程:{code} {title}
+
+【课程资料】
+{facts}
+
+请用 2-4 句中文介绍这门课讲什么、适合谁修。"""
+
+
+def _course_detail_facts(course: dict) -> str:
+    """单课内容字段序列化给 LLM(只取介绍相关;先修/考核走确定性展示,不喂 LLM)。"""
+    parts: list[str] = []
+    if course.get("description"):
+        parts.append("课程简介:" + str(course["description"]))
+    if course.get("topics"):
+        parts.append("主题:" + str(course["topics"])[:600])
+    if course.get("learning_outcomes"):
+        parts.append("学习成果:" + str(course["learning_outcomes"])[:600])
+    return "\n\n".join(parts)
+
+
+def answer_course_detail(question: str, course: dict | None) -> str:
+    """单课介绍:有大纲资料则 LLM grounded 生成 2-4 句中文简介,否则确定性短句。
+    先修/学分/考核等结构化事实由前端详情卡确定性展示(红线 1),不经 LLM。"""
+    if not course:
+        return "未找到该课程,请检查课程码是否正确。"
+    facts = _course_detail_facts(course)
+    if not facts.strip():
+        return f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
+    return llm.call([
+        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+        {"role": "user", "content": COURSE_DETAIL_USER.format(
+            code=course["code"], title=course.get("title") or "", facts=facts)},
+    ]).strip()
+
+
+def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[str]:
+    """流式版单课介绍:无课程/无资料时 yield 确定性短句,否则逐 token 流式简介。"""
+    if not course:
+        yield "未找到该课程,请检查课程码是否正确。"
+        return
+    facts = _course_detail_facts(course)
+    if not facts.strip():
+        yield f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
+        return
+    yield from llm.call_stream([
+        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+        {"role": "user", "content": COURSE_DETAIL_USER.format(
+            code=course["code"], title=course.get("title") or "", facts=facts)},
+    ])
+
+
 if __name__ == "__main__":
     # ---- 确定性自测(不依赖 Ollama,覆盖三个修复用例)----
     print("=== 确定性自测 ===")

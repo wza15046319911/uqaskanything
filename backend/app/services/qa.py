@@ -7,6 +7,7 @@ mode 路由:
   semantic -> retrieval.semantic_search(向量+关键词 RRF)
   hybrid   -> retrieval.hybrid_search(结构化 + 语义)
   program  -> program_lookup(course_to_programs / program_to_courses)
+  kb       -> retrieval.kb_search(知识库 FAQ/日期/政策,planner 前置分类判定)
   empty    -> 问题太宽泛/无法形成检索条件(planner 抛 ValueError 时的优雅兜底)
 
 用法:
@@ -173,6 +174,23 @@ def _retrieve(conn, question: str) -> dict:
     meta = ""
     prog_answer = None      # program 模式的确定性回答(不走 LLM)
 
+    # kb 前置路由:planner 已判定为学校事务/政策/日期问题 -> 直接走知识库,不碰课程库。
+    # chunks 为空时交由上层 answer_kb 出拒答(带官方链接),不退成宽泛 empty。
+    if mode == "kb":
+        return {"plan": p, "mode": "kb", "meta": "kb(分类→知识库)", "courses": [],
+                "program_facts": None, "prog_answer": None,
+                "chunks": _kb_or_none(conn, question)}
+
+    # 单课详情:planner 已判定为「介绍/先修/考核某门课」-> 取该课完整信息。
+    if mode == "course_detail":
+        course = retrieval.course_detail(conn, p["course_code"])
+        if not course:
+            return {"plan": p, "mode": "empty", "meta": f"未找到课程 {p['course_code']}",
+                    "courses": [], "program_facts": None, "prog_answer": None, "chunks": []}
+        return {"plan": p, "mode": "course_detail", "meta": f"course_detail {p['course_code']}",
+                "courses": [], "program_facts": None, "prog_answer": None,
+                "chunks": [], "course": course}
+
     if mode == "filter":
         courses = retrieval.filter_search(conn, p["where"])
         meta = f"WHERE {p['where']}"
@@ -287,6 +305,8 @@ def run(conn, question: str, generate: bool = True) -> dict:
     if generate:
         if r["mode"] == "kb":
             ans = answer.answer_kb(question, r["chunks"])
+        elif r["mode"] == "course_detail":
+            ans = answer.answer_course_detail(question, r.get("course"))
         elif r["mode"] == "program":
             ans = r["prog_answer"]
         else:
@@ -294,7 +314,7 @@ def run(conn, question: str, generate: bool = True) -> dict:
                                 _gen_facts(r["courses"], r["program_facts"]))
     return {"plan": r["plan"], "mode": r["mode"], "meta": r["meta"],
             "courses": r["courses"], "program_facts": r["program_facts"],
-            "chunks": r.get("chunks", []), "answer": ans}
+            "chunks": r.get("chunks", []), "course": r.get("course"), "answer": ans}
 
 
 def run_stream(conn, question: str):
@@ -304,7 +324,8 @@ def run_stream(conn, question: str):
     r = _retrieve(conn, question)
     mode = r["mode"]
     yield ("meta", {"mode": mode, "meta": r["meta"], "courses": r["courses"],
-                    "program_facts": r["program_facts"], "chunks": r.get("chunks", [])})
+                    "program_facts": r["program_facts"], "chunks": r.get("chunks", []),
+                    "course": r.get("course")})
 
     if mode == "empty":
         yield ("token", EMPTY_MSG)
@@ -315,7 +336,7 @@ def run_stream(conn, question: str):
         yield ("token", ans)
         yield ("done", ans)
         return
-    if mode == "kb":                            # 知识库:流式正文 + 收尾确定性附官方来源
+    if mode == "kb":                            # 知识库:流式正文;来源走 meta.chunks,前端渲染来源卡
         chunks = r["chunks"]
         if not chunks:
             yield ("token", answer.KB_REFUSE)
@@ -325,10 +346,14 @@ def run_stream(conn, question: str):
         for delta in answer.answer_kb_stream(question, chunks):
             acc.append(delta)
             yield ("token", delta)
-        src = answer.kb_sources_block(chunks)
-        if src:
-            yield ("token", src)
-        yield ("done", "".join(acc) + src)
+        yield ("done", "".join(acc))
+        return
+    if mode == "course_detail":                 # 单课介绍:流式简介(结构化事实走 meta.course 前端卡)
+        acc: list[str] = []
+        for delta in answer.answer_course_detail_stream(question, r.get("course")):
+            acc.append(delta)
+            yield ("token", delta)
+        yield ("done", "".join(acc))
         return
 
     capped = r["courses"][:ANSWER_CAP]

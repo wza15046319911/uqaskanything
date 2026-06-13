@@ -1,0 +1,545 @@
+<html><head>
+<title>Allocate+ Timetable</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<link rel="icon" href="../images/favicon.ico" type="image/x-icon">
+<link rel="shortcut icon" href="../images/favicon.ico" type="image/x-icon">
+<link rel="stylesheet" href="css/concat.min.css">
+
+
+<!-- license check here  -->
+<link rel="stylesheet" href="css/mobile.min.css">
+
+
+
+
+<script type="text/javascript" async="" src="https://www.google-analytics.com/analytics.js"></script><script type="text/javascript" async="" src="https://www.googletagmanager.com/gtag/js?id=G-4Z74C6YMNR&amp;cx=c&amp;gtm=4e66a1"></script><script>
+var subjectInfoURL="https://my.uq.edu.au/programs-courses/course.html?course_code=$uc";
+var groupInfoURL="";
+var locationInfoURL="";
+var showMaps =true;
+
+var cust_map_url='';
+var googleMapAPIKey= '';
+var mapProvider = 'No maps';
+var mapIcon = '';
+var isValidMapProvider = false;
+if(showMaps && mapProvider == 'Google') {
+	isValidMapProvider = googleMapAPIKey != '';
+} else if(showMaps && (mapProvider == 'Custom Link' || mapProvider == 'MazeMaps')) {
+	isValidMapProvider = cust_map_url != '';
+}
+
+var mapInstructions = `Click the location name to open a map`;
+
+var webpublisher_show_subject_code='y';
+
+var webpublisher_show_group='y';
+var webpublisher_show_activity='y';
+var webpublisher_show_description='n';
+var webpublisher_details_show_activity_description = 'y';
+var webpublisher_details_show_location = 'y';
+var webpublisher_details_show_staff = 'n';
+var webpublisher_details_show_seats = 'n';
+
+var webpublisher_show_cluster='n';
+var webpublisher_show_location='y';
+var webpublisher_show_staff='n';
+var webpublisher_show_weeks='y';
+var webpublisher_show_seats='n';
+</script>
+<!-- Google Map -->
+<script type="text/javascript" src="https://maps.googleapis.com/maps/api/js?key=&amp;sensor=true"></script>
+
+
+<!-- Google Analytics -->
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async="" src="https://www.googletagmanager.com/gtag/js?id=UA-93698210-24"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'UA-93698210-24');
+</script>
+
+<script type="text/javascript" charset="UTF-8" src="https://maps.googleapis.com/maps-api-v3/api/js/65/3b/intl/zh_cn/common.js"></script><script type="text/javascript" charset="UTF-8" src="https://maps.googleapis.com/maps-api-v3/api/js/65/3b/intl/zh_cn/util.js"></script></head>
+
+<body style="">
+
+	<div id="outer-header" class="desktop-only">
+		<table border="0" cellpadding="0" cellspacing="0" width="100%" align="center">
+
+</table>
+<link type="text/css" rel="stylesheet" href="https://d30tvld8feguc2.cloudfront.net/allocate-plus-stylesheets/latest/styles.css" media="all">
+
+<div class="site-header">
+<div class="site-header__content">
+<a href="https://www.uq.edu.au/" title="UQ Homepage" class="uq-logo">The University of Queensland</a>
+<div class="site-title">
+<a href="#home" rel="home" title="Web Publisher 2026" class="site-title__link">
+  Timetable Semester 1 2026 <br>
+Timetable Semester 2 2026 <b>(Draft)</b>
+</a>
+</div>
+</div>
+</div>
+	</div>
+	<div id="outer-container" style="top: 103px;">
+
+	<div class="aplus-container">
+		<div class="top-bar">
+			<!-- mobile -->
+			<div class="left mobile-only">
+				<a class="top-menu-btn top-menu-btn-left">
+					<span class="icon-bar"></span>
+					<span class="icon-bar"></span>
+					<span class="icon-bar"></span>
+				</a>
+			</div>
+			<div class="right mobile-only">
+				<a class="grid-btn sprite" style="display: none;"></a>
+				<a class="flat-btn sprite" style="display: none;"></a>
+ 				<div id="week_dropdown_mobile" class="dropdown" style="float: right; position: relative; right: 75px; margin-top: 0px; height: 30px; top: 7px; display: none;">
+ 					<button><span class="btn-text">All Weeks</span> <span class="caret"></span></button>
+ 					<ul class="dropdown-menu right">
+ 						<li onclick="allWeekBtn()" aria-role="button" tabindex="8" onkeypress="clickEnterHandler(event, () =&gt; {allWeekBtn()})" aria-label="All Weeks" style="display: none;"><label>All Weeks</label></li>
+ 						<li onclick="currentWeekBtn()" aria-role="button" tabindex="8" onkeypress="clickEnterHandler(event, () =&gt; {currentWeekBtn()})" aria-label="Current Week" style="display: none;"><label>Current Week</label></li>
+ 					</ul>
+ 				</div>
+			</div>
+			<div class="mid mobile-only">
+				<div class="valign">Subject</div>
+			</div>
+			<!-- /mobile -->
+			<div class="subject-code-title"></div>
+
+			<!-- desktop -->
+			<ul class="top-menu desktop-only">
+				<li><a href="#subjects" tabindex="1" title="Subjects" class="active">Subjects</a></li>
+				<li><a href="#locations" tabindex="1" title="Locations">Locations</a></li>
+				<li><a href="#groups" tabindex="1" title="Groups">Groups</a></li>
+				
+			</ul>
+			<!-- /desktop -->
+		</div>
+
+		<div id="mobile-left" class="mobile-only">
+			<ul id="mobile-left-menu" class="mobile-only">
+				<li><a href="#subjects" tabindex="1">Subjects</a></li>
+				<li><a href="#locations" tabindex="1">Locations</a></li>
+				<li><a href="#groups" tabindex="1">Groups</a></li>
+				
+			</ul>
+		</div>
+
+		<div class="left-col">
+
+			<div class="module" id="selected-result-div">
+				<div class="upper_sec" id="selectTitle">Selected Subjects</div>
+				<div class="lower_sec">
+					<div class="btn-div">
+						<button class="btn btn-primary" onclick="toggleRightCol()" id="toggle-right-col-btn" tabindex="2" title="Show Timetable" aria-label="Show Timetable">Show Timetable</button>
+						<br>
+						<button class="btn btn-primary" onclick="selectAll()" id="select-all" tabindex="2" title="Select All" aria-label="Select All">Select All</button>
+						<button class="btn btn-primary" onclick="deselectAll()" id="deselect-all" tabindex="2" title="De-select All" aria-label="De-select All">De-select All</button>
+						<button class="btn btn-primary" onclick="clearSelectedResults()" id="clear-selected-btn" tabindex="2" title="Clear" aria-label="Clear">Clear</button>
+					</div>
+
+					<ul id="selected-results"><li class="instr">Please enter search criteria on the right and press search</li></ul>
+				</div>
+			</div>
+		</div>
+		<div class="right-col" id="right-col">
+
+			<div id="filter-div" class="module" style="display: block;">
+
+				<div id="search-form-div" class="module">
+					<div class="upper_sec"><h1 id="searchTitle">Search Subjects</h1></div>
+					<div class="lower_sec">
+						<form id="search-form" onsubmit="return submitSearch();" action="">
+							<div id="search-text-label" class="desktop-only">Code / Description</div>
+							<div id="search-text-div">
+								<input type="text" name="search-term" value="" class="search text" id="search_box" tabindex="4">
+							</div>
+							<div id="search-submit-div">
+								<div class="search_icon sprite" onclick="$('#search-form').submit();" onkeypress="clickEnterHandler(event, () =&gt; {$('#search-form').submit()})" aria-role="button" tabindex="4" aria-label="Search" title="Search" style="pointer-events: auto;"></div>
+							</div>
+							<input id="search-btn" type="submit" class="btn btn-primary desktop-only" value="Search" style="margin-top:0;margin-left: 10px;" aria-role="button" tabindex="4" aria-label="Search" title="Search">
+						</form>
+					</div>
+				</div>
+
+				<br>
+
+				<form id="filter-form">
+				<div id="advanced-filter-div" class="module">
+					<div class="upper_sec">Advanced Filter<span class="icon sprite msg_arrow_down" aria-role="button" tabindex="5" title="Advanced filter" aria-label="Advanced filter"></span></div>
+					<div class="lower_sec open">
+						<div id="filter-body" class="filter-body">
+
+
+
+
+
+
+	<div class="filter-table">
+			<div style="float:left;width:25%" desktop-style="float:left;width:25%">
+				<div id="tps-filter" class="filter-set filter-column">
+					<ul>
+					<li><b>Teaching Period</b></li>
+					<li><input type="checkbox" name="semester" id="tps-ALL" value="ALL" class="checkbox-all" checked="checked" tabindex="5">
+					<label for="tps-ALL">ALL</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-S1" value="S1" tabindex="5">
+					<label for="tps-S1">S1</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-S2" value="S2" tabindex="5">
+					<label for="tps-S2">S2</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-S3" value="S3" tabindex="5">
+					<label for="tps-S3">S3</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP1" value="TP1" tabindex="5">
+					<label for="tps-TP1">TP1</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP2" value="TP2" tabindex="5">
+					<label for="tps-TP2">TP2</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP3" value="TP3" tabindex="5">
+					<label for="tps-TP3">TP3</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP4" value="TP4" tabindex="5">
+					<label for="tps-TP4">TP4</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP5" value="TP5" tabindex="5">
+					<label for="tps-TP5">TP5</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP6" value="TP6" tabindex="5">
+					<label for="tps-TP6">TP6</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP7" value="TP7" tabindex="5">
+					<label for="tps-TP7">TP7</label></li>
+					
+					<li><input type="checkbox" name="semester" id="tps-TP8" value="TP8" tabindex="5">
+					<label for="tps-TP8">TP8</label></li>
+					
+					</ul>
+				</div>
+			</div>
+			<div style="float:left;width:25%" desktop-style="float:left;width:25%">
+				<div id="campus-filter" class="filter-set filter-column">
+					<ul>
+					<li><b>Campus</b></li>
+					<li><input type="checkbox" name="campus" id="campus-ALL" value="ALL" class="checkbox-all" checked="checked" tabindex="5">
+					<label for="campus-ALL">ALL</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus--" value="-" tabindex="5">
+					<label for="campus--">-</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-BRISCBD" value="BRISCBD" tabindex="5">
+					<label for="campus-BRISCBD">Brisbane CBD</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-BUNDABERG" value="BUNDABERG" tabindex="5">
+					<label for="campus-BUNDABERG">Bundaberg HSLDC</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-DUTTONPARK" value="DUTTONPARK" tabindex="5">
+					<label for="campus-DUTTONPARK">Dutton Park</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-EXTERNAL" value="EXTERNAL" tabindex="5">
+					<label for="campus-EXTERNAL">Online</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-GATTON" value="GATTON" tabindex="5">
+					<label for="campus-GATTON">Gatton</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-HERSTON" value="HERSTON" tabindex="5">
+					<label for="campus-HERSTON">Herston</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-ROCKHAMPTN" value="ROCKHAMPTN" tabindex="5">
+					<label for="campus-ROCKHAMPTN">Rockhampton RCS</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-STLUCIA" value="STLUCIA" tabindex="5">
+					<label for="campus-STLUCIA">St Lucia</label></li>
+					
+					<li><input type="checkbox" name="campus" id="campus-TOOWOOMBA" value="TOOWOOMBA" tabindex="5">
+					<label for="campus-TOOWOOMBA">Toowoomba</label></li>
+					
+					</ul>
+				</div>
+			</div>
+			<div style="float:left;width:25%" desktop-style="float:left;width:25%">
+				<div id="faculty-filter" class="filter-set filter-column">
+					<ul>
+					<li><b>Faculty</b></li>
+					<li><input type="checkbox" name="faculty" id="faculty-ALL" value="ALL" class="checkbox-all" checked="checked" tabindex="5">
+					<label for="faculty-ALL">ALL</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty--" value="-" tabindex="5">
+					<label for="faculty--">-</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-1025" value="1025" tabindex="5">
+					<label for="faculty-1025">1025</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-1033" value="1033" tabindex="5">
+					<label for="faculty-1033">1033</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-1238" value="1238" tabindex="5">
+					<label for="faculty-1238">1238</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-1560" value="1560" tabindex="5">
+					<label for="faculty-1560">1560</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-642" value="642" tabindex="5">
+					<label for="faculty-642">642</label></li>
+					
+					<li><input type="checkbox" name="faculty" id="faculty-8" value="8" tabindex="5">
+					<label for="faculty-8">8</label></li>
+					
+					</ul>
+				</div>
+			</div>
+			<div style="float:left;width:25%" desktop-style="float:left;width:25%;*width:24%;">
+				<div id="ats-filter" class="filter-set filter-column">
+					<ul>
+					<li><b>Activity Type</b></li>
+					<li><input type="checkbox" name="type" id="ats-ALL" value="ALL" class="checkbox-all" checked="checked" tabindex="5">
+					<label for="ats-ALL">ALL</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Applied Class" value="Applied Class" tabindex="5">
+					<label for="ats-Applied Class">Applied Class</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Clinical Teaching" value="Clinical Teaching" tabindex="5">
+					<label for="ats-Clinical Teaching">Clinical Teaching</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Consultation" value="Consultation" tabindex="5">
+					<label for="ats-Consultation">Consultation</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Exam" value="Exam" tabindex="5">
+					<label for="ats-Exam">Exam</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Fieldwork" value="Fieldwork" tabindex="5">
+					<label for="ats-Fieldwork">Fieldwork</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-IT Computing" value="IT Computing" tabindex="5">
+					<label for="ats-IT Computing">IT Computing</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Lecture" value="Lecture" tabindex="5">
+					<label for="ats-Lecture">Lecture</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Peer Assisted Study Session" value="Peer Assisted Study Session" tabindex="5">
+					<label for="ats-Peer Assisted Study Session">Peer Assisted Study Session</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Placement" value="Placement" tabindex="5">
+					<label for="ats-Placement">Placement</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Practical" value="Practical" tabindex="5">
+					<label for="ats-Practical">Practical</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Recorded" value="Recorded" tabindex="5">
+					<label for="ats-Recorded">Recorded</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Seminar" value="Seminar" tabindex="5">
+					<label for="ats-Seminar">Seminar</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Studio" value="Studio" tabindex="5">
+					<label for="ats-Studio">Studio</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Symposium" value="Symposium" tabindex="5">
+					<label for="ats-Symposium">Symposium</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Tutorial" value="Tutorial" tabindex="5">
+					<label for="ats-Tutorial">Tutorial</label></li>
+					
+					<li><input type="checkbox" name="type" id="ats-Workshop" value="Workshop" tabindex="5">
+					<label for="ats-Workshop">Workshop</label></li>
+					
+					</ul>
+				</div>
+			</div>
+	</div></div>
+					</div>
+				</div>
+
+				<br>
+				<div id="search-results-div" class="module mobile-only">
+						<div class="upper_sec">Subjects</div>
+						<div class="lower_sec">
+							<ul id="search-results"></ul>
+						</div>
+				</div>
+
+				<br class="mobile-only">
+				
+<div id="day-time-filter-div" class="module">
+		<div class="upper_sec">Day and Time<span class="icon sprite msg_arrow_down" aria-role="button" tabindex="5" title="Day and Time"></span></div>
+		<div class="lower_sec open">
+			<div id="day-time-filter" class="filter-set">
+				<input type="checkbox" name="days" id="day-1" value="1" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-1">Mon</label>
+				<input type="checkbox" name="days" id="day-2" value="2" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-2">Tue</label>
+				<input type="checkbox" name="days" id="day-3" value="3" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-3">Wed</label>
+				<input type="checkbox" name="days" id="day-4" value="4" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-4">Thu</label>
+				<input type="checkbox" name="days" id="day-5" value="5" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-5">Fri</label>
+				<input type="checkbox" name="days" id="day-6" value="6" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-6">Sat</label>
+				<input type="checkbox" name="days" id="day-0" value="0" checked="checked" onchange="weekdayCheckbox(this.value,this.checked);">
+				<label for="day-0">Sun</label>
+				
+				<br class="mobile-only">
+				
+				<b>Starting After</b>
+				<select id="start-time-filter" name="start-time" onchange="timeSelect(this.name, this.value)">
+				<option value="00:00" selected="">00:00</option>
+				<option value="01:00">01:00</option>
+				<option value="02:00">02:00</option>
+				<option value="03:00">03:00</option>
+				<option value="04:00">04:00</option>
+				<option value="05:00">05:00</option>
+				<option value="06:00">06:00</option>
+				<option value="07:00">07:00</option>
+				<option value="08:00">08:00</option>
+				<option value="09:00">09:00</option>
+				<option value="10:00">10:00</option>
+				<option value="11:00">11:00</option>
+				<option value="12:00">12:00</option>
+				<option value="13:00">13:00</option>
+				<option value="14:00">14:00</option>
+				<option value="15:00">15:00</option>
+				<option value="16:00">16:00</option>
+				<option value="17:00">17:00</option>
+				<option value="18:00">18:00</option>
+				<option value="19:00">19:00</option>
+				<option value="20:00">20:00</option>
+				<option value="21:00">21:00</option>
+				<option value="22:00">22:00</option>
+				<option value="23:00">23:00</option>
+				</select>
+				
+				 and <b>Before</b>
+				<select id="end-time-filter" name="end-time" onchange="timeSelect(this.name, this.value)">
+				<option value="00:00">00:00</option>
+				<option value="01:00">01:00</option>
+				<option value="02:00">02:00</option>
+				<option value="03:00">03:00</option>
+				<option value="04:00">04:00</option>
+				<option value="05:00">05:00</option>
+				<option value="06:00">06:00</option>
+				<option value="07:00">07:00</option>
+				<option value="08:00">08:00</option>
+				<option value="09:00">09:00</option>
+				<option value="10:00">10:00</option>
+				<option value="11:00">11:00</option>
+				<option value="12:00">12:00</option>
+				<option value="13:00">13:00</option>
+				<option value="14:00">14:00</option>
+				<option value="15:00">15:00</option>
+				<option value="16:00">16:00</option>
+				<option value="17:00">17:00</option>
+				<option value="18:00">18:00</option>
+				<option value="19:00">19:00</option>
+				<option value="20:00">20:00</option>
+				<option value="21:00">21:00</option>
+				<option value="22:00">22:00</option>
+				<option value="23:00" selected="">23:00</option>
+				</select>
+				
+			</div>
+		</div>
+</div>
+				<br>
+				</form>
+			</div>
+
+			<div id="timetable-tpl" class="module" style="display: none;">
+
+				<div class="upper_sec upper_button_sec">
+ 					<div class="left mobile-only"><button class="prev">&lt;&lt;</button></div>
+ 					<div class="right mobile-only"><button class="next">&gt;&gt;</button></div>
+ 					<div class="mid mobile-only"><p>All weeks</p></div>
+
+ 					<a class="sprite flat-btn desktop-only" title="Show as list" tabindex="9" aria-role="button" aria-label="Show as list"></a>
+ 					<a class="sprite grid-btn desktop-only" title="Show as grid" tabindex="8" aria-role="button" aria-label="Show as grid"></a>
+ 					<div id="week_dropdown" class="dropdown desktop-only" style="float:right;position:relative;right: 65px;margin-top: 0;height: 30px;">
+						<button tabindex="7" aria-label="All Weeks" title="All Weeks">
+							<span class="btn-text">All Weeks</span> <span class="caret"></span>
+						</button>
+						<ul class="dropdown-menu right">
+							<li onclick="allWeekBtn()" aria-role="button" tabindex="7" onkeypress="clickEnterHandler(event, () =&gt; {allWeekBtn()})" aria-label="All Weeks" title="All Weeks"><label>All Weeks</label></li>
+							<li onclick="currentWeekBtn()" aria-role="button" tabindex="7" onkeypress="clickEnterHandler(event, () =&gt; {currentWeekBtn()})" aria-label="Current Week" title="Current Weeks"><label>Current Week</label></li>
+		                </ul>
+					</div>
+ 					<button class="btn desktop-only" id="split-view-btn" style="float:right; position:relative;right: 70px;margin-top: 0; height:30px;" onclick="splitViewBtn()" tabindex="6" aria-label="Split" title="Split">Split</button>
+
+ 					<div id="pdf_dropdown" class="dropdown desktop-only">
+						<button id="pdf_dropdown_btn" class="print-btn sprite" title="Print this timetable" tabindex="4"></button>
+						<ul class="dropdown-menu left">
+							<li class="no-highlight">Print:</li>
+							<li onclick="timetablePDF('portrait')" aria-role="button" tabindex="4" onkeypress="clickEnterHandler(event, () =&gt; {timetablePDF('portrait')})" title="Portrait">
+								<span class="sprite pdf-icon" style="display:inline-block;" aria-label="Portrait"></span>
+								<label>Portrait</label>
+							</li>
+							<li onclick="timetablePDF('landscape')" aria-role="button" tabindex="4" onkeypress="clickEnterHandler(event, () =&gt; {timetablePDF('landscape')})" title="Landscape">
+								<span class="sprite pdf-icon" style="display:inline-block;" aria-label="Landscape"></span>
+								<label>Landscape</label>
+							</li>
+		                </ul>
+					</div>
+
+					
+ 					<div class="slider desktop-only ui-slider ui-slider-horizontal ui-widget ui-widget-content ui-corner-all" aria-disabled="false"><a class="ui-slider-handle ui-state-default ui-corner-all" href="#" style="left: 0%;"></a></div>
+ 				</div>
+				<div class="lower_sec lower_grid_sec">
+
+					<div id="timetable-grid" class="dhx_cal_container grid dhx_scheduler_week">
+						<div class="dhx_cal_navline" style="width: 0px; height: 59px; left: 0px; top: 0px;">
+						 	<div class="dhx_cal_prev_button" tabindex="14" aria-role="button" title="Previous" style="background: url('../studentUI/dhtmlx/codebase/imgs_dhx_terrace/arrow_left.png') no-repeat center center">&nbsp;</div>
+							<div class="dhx_cal_next_button" tabindex="15" aria-role="button" title="Next" style="background: url('../studentUI/dhtmlx/codebase/imgs_dhx_terrace/arrow_right.png') no-repeat center center">&nbsp;</div>
+							<div class="dhx_cal_today_button" tabindex="13" aria-role="button" title="Today">Today</div>
+							<div class="dhx_cal_date"></div>
+							<div class="dhx_cal_tab day_tab dhx_cal_tab_first" name="day_tab" tabindex="10" aria-role="button" title="Day" style="right: auto; left: 14px;">Day</div>
+							<div class="dhx_cal_tab week_tab active" name="week_tab" tabindex="11" aria-role="button" title="Week" style="right: auto; left: 75px;">Week</div>
+							<div class="dhx_cal_tab month_tab dhx_cal_tab_last" name="month_tab" tabindex="12" aria-role="button" title="Month" style="right: auto; left: 136px;">Month</div>
+						</div>
+						<div class="dhx_cal_header" style="width: 0px; height: 20px; left: 50px; top: 60px;"><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Mon Jul 01 2002">Mon</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Tue Jul 02 2002">Tue</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Wed Jul 03 2002">Wed</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Thu Jul 04 2002">Thu</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Fri Jul 05 2002">Fri</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Sat Jul 06 2002">Sat</div></div><div class="dhx_scale_bar" style="width: 0px; height: 18px; left: 0px; top: 0px;"><div class="data-date" data-date="Sun Jul 07 2002">Sun</div></div></div>
+						<div class="dhx_multi_day" style="visibility: hidden; width: 70px; height: 0px; left: 0px; top: 1px;"><div class="dhx_multi_day_icon" style="visibility: hidden; width: 50px; height: 0px; left: 0px; top: 1px;"></div></div><div class="dhx_cal_data dhx_resize_denied dhx_move_denied" style="width: 0px; height: 0px; left: 0px; top: 81px;"><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder " style="width: 0px; height: 1584px; left: 51px; top: 0px;"></div><div class="dhx_scale_holder"><div class="dhx_scale_hour" style="height: 65px; width: 50px;">0:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">1:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">2:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">3:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">4:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">5:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">6:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">7:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">8:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">9:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">10:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">11:00 AM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">12:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">1:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">2:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">3:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">4:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">5:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">6:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">7:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">8:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">9:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">10:00 PM</div><div class="dhx_scale_hour" style="height: 65px; width: 50px;">11:00 PM</div></div></div>
+					</div>
+					<div id="timetable-flat" class="flat"></div>
+
+				</div><!-- lower_sec -->
+			</div><!-- timetable-tpl -->
+
+			<div id="details-tpl" class="module" style="display: none;"></div>
+			<div id="activity-details-tpl" class="module" style="display: none;"></div>
+
+		</div>
+		<div id="dialog"><a class="close"></a><div id="dialog-content"></div></div>
+		<div id="hl-color-div"></div>
+	</div>
+	</div>
+
+
+	<div class="spinner"></div>
+	<div id="modal"></div>
+
+
+
+<script>
+var webpublisher_default_tab_view = "Subjects".toLowerCase();
+if(""==webpublisher_default_tab_view){
+	webpublisher_default_tab_view = "subjects";
+}
+
+var webpublisher_advanced_filter = "Fully expanded";
+var webpublisher_day_time = "Fully expanded";
+var webpublisher_locations_show_type = "Fully expanded";
+
+var showLocationsType = false;
+
+
+</script>
+<script src="js/concat.min.js"></script>
+
+
+</body></html>

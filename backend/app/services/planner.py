@@ -11,7 +11,7 @@ planner.py — 阶段五:自然语言 -> 查询计划(Query Plan)
   - build_schema_doc(conn) -> str
   - plan(question, schema_doc=None, conn=None) -> dict
     返回 {mode, where, semantic_query, course_code, program_name, direction}
-    mode ∈ {filter, semantic, hybrid, program}
+    mode ∈ {filter, semantic, hybrid, program, kb, course_detail}
 
 后端开关:见 llm 模块。设了 DEEPSEEK_API_KEY(可写进 .env)就全程走 DeepSeek,否则本地 Ollama。
 
@@ -62,7 +62,7 @@ _LEVEL_KW = [
     (re.compile(r"本科生?|undergraduate|under-graduate", re.I), "Undergraduate"),
 ]
 
-MODES = ("filter", "semantic", "hybrid", "program")
+MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail")
 
 # WHERE 只允许这些结构化枚举/数值列;文本列(title/code/description...)严禁出现
 ALLOWED_WHERE_COLS = {"semester", "year", "location", "attendance_mode",
@@ -96,13 +96,16 @@ TOPIC_HINT = re.compile(
 PROMPT = """你是 UQ 课程库查询规划器。把用户问题转成 JSON 查询计划,只输出 JSON,不要解释。
 {schema}
 
-mode 一共 4 种:
+mode 一共 5 种:
 - "filter":只有结构化条件(学期/有无考试/hurdle/本研/学分/校区等),没有模糊主题。给 where,semantic_query 留空。
 - "semantic":只有模糊主题/学科(如"跟机器学习相关"),没有结构化条件。给英文 semantic_query,where 留空。
 - "hybrid":既有结构化条件又有模糊主题/学科。where 和 semantic_query 都给。
 - "program":问"课程 <-> 专业"的关系。识别两种方向:
     · direction="course_to_programs":问"某门课(给了课程码,如 CSSE1001)是哪些专业的必修/选修"。填 course_code。
     · direction="program_to_courses":问"某个专业(如 Bachelor of Computer Science)要修哪些课"。填 program_name。
+- "kb":问的是学校事务/政策/日期/服务,而不是具体课程或专业。例如:开学/census/缴费/退课截止等日期、
+  重置密码、申请缓考、假期开放时间、停车收费、遭遇骚扰或霸凌求助、开具在读证明等。所有字段留空。
+  **只要问题里出现课程码(如 CSSE1001)或学位名(Bachelor of…/学士/硕士),就不是 kb。**
 
 【关键规则】
 - 学科/专业方向/主题(计算机/人工智能/金融/网络安全/心理学…)一律走 semantic_query,**用英文**表达;
@@ -127,6 +130,10 @@ mode 一共 4 种:
 - "计算机相关、没有hurdle的研究生课" -> {{"mode":"hybrid","where":"level='Postgraduate Coursework' AND has_hurdle=false","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
 - "CSSE1001是哪些专业的必修" -> {{"mode":"program","where":"","semantic_query":"","course_code":"CSSE1001","program_name":"","direction":"course_to_programs"}}
 - "Bachelor of Computer Science 要修哪些课" -> {{"mode":"program","where":"","semantic_query":"","course_code":"","program_name":"Bachelor of Computer Science","direction":"program_to_courses"}}
+- "census date 是什么时候" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":""}}
+- "怎么重置 UQ 密码" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":""}}
+- "圣诞假期图书馆开放吗" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":""}}
+- "St Lucia 校区停车怎么收费" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":""}}
 
 用户问题:{q}"""
 
@@ -202,10 +209,12 @@ _CAMPUS_RE = {key: re.compile(rf"(?<![A-Za-z]){re.escape(key)}(?![A-Za-z])", re.
 
 
 def _enforce_enum_guard(where: str, question: str) -> str:
-    """确定性兜底:问题里出现某校区但不在真实枚举集合内时,强制把 where 的 location
-    等值条件改成「用户原校区字面值」(使 SQL 命中 0),绝不留成 St Lucia 等已知枚举。
+    """确定性兜底:问题提到某校区时,保证 where 的 location 条件不被 LLM 漏写或篡改。
 
-    核心不变量:问 Gatton/Herston 等非 St Lucia 校区必须返回空,不能返回全库。
+    - 校区不在真实枚举内(Gatton/Herston…):强制把 location 改成「用户原校区字面值」
+      (使 SQL 命中 0),绝不留成 St Lucia。核心不变量:问非 St Lucia 校区必须返回空。
+    - 校区在枚举内(St Lucia):LLM 已写 location 就尊重;漏写则确定性补回——否则
+      「St Lucia 校区的人工智能课」会丢掉校区过滤,退化成全库语义检索。
     """
     if not where:
         where = ""
@@ -223,18 +232,17 @@ def _enforce_enum_guard(where: str, question: str) -> str:
             break
     if asked is None:
         return where
-    # 用户问的校区已在枚举内 -> 不动(LLM 写对就放行)
-    if asked.lower() in loc_enum:
-        return where
-    # 不在枚举内:把 where 里已有的 location 等值条件替成用户原校区;没有就追加一个。
+    has_loc = bool(re.search(r"\blocation\s*=", where, re.I))
     forced = f"location='{asked}'"
-    if re.search(r"\blocation\s*=", where, re.I):
-        new_where = re.sub(r"\blocation\s*=\s*'[^']*'", forced, where, flags=re.I)
-    elif where.strip():
-        new_where = f"{where.strip()} AND {forced}"
-    else:
-        new_where = forced
-    return new_where
+    if asked.lower() in loc_enum:
+        # 在枚举内:LLM 写了 location 就放行,漏写则补回(不覆盖,避免改掉 LLM 写对的值)
+        if has_loc:
+            return where
+        return f"{where.strip()} AND {forced}" if where.strip() else forced
+    # 不在枚举内:把 where 里已有的 location 等值条件替成用户原校区;没有就追加一个。
+    if has_loc:
+        return re.sub(r"\blocation\s*=\s*'[^']*'", forced, where, flags=re.I)
+    return f"{where.strip()} AND {forced}" if where.strip() else forced
 
 
 def _fallback_semantic(question: str) -> str:
@@ -339,6 +347,30 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             out["course_code"] = _fc
         if out["direction"] in ("program_to_courses", "permit"):
             out["program_name"] = out["program_name"] or _fn
+    elif (COURSE_CODE_RE.search(question)
+          and not PROGRAM_NAME_RE.search(question)
+          and not PROG_REL_KW_RE.search(question)):
+        # 课程码 + 无学位名 + 无「专业/必修/选修」关系词 -> 单门课详情(介绍/先修/考核/学分)
+        out["mode"] = "course_detail"
+        out["course_code"] = COURSE_CODE_RE.search(question).group(1).upper()
+        out["where"] = ""
+        out["semantic_query"] = ""
+        out["program_name"] = ""
+        out["direction"] = ""
+        return out
+
+    # kb 前置分类:纯学校事务/政策/日期/服务问题,直接转知识库,不进课程库逻辑。
+    # 确定性保险(规则 12):含课程码或学位全名时一定是课程/专业问题,撤销 kb 交回课程路由。
+    if out["mode"] == "kb":
+        if COURSE_CODE_RE.search(question) or PROGRAM_NAME_RE.search(question):
+            out["mode"] = "semantic"
+        else:
+            out["where"] = ""
+            out["semantic_query"] = ""
+            out["course_code"] = ""
+            out["program_name"] = ""
+            out["direction"] = ""
+            return out
 
     if out["mode"] == "program":
         # program 模式:补全 course_code / direction

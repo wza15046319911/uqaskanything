@@ -13,6 +13,7 @@ retrieval.py — 统一检索层。
   - semantic_search(conn, query_en, k=8, min_sim=0.45) -> list[dict]
   - keyword_search(conn, query_en, k=20) -> list[dict]
   - hybrid_search(conn, where, semantic_en, k=8) -> list[dict]
+  - course_detail(conn, code) -> dict | None  # 单门课完整详情(介绍/先修/考核/开课)
 
 返回 dict 字段:code, title, semester, level, units, has_exam,语义/混合附带 sim。
 """
@@ -262,6 +263,40 @@ def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.55) -> list[dict]
         if len(out) >= k:
             break
     return out
+
+
+# ---------- 单课详情(课程介绍 / 先修 / 考核) ----------
+DETAIL_COLS = ("code, title, units, level, description, prerequisite_raw, "
+               "incompatible, assessments, learning_outcomes, topics, "
+               "coordinator, coordinating_unit, has_exam, has_hurdle")
+DETAIL_KEYS = ("code", "title", "units", "level", "description", "prerequisite_raw",
+               "incompatible", "assessments", "learning_outcomes", "topics",
+               "coordinator", "coordinating_unit", "has_exam", "has_hurdle")
+COURSE_PROFILE_URL = "https://programs-courses.uq.edu.au/course.html?course_code={}"
+
+
+def course_detail(conn, code: str) -> dict | None:
+    """单门课的完整详情(介绍/先修/考核/开课),聚合同课多 offering。
+
+    课程内容字段(description/先修等)取最新一行;开课学期/校区汇总所有 offering。
+    返回 None 表示课程码不在库(上层据此优雅提示,不静默成功)。
+    """
+    code = (code or "").strip().upper()
+    if not code:
+        raise ValueError("code 不能为空")
+    row = conn.execute(
+        f"SELECT {DETAIL_COLS} FROM courses WHERE code=%s "
+        f"ORDER BY year DESC NULLS LAST, semester LIMIT 1", (code,)).fetchone()
+    if not row:
+        return None
+    d = dict(zip(DETAIL_KEYS, row))
+    offerings = conn.execute(
+        "SELECT DISTINCT semester, location FROM courses "
+        "WHERE code=%s AND semester IS NOT NULL", (code,)).fetchall()
+    d["semesters"] = sorted({o[0] for o in offerings if o[0]})
+    d["locations"] = sorted({o[1] for o in offerings if o[1]})
+    d["profile_url"] = COURSE_PROFILE_URL.format(code)
+    return d
 
 
 if __name__ == "__main__":
