@@ -20,7 +20,13 @@ dist/
 # Claude 运行时锁(任意层级)
 **/scheduled_tasks.lock
 
-# 知识库:数据随仓库一起带(换机器继续)。只排垃圾/临时残留。
+# 知识库:抓取源(raw HTML + fetched_*.jsonl 抓取清单)随仓库带,换机器免重爬。
+# 派生物(chunks/向量)本地可再生,体积大(chunk_vecs 50MB+),不入库——
+# 重建步骤见 backend/docs/kb_progress.md「重建生成物」。
+backend/data/kb/chunks.jsonl
+backend/data/kb/chunks_faq.jsonl
+backend/data/kb/chunks_all.jsonl
+backend/data/kb/chunk_vecs.jsonl
 backend/data/kb/_smoke*.csv
 backend/data/kb/fetched_faq_seltest.jsonl
 backend/data/kb/fetched.jsonl
