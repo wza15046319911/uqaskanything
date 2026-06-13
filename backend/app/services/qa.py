@@ -22,7 +22,7 @@ import argparse
 
 import psycopg
 
-from app.services import planner, retrieval, program_lookup, answer
+from app.services import planner, retrieval, program_lookup, answer, answerability
 
 from app.core.config import DSN
 ANSWER_CAP = 20      # 喂给答案模型的最多课程数(过多无意义且拉长 prompt)
@@ -288,12 +288,22 @@ def _retrieve(conn, question: str) -> dict:
 
 
 def _kb_or_none(conn, question: str) -> list:
-    """知识库语义检索;KB 是增强兜底层,其失败(如向量服务波动)只退化为「无召回」,
-    不拖垮主问答(优雅降级,不是静默成功:无结果时上层会走拒答/empty)。"""
+    """知识库语义检索 + answerability 门;KB 是增强兜底层。
+
+    检索失败(向量服务波动)只优雅降级为「无召回」;但 answerability 门判否(虚构实体/
+    年份越界)是确定性拒答,return [] 让下游 KB_REFUSE 接管(同步/流式两路复用,answer.py 零改)。
+    词表缺失等配置错误从 answerable() 抛出、向上传播——不混进上面的降级 except 里被静默(规则 19)。"""
     try:
-        return retrieval.kb_search(conn, question)
+        chunks = retrieval.kb_search(conn, question)
     except Exception:
         return []
+    if not chunks:
+        return []
+    ok, reason = answerability.answerable(question, chunks)
+    if not ok:
+        print(f"[answerability] 拒答:{reason} | q={question!r}")
+        return []
+    return chunks
 
 
 def run(conn, question: str, generate: bool = True) -> dict:

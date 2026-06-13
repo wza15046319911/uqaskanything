@@ -31,6 +31,7 @@ backend/data/kb/chunks.jsonl
 backend/data/kb/chunks_faq.jsonl
 backend/data/kb/chunks_all.jsonl
 backend/data/kb/chunk_vecs.jsonl
+backend/data/kb/kb_vocab.txt
 backend/data/kb/_smoke*.csv
 
 # 含敏感浏览器 cookie 的本地实验脚本,绝不提交

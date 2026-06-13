@@ -24,6 +24,8 @@ import re
 import requests
 import psycopg
 
+from app.services import reranker
+
 OLLAMA = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 EMBED_MODEL = "bge-m3"
 
@@ -245,26 +247,28 @@ def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.62) -> list[dict]
     用于课程/专业结构化数据答不了的一般学生事务问题(how-to / 政策 / FAQ)。
     低于 min_sim 的一律滤掉——宁可不返回也不给弱相关结果(student-facing 红线 3:弱召回拒答)。
     min_sim=0.62 由 threshold_scan 在带负样本评测集上扫出(综合准确率 75%→83%,答全率不降);
-    sim>=0.62 仍有少量编造问题(如"火星交换生" 0.70)挡不住,属阈值天花板,待 answerability/rerank。
-    同一官方页面可能切多个 chunk,这里不去重(answer 层按 url 去重列来源)。
+    sim>=0.62 仍有少量编造问题(如"火星交换生" 0.70)挡不住,属阈值天花板,虚构实体拒答归
+    answerability 门(P0),非本函数。同一官方页面可能切多个 chunk,这里不去重(answer 层按 url 去重列来源)。
+
+    可选重排(KB_RERANK 开,默认关):top-N 候选过 min_sim 后用 cross-encoder 重排再取 top-k;
+    min_sim 仍卡 bi-encoder sim、reranker 分绝不参与拒答(拒答归 P0)。关闭时行为与无重排完全一致。
     """
     if not query or not query.strip():
         raise ValueError("query 不能为空")
     vec = _embed(query)
     sql = (f"SELECT {KB_COLS}, 1-(embedding<=>%s::vector) AS sim FROM kb_chunks "
            f"ORDER BY embedding<=>%s::vector LIMIT %s")
-    rows = conn.execute(sql, (vec, vec, k * 4)).fetchall()
+    rows = conn.execute(sql, (vec, vec, k * 4)).fetchall()  # top-N 候选
     out: list[dict] = []
     for r in rows:
         sim = float(r[-1])
-        if sim < min_sim:
+        if sim < min_sim:          # 拒答门槛只卡 bi-encoder sim(reranker 分不参与)
             continue
         d = dict(zip(KB_KEYS, r[:len(KB_KEYS)]))
         d["sim"] = sim
         out.append(d)
-        if len(out) >= k:
-            break
-    return out
+    out = reranker.rerank(query, out)      # 默认关=原样返回;开则只改顺序/取舍,不改拒答
+    return out[:k]
 
 
 # ---------- 单课详情(课程介绍 / 先修 / 考核) ----------

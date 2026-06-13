@@ -72,7 +72,7 @@ def main():
 
     from sentence_transformers import CrossEncoder
     print(f"加载 cross-encoder:{args.model} ...")
-    ce = CrossEncoder(args.model)
+    ce = CrossEncoder(args.model, trust_remote_code=True)  # jina-reranker-v2 自带 modeling 代码,需此项
 
     rows: list[dict] = []
     print(f"评测集:{path.name} | {len(cases)} 题 | 候选 top-{args.cand} | 计算 bi/ce ...")
