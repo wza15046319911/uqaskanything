@@ -1,0 +1,6 @@
+# 可选依赖:cross-encoder 重排评测(rerank_probe.py / kb_eval --rerank)。
+# 体积大(torch 数百 MB),不入基础安装;仅做重排调研/评测时按需装:
+#   pip install -r requirements-rerank.txt
+# 结论见 docs/rerank_answerability_findings.md:reranker 治召回不治拒答,生产默认不开。
+torch>=2.0
+sentence-transformers>=3.0
