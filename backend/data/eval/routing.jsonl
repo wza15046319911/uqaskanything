@@ -1,0 +1,52 @@
+{"q": "没有考试的课", "mode": "filter", "where_has": ["has_exam"]}
+{"q": "没有考试的研究生课", "mode": "filter", "where_has": ["has_exam", "level"]}
+{"q": "有 hurdle 的研究生课", "mode": "filter", "where_has": ["has_hurdle", "level"]}
+{"q": "2 学分的本科课", "mode": "filter", "where_has": ["units", "level"]}
+{"q": "St Lucia 校区的课", "mode": "filter", "where_has": ["location"]}
+{"q": "Gatton 校区有哪些课", "mode": "filter", "where_has": ["gatton"]}
+{"q": "跟机器学习相关的课", "mode": "semantic", "semantic": true}
+{"q": "找跟金融相关的课", "mode": "semantic", "semantic": true}
+{"q": "有没有网络安全方向的课", "mode": "semantic", "semantic": true}
+{"q": "CS 有哪些课", "mode": "semantic", "semantic": true}
+{"q": "CS有哪些课程没有考试", "mode": "hybrid", "where_has": ["has_exam"], "semantic": true}
+{"q": "计算机相关、没有hurdle的研究生课", "mode": "hybrid", "where_has": ["has_hurdle", "level"], "semantic": true}
+{"q": "St Lucia 校区有哪些人工智能的课", "mode": "hybrid", "where_has": ["location"], "semantic": true}
+{"q": "CSSE1001是哪些专业的必修", "mode": "program", "direction": "course_to_programs"}
+{"q": "CSSE1001 是哪些专业的选修课", "mode": "program", "direction": "course_to_programs"}
+{"q": "MATH1051 属于哪些专业", "mode": "program", "direction": "course_to_programs"}
+{"q": "Bachelor of Computer Science 要修哪些课", "mode": "program", "direction": "program_to_courses"}
+{"q": "Master of Data Science 的核心课有哪些", "mode": "program", "direction": "program_to_courses"}
+{"q": "Bachelor of Engineering 培养方案", "mode": "program", "direction": "program_to_courses"}
+{"q": "Bachelor of Computer Science 能修 CSSE1001 吗", "mode": "program", "direction": "permit"}
+{"q": "Master of Information Technology 可以修 MATH1051 吗", "mode": "program", "direction": "permit"}
+{"q": "CSSE1001 讲什么", "mode": "course_detail"}
+{"q": "CSSE1001 的先修课是什么", "mode": "course_detail"}
+{"q": "MATH1051 怎么考核", "mode": "course_detail"}
+{"q": "census date 是什么时候", "mode": "kb"}
+{"q": "怎么重置 UQ 密码", "mode": "kb"}
+{"q": "缴费截止日期是哪天", "mode": "kb"}
+{"q": "申请缓考的流程是什么", "mode": "kb"}
+{"q": "圣诞假期图书馆开放吗", "mode": "kb"}
+{"q": "St Lucia 校区停车怎么收费", "mode": "kb"}
+{"q": "怎么申请在读证明", "mode": "kb"}
+{"q": "GPA 怎么算", "mode": "kb"}
+{"q": "2026 年第一学期什么时候开学", "mode": "kb"}
+{"q": "什么时候是 census date", "mode": "kb"}
+{"q": "有哪些线上授课的课", "mode": "filter", "where_has": ["attendance_mode"]}
+{"q": "第一学期开的本科课", "mode": "filter", "where_has": ["semester", "level"]}
+{"q": "Gatton 校区有没有跟农业相关的课", "mode": "hybrid", "where_has": ["gatton"], "semantic": true}
+{"q": "AI 方向的研究生课", "mode": "hybrid", "where_has": ["level"], "semantic": true}
+{"q": "找点跟数据科学有关的", "mode": "semantic", "semantic": true}
+{"q": "EE 相关的课有哪些", "mode": "semantic", "semantic": true}
+{"q": "St Lucia 校区 2 学分的本科课", "mode": "filter", "where_has": ["location", "units", "level"]}
+{"q": "MATH1051 是几学分", "mode": "course_detail"}
+{"q": "INFS1200 这门课难不难", "mode": "course_detail"}
+{"q": "DECO1400 是哪些专业的核心课", "mode": "program", "direction": "course_to_programs"}
+{"q": "Master of Computer Science 的选修课有哪些", "mode": "program", "direction": "program_to_courses"}
+{"q": "Bachelor of Science 能不能修 CSSE1001", "mode": "program", "direction": "permit"}
+{"q": "怎么申请奖学金", "mode": "kb"}
+{"q": "退课会不会影响 GPA", "mode": "kb"}
+{"q": "学生证丢了怎么补办", "mode": "kb"}
+{"q": "怎么连 UQ 的 VPN", "mode": "kb"}
+{"q": "图书馆借书可以借多久", "mode": "kb"}
+{"q": "毕业典礼一般在几月", "mode": "kb"}
