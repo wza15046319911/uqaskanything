@@ -14,7 +14,14 @@ import {
   postSimSchedule,
   postSimAdvise,
 } from '../api/sim'
-import { type SimLocalState, loadState, saveState, defaultState, semKind } from '../lib/sim'
+import {
+  type SimLocalState,
+  loadState,
+  saveState,
+  defaultState,
+  semKind,
+  computeSemesters,
+} from '../lib/sim'
 
 export default function SimPage() {
   const [state, setState] = useState<SimLocalState>(loadState)
@@ -42,7 +49,7 @@ export default function SimPage() {
         branch: s.branch,
         placement: s.placement,
         units_cap: s.units_cap,
-        n_semesters: s.years * 2,
+        n_semesters: s.n_semesters,
         start_sem: s.start_sem,
       })
       if (d.error) {
@@ -70,6 +77,14 @@ export default function SimPage() {
     void refresh(next)
   }
 
+  // 学期数自动跟随学位总学分(总学分 / 8),已排课作为下限。
+  useEffect(() => {
+    if (!data) return
+    const n = computeSemesters(data.total_units, state.placement)
+    if (n !== state.n_semesters) apply({ ...state, n_semesters: n })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data?.total_units, state.placement])
+
   const pickProgram = (id: string) => {
     setCsQuery({})
     setCsResults({})
@@ -79,7 +94,7 @@ export default function SimPage() {
       ...defaultState(),
       program_id: id,
       start_year: state.start_year,
-      years: state.years,
+      n_semesters: state.n_semesters,
       units_cap: state.units_cap,
       start_sem: state.start_sem,
     })
@@ -110,7 +125,7 @@ export default function SimPage() {
 
   const autoPlace = (code: string) => {
     const o = offered(code)
-    const n = state.years * 2
+    const n = state.n_semesters
     let target = -1
     for (let i = 0; i < n; i++) {
       if (!o || o.includes(semKind(state.start_sem, i))) {
@@ -203,16 +218,14 @@ export default function SimPage() {
     d.unplaced.forEach((u) => {
       if (!(u.code in np)) np[u.code] = 0
     })
-    const years =
-      d.semesters.length > state.years * 2 ? Math.ceil(d.semesters.length / 2) : state.years
-    apply({ ...state, placement: np, years })
+    apply({ ...state, placement: np })
     if (d.unplaced.length) showToast(`${d.unplaced.length} 门排不下(学期/上限不够),已置 Y1 待调`)
   }
 
   const current = programs.find((p) => p.program_id === state.program_id)
 
   return (
-    <div className="mx-auto max-w-[1180px] px-5 pt-[clamp(20px,4vw,40px)] pb-20 text-[15px]">
+    <div className="mx-auto max-w-[1480px] px-5 pt-[clamp(20px,4vw,40px)] pb-20 text-[15px]">
       <header className="mb-5 text-center">
         <h1 className="mb-1.5 text-[clamp(26px,5vw,40px)] leading-[1.05] font-semibold tracking-tight">
           UQ <em className="text-accent not-italic">Program</em> Planner
@@ -234,7 +247,7 @@ export default function SimPage() {
       )}
 
       {data && (
-        <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)]">
+        <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.5fr)]">
           <RulesPane
             data={data}
             state={state}

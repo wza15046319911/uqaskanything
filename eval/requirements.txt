@@ -1,0 +1,9 @@
+# RAGAS 评测专用依赖(与 backend 运行时解耦,单独装在这个目录的虚拟环境里)
+# 安装:python3 -m pip install -r eval/requirements.txt
+# judge LLM 走 DeepSeek(OpenAI 兼容,用 langchain-openai),embedding 走本地 Ollama bge-m3。
+ragas==0.2.14
+langchain-openai==0.2.14
+langchain-ollama==0.2.1
+datasets==3.2.0
+requests==2.33.1
+python-dotenv==1.0.1

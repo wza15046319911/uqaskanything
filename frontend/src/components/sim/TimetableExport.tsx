@@ -85,11 +85,18 @@ export default function TimetableExport({
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {Array.from({ length: state.years }, (_, y) => (
-            <div key={y} style={{ display: 'flex', gap: 12, alignItems: 'stretch' }}>
+          {Array.from({ length: Math.ceil(state.n_semesters / 2) }, (_, y) => (
+            <div
+              key={y}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '64px minmax(0, 1fr) minmax(0, 1fr)',
+                gap: 12,
+                alignItems: 'stretch',
+              }}
+            >
               <div
                 style={{
-                  flex: '0 0 64px',
                   fontSize: 13,
                   fontWeight: 700,
                   color: MUTED,
@@ -99,6 +106,7 @@ export default function TimetableExport({
                 Year {y + 1}
               </div>
               {[2 * y, 2 * y + 1].map((i) => {
+                if (i >= state.n_semesters) return null
                 const kind = semKind(state.start_sem, i)
                 const year = semYear(state.start_year, state.start_sem, i)
                 const codes = placedBy[i] || []
@@ -109,7 +117,6 @@ export default function TimetableExport({
                   <div
                     key={i}
                     style={{
-                      flex: 1,
                       minWidth: 0,
                       border: `1px solid ${LINE}`,
                       borderRadius: 12,

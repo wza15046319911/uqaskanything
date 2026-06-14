@@ -1,0 +1,10 @@
+# DeepEval 评测专用依赖。必须用独立 venv:deepeval 依赖 openai>=2,与 ragas 那套
+# (langchain-openai 要求 openai<2)在同一环境无法共存。
+# 安装:python3 -m venv eval/.venv-deepeval
+#       eval/.venv-deepeval/bin/pip install -r eval/requirements-deepeval.txt
+#       cp eval/.env.example eval/.env   # 与 ragas 共用同一份 .env(填 DEEPSEEK_API_KEY)
+# judge LLM 走 DeepSeek(deepeval 4.x 内置 DeepSeekModel);指标均为 LLM-as-judge,不用 embedding。
+# 版本钉死值未在本机联网验证;装不上时以 deepeval 4.0.x 文档为准微调。
+deepeval==4.0.6
+python-dotenv==1.2.2
+requests==2.34.2

@@ -1,0 +1,6 @@
+.env
+.venv/
+.venv-deepeval/
+data/generated.jsonl
+reports/
+__pycache__/

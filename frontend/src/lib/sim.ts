@@ -6,7 +6,7 @@ export interface SimLocalState {
   branch: string[]
   placement: Record<string, number> // code -> 学期格索引
   start_year: number
-  years: number
+  n_semesters: number
   units_cap: number
   start_sem: string // 入学学期 'S1' | 'S2'
 }
@@ -29,6 +29,15 @@ export function semYear(startYear: number, startSem: string, i: number): number 
   return s === 'S1' ? startYear + Math.floor(i / 2) : startYear + Math.floor((i + 1) / 2)
 }
 
+// 学期数由学位总学分自动判定:满载 8 学分/学期,即 总学分 / 8(向上取整),可为奇数(如 1.5 年制 3 学期)。
+// 已排课的最后一格作为下限,避免学期上限调小(兼读)时把课挤出格子外。
+export function computeSemesters(totalUnits: number, placement: Record<string, number>): number {
+  const base = Math.ceil((totalUnits || 0) / 8)
+  const maxCell = Object.values(placement).reduce((m, i) => Math.max(m, i), -1)
+  const needed = maxCell + 1
+  return Math.max(1, base, needed)
+}
+
 const LS_KEY = 'uq_sim_v3'
 
 export function defaultState(): SimLocalState {
@@ -38,7 +47,7 @@ export function defaultState(): SimLocalState {
     branch: [],
     placement: {},
     start_year: 2026,
-    years: 3,
+    n_semesters: 6,
     units_cap: 8,
     start_sem: 'S1',
   }

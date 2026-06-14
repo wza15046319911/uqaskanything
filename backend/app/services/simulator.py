@@ -471,12 +471,17 @@ class PlanSimulator:
     # ---------- 开放规则与计划外课归属 ----------
     def _open_rule(self, rule: dict) -> bool:
         """开放规则:select 型、无可枚举项(空 items=程序课表内任选,如 E;仅 wildcard=任意课,
-        如 F / 2557 A.6)。进度来自 attribution(),不来自 items。
+        如 F / 2557 A.6;仅自引用整学位 plan=程序内任选,如 2455 J 'BE(Hons) Program
+        Elective Courses')。进度来自 attribution(),不来自 items。
         units_max 为 None 时:仅放开「纯 wildcard」自由选修(任意课,如 A.6 'General Elective');
-        空表规则(E,程序课表内任选)无上限会成无限吸口,不放开。"""
+        空表规则(E)或自引用规则无上限会成无限吸口,不放开。"""
         if rule.get("select_type") != "select" or rule.get("children_refs"):
             return False
         items = rule.get("items", [])
+        if items and all(
+            it.get("kind") == "plan" and self._is_self_program(it) for it in items
+        ):
+            return rule.get("units_max") is not None
         if not all(it.get("kind") == "wildcard" for it in items):
             return False
         if rule.get("units_max") is None:
@@ -944,7 +949,10 @@ class PlanSimulator:
         entry["child_of"] = self._child_of.get(ref)
         if self._open_rule(rule):                 # 开放规则:UI 据此挂课程搜索框
             entry["open"] = True
-            entry["open_scope"] = "any" if rule.get("items") else "program"
+            entry["open_scope"] = (
+                "any" if any(it.get("kind") == "wildcard" for it in rule.get("items", []))
+                else "program"
+            )
             entry["open_max_level"] = self._open_level_cap(rule)
         return entry
 
@@ -1055,7 +1063,10 @@ class PlanSimulator:
         }
         if self._open_rule(sr):                   # 罕见(2052 BA Honours 1 条):标开放 + 兜底计数
             entry["open"] = True
-            entry["open_scope"] = "any" if sr.get("items") else "program"
+            entry["open_scope"] = (
+                "any" if any(it.get("kind") == "wildcard" for it in sr.get("items", []))
+                else "program"
+            )
             entry["open_max_level"] = self._open_level_cap(sr)
             leftover = self._subrule_leftover_units(sr)
             entry["units_done"] = leftover

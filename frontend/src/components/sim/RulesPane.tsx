@@ -3,11 +3,12 @@ import {
   Alert,
   Chip,
   ComboBox,
+  Disclosure,
   Input,
   ListBox,
   ProgressBar,
-  ToggleButton,
-  ToggleButtonGroup,
+  Select,
+  Switch,
 } from '@heroui/react'
 import { type SimLocalState, setDragCode } from '../../lib/sim'
 import type { AdviseResponse, Rule, SimCourse, SimStateResponse } from '../../api/sim'
@@ -35,7 +36,31 @@ const dragCode = (e: DragEvent, code: string) => {
 }
 
 const CARD_CLS =
-  'flex cursor-grab items-center gap-2 rounded-xl border border-border bg-surface px-2.5 py-2 transition hover:-translate-y-px hover:border-accent active:cursor-grabbing'
+  'flex cursor-grab items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5 transition hover:-translate-y-px hover:border-accent hover:shadow-surface active:cursor-grabbing'
+
+// 去掉被多数规则共享的前导词(如 program 缩写 "BInfTech"),只保留区分部分;
+// 不共享该前缀的标题(如 "General Elective Courses")保持原样,且永不清空标题。
+const stripSharedPrefix = (titles: string[]): string[] => {
+  if (titles.length < 2) return titles
+  let lists = titles.map((t) => t.split(/\s+/))
+  for (;;) {
+    const counts = new Map<string, number>()
+    lists.forEach((w) => {
+      if (w.length > 1) counts.set(w[0], (counts.get(w[0]) || 0) + 1)
+    })
+    let best: string | null = null
+    let bestN = 0
+    counts.forEach((n, w) => {
+      if (n > bestN) {
+        bestN = n
+        best = w
+      }
+    })
+    if (best === null || bestN * 2 <= titles.length) break
+    lists = lists.map((w) => (w.length > 1 && w[0] === best ? w.slice(1) : w))
+  }
+  return lists.map((w) => w.join(' '))
+}
 
 export default function RulesPane(props: RulesPaneProps) {
   const { data, csQuery, csResults, offered } = props
@@ -43,8 +68,55 @@ export default function RulesPane(props: RulesPaneProps) {
 
   const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
 
-  const paneRef = useRef<HTMLElement>(null)
+  const titleNode = (c: string): ReactNode => {
+    const t = data.courses[c]?.title
+    return (
+      <span className={`min-w-0 flex-1 truncate text-sm${t ? '' : ' text-muted/70 italic'}`}>
+        {t || '无开课信息'}
+      </span>
+    )
+  }
+
+  const paneRef = useRef<HTMLDivElement>(null)
   const [jumpQ, setJumpQ] = useState('')
+  const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [collapsedOv, setCollapsedOv] = useState<Record<string, boolean>>({})
+  const isCollapsed = (r: Rule) => collapsedOv[r.ref] ?? (r.child_of ? true : !!r.done)
+  const ruleByRef = useMemo(() => {
+    const m: Record<string, Rule> = {}
+    data.rules.forEach((r) => (m[r.ref] = r))
+    return m
+  }, [data.rules])
+  // 手风琴单展开:展开某子规则时,收起同一父级下的其他兄弟规则。
+  const toggleRule = (rule: Rule, open: boolean) =>
+    setCollapsedOv((m) => {
+      const next = { ...m, [rule.ref]: !open }
+      if (open && rule.child_of) {
+        data.rules.forEach((r) => {
+          if (r.ref !== rule.ref && r.child_of === rule.child_of) next[r.ref] = true
+        })
+      }
+      return next
+    })
+  const ancestorCollapsed = (r: Rule): boolean => {
+    let p = r.child_of ? ruleByRef[r.child_of] : undefined
+    while (p) {
+      if (isCollapsed(p)) return true
+      p = p.child_of ? ruleByRef[p.child_of] : undefined
+    }
+    return false
+  }
+  const rootOf = (r: Rule): string => {
+    let cur = r
+    while (cur.child_of && ruleByRef[cur.child_of]) cur = ruleByRef[cur.child_of]
+    return cur.ref
+  }
+  const ruleStatus = (r: Rule) =>
+    r.done
+      ? { icon: '✓', color: 'text-accent' }
+      : (r.units_counted ?? 0) > 0
+        ? { icon: '◐', color: 'text-accent' }
+        : { icon: '○', color: 'text-muted' }
   const jumpPool = useMemo(() => {
     const s = new Set<string>()
     Object.values(data.available_by_rule || {}).forEach((slots) =>
@@ -55,6 +127,21 @@ export default function RulesPane(props: RulesPaneProps) {
     Object.values(data.selected_by_rule || {}).forEach((arr) => arr.forEach((c) => s.add(c)))
     return [...s]
   }, [data])
+  const codeRule = useMemo(() => {
+    const m: Record<string, string> = {}
+    const add = (ref: string, code: string) => {
+      if (!(code in m)) m[code] = ref
+    }
+    Object.entries(data.available_by_rule || {}).forEach(([ref, slots]) =>
+      slots.forEach((slot) =>
+        slot.kind === 'course' ? add(ref, slot.code) : slot.options.forEach((o) => add(ref, o)),
+      ),
+    )
+    Object.entries(data.selected_by_rule || {}).forEach(([ref, arr]) =>
+      arr.forEach((c) => add(ref, c)),
+    )
+    return m
+  }, [data])
   const jq = jumpQ.trim().toLowerCase()
   const jumpHits = jq
     ? jumpPool
@@ -64,12 +151,34 @@ export default function RulesPane(props: RulesPaneProps) {
     : []
   const jumpTo = (code: string) => {
     setJumpQ('')
-    const el = paneRef.current?.querySelector(`[data-code="${code}"]`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.classList.add('flash')
-      window.setTimeout(() => el.classList.remove('flash'), 1200)
+    const doScroll = () => {
+      const el = paneRef.current?.querySelector(`[data-code="${code}"]`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        el.classList.add('flash')
+        window.setTimeout(() => el.classList.remove('flash'), 1200)
+      }
     }
+    const ruleRef = codeRule[code]
+    if (!ruleRef) {
+      doScroll()
+      return
+    }
+    // 展开目标课程所在规则的整条祖先链,并切到其顶层组件 tab。
+    const chain: string[] = []
+    let cur: Rule | undefined = ruleByRef[ruleRef]
+    while (cur) {
+      chain.push(cur.ref)
+      cur = cur.child_of ? ruleByRef[cur.child_of] : undefined
+    }
+    setCollapsedOv((m) => {
+      const next = { ...m }
+      chain.forEach((r) => (next[r] = false))
+      return next
+    })
+    const root = chain[chain.length - 1]
+    if (root && root !== curTab) setActiveTab(root)
+    window.setTimeout(doScroll, 60)
   }
   const offTag = (c: string) => {
     const o = offered(c)
@@ -83,15 +192,11 @@ export default function RulesPane(props: RulesPaneProps) {
     const l = data.locks?.[c]
     if (!l) return null
     if (l.state === 'unknown')
-      return (
-        <Chip size="sm" variant="soft" className="shrink-0">
-          先修待核
-        </Chip>
-      )
+      return <span className="shrink-0 text-[11px] text-muted">先修待核</span>
     return (
-      <Chip size="sm" variant="soft" color="warning" className="shrink-0" title={l.reason || ''}>
+      <span className="shrink-0 text-[11px] text-warning/80" title={l.reason || ''}>
         需先修
-      </Chip>
+      </span>
     )
   }
 
@@ -109,7 +214,7 @@ export default function RulesPane(props: RulesPaneProps) {
         <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
           {c}
         </Chip>
-        <span className="min-w-0 flex-1 truncate text-[13px]">{ctitle(c)}</span>
+        {titleNode(c)}
         {offTag(c)}
         {lockTag(c)}
       </div>
@@ -117,22 +222,31 @@ export default function RulesPane(props: RulesPaneProps) {
   }
 
   const equivCard = (options: string[], k: number): ReactNode => (
-    <div key={`eq-${k}`} className={`${CARD_CLS} cursor-default border-dashed`}>
-      <div className="min-w-0 flex-1">
+    <div
+      key={`eq-${k}`}
+      className={`${CARD_CLS} cursor-default flex-col items-stretch border-dashed`}
+    >
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
         {options.map((c, i) => (
           <div key={c}>
-            {i > 0 && <div className="px-1 pt-1 text-[10px] font-bold text-muted">— 二选一 —</div>}
+            {i > 0 && (
+              <div className="mb-2 flex items-center gap-2 text-[10px] font-bold tracking-wider text-muted">
+                <span className="h-px flex-1 bg-border" />
+                二选一
+                <span className="h-px flex-1 bg-border" />
+              </div>
+            )}
             <div
               data-code={c}
               draggable
               onDragStart={(e) => dragCode(e, c)}
               onClick={() => onPick(c)}
-              className="flex min-w-0 cursor-grab items-center gap-2 active:cursor-grabbing"
+              className="flex min-w-0 cursor-grab items-center gap-3 active:cursor-grabbing"
             >
               <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
                 {c}
               </Chip>
-              <span className="min-w-0 flex-1 truncate text-[13px]">{ctitle(c)}</span>
+              {titleNode(c)}
               {offTag(c)}
               {lockTag(c)}
             </div>
@@ -154,7 +268,7 @@ export default function RulesPane(props: RulesPaneProps) {
       <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
         {x.code}
       </Chip>
-      <span className="min-w-0 flex-1 truncate text-[13px]">{x.title || '(无信息)'}</span>
+      <span className="min-w-0 flex-1 truncate text-sm">{x.title || '(无信息)'}</span>
       {x.offerings?.length ? (
         <Chip size="sm" variant="soft" className="shrink-0">
           {x.offerings.join('·')}
@@ -168,19 +282,80 @@ export default function RulesPane(props: RulesPaneProps) {
     const ph =
       rule.open_scope === 'program' ? '搜程序课表内的课(码/课名)…' : '搜全校任意课程(码/课名)…'
     return (
-      <>
-        {picked.length > 0 && <div className="flex flex-col gap-1.5">{picked.map(leftCard)}</div>}
-        <div className="mt-1">
+      <div className="flex flex-col gap-2.5">
+        {picked.length > 0 && <div className="flex flex-col gap-2">{picked.map(leftCard)}</div>}
+        <div className="flex flex-col gap-2">
           <Input
             placeholder={ph}
             value={csQuery[rule.ref] || ''}
             onChange={(e) => onCsearch(rule.ref, e.target.value)}
             autoComplete="off"
-            className="mt-1.5 mb-1 w-full"
+            className="w-full"
           />
-          <div className="flex flex-col gap-1.5">{(csResults[rule.ref] || []).map(resCard)}</div>
+          <div className="flex flex-col gap-2">{(csResults[rule.ref] || []).map(resCard)}</div>
         </div>
-      </>
+      </div>
+    )
+  }
+
+  const planPicker = (rule: Rule): ReactNode => {
+    const opts = rule.plan_options || []
+    const chosen = (rule.chosen_plans || [])[0]
+    if (opts.length === 1) {
+      const po = opts[0]
+      return (
+        <div className="mb-3">
+          <Switch isSelected={chosen === po.code} onChange={() => onSetPlan(po.code)}>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+            <Switch.Content className="flex w-full items-center justify-between gap-2">
+              <span className="min-w-0 flex-1 truncate">{po.name}</span>
+              <span className="shrink-0 text-xs text-muted tabular-nums">{po.units_min}u</span>
+            </Switch.Content>
+          </Switch>
+        </div>
+      )
+    }
+    const none = '__none__'
+    return (
+      <div className="mb-3">
+        <Select
+          aria-label={rule.title}
+          className="w-full min-w-0"
+          selectedKey={chosen || none}
+          onSelectionChange={(k) => {
+            const key = k == null ? none : String(k)
+            if (key === none) {
+              if (chosen) onSetPlan(chosen)
+            } else if (key !== chosen) {
+              onSetPlan(key)
+            }
+          }}
+        >
+          <Select.Trigger>
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              <ListBox.Item id={none} textValue="不选(可选)">
+                不选(可选)
+                <ListBox.ItemIndicator />
+              </ListBox.Item>
+              {opts.map((po) => {
+                const label = `${po.name} · ${po.units_min}u`
+                return (
+                  <ListBox.Item key={po.code} id={po.code} textValue={label}>
+                    {label}
+                    <ListBox.ItemIndicator />
+                  </ListBox.Item>
+                )
+              })}
+            </ListBox>
+          </Select.Popover>
+        </Select>
+      </div>
     )
   }
 
@@ -191,55 +366,63 @@ export default function RulesPane(props: RulesPaneProps) {
   const groupOf: Record<string, string[]> = {}
   groups.forEach((g) => g.forEach((r) => (groupOf[r] = g)))
   const toggled = new Set<string>()
-  const nodes: ReactNode[] = []
-
-  if ((ov.unattributed || []).length) {
-    nodes.push(
-      <Alert status="warning" className="my-2.5" key="unatt">
-        <Alert.Indicator />
-        <Alert.Content>
-          <Alert.Description>
-            {ov.unattributed!.length} 门课未计入任何规则:{ov.unattributed!.join('、')}
-          </Alert.Description>
-        </Alert.Content>
-      </Alert>,
-    )
+  const nodesByRoot: Record<string, ReactNode[]> = {}
+  const pushNode = (root: string, node: ReactNode) => {
+    ;(nodesByRoot[root] ||= []).push(node)
   }
 
+  const unattNode = (ov.unattributed || []).length ? (
+    <Alert status="warning" className="mb-4" key="unatt">
+      <Alert.Indicator />
+      <Alert.Content>
+        <Alert.Description>
+          {ov.unattributed!.length} 门课未计入任何规则:{ov.unattributed!.join('、')}
+        </Alert.Description>
+      </Alert.Content>
+    </Alert>
+  ) : null
+
   for (const rule of data.rules) {
+    if (ancestorCollapsed(rule)) continue
+    const root = rootOf(rule)
     const g = groupOf[rule.ref]
     if (g) {
       const key = g.join('|')
       if (!toggled.has(key)) {
         toggled.add(key)
         const cur = chosenBr[key]
-        nodes.push(
+        pushNode(
+          root,
           <div
-            className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-2.5 py-2 text-xs"
+            className="my-4 flex min-w-0 flex-col items-start gap-2 rounded-xl border border-dashed border-border bg-surface px-3.5 py-3 text-xs"
             key={`br-${key}`}
           >
-            <span className="shrink-0 text-muted">二选一路径:</span>
-            <ToggleButtonGroup
-              selectionMode="single"
-              disallowEmptySelection
-              selectedKeys={new Set(cur ? [cur] : [])}
-              onSelectionChange={(keys: 'all' | Set<string | number>) => {
-                if (keys === 'all') return
-                const k = [...keys][0]
-                if (k != null) onSetBranch(String(k))
-              }}
+            <span className="font-medium tracking-wide text-muted">二选一路径</span>
+            <Select
+              aria-label="二选一路径"
+              className="w-full min-w-0"
+              selectedKey={cur || g[0]}
+              onSelectionChange={(k) => k != null && onSetBranch(String(k))}
             >
-              {g.map((ref) => {
-                const r2 = data.rules.find((x) => x.ref === ref)
-                return (
-                  <ToggleButton key={ref} id={ref} className="max-w-full">
-                    <span className="truncate">
-                      {ref} · {r2?.title || ref}
-                    </span>
-                  </ToggleButton>
-                )
-              })}
-            </ToggleButtonGroup>
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover>
+                <ListBox>
+                  {g.map((ref) => {
+                    const r2 = data.rules.find((x) => x.ref === ref)
+                    const label = `${ref} · ${r2?.title || ref}`
+                    return (
+                      <ListBox.Item key={ref} id={ref} textValue={label}>
+                        {label}
+                        <ListBox.ItemIndicator />
+                      </ListBox.Item>
+                    )
+                  })}
+                </ListBox>
+              </Select.Popover>
+            </Select>
           </div>,
         )
       }
@@ -269,7 +452,7 @@ export default function RulesPane(props: RulesPaneProps) {
     let body: ReactNode
     if (slots.length) {
       body = (
-        <div className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-2">
           {slots.map((s, i) => (s.kind === 'equiv' ? equivCard(s.options, i) : leftCard(s.code)))}
         </div>
       )
@@ -293,67 +476,95 @@ export default function RulesPane(props: RulesPaneProps) {
       )
     }
 
-    nodes.push(
+    pushNode(
+      root,
       <div
-        className={`mb-3.5${rule.child_of ? ' ml-3.5 border-l-2 border-border pl-2.5' : ''}`}
+        className={rule.child_of ? 'mb-6 ml-4 border-l-2 border-border pl-4' : 'mb-8'}
         key={rule.ref}
+        data-rule={rule.ref}
       >
-        <div className="mb-1.5 flex items-baseline gap-2">
-          <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
-            {rule.ref}
-          </Chip>
-          <span className="text-[13.5px] font-semibold">{rule.title}</span>
-          <span className="ml-auto shrink-0 text-xs whitespace-nowrap text-muted tabular-nums">
-            {typeTag} {label}
-            {tail}
-          </span>
-        </div>
-        <ProgressBar
-          aria-label={rule.title}
-          value={pct}
-          size="sm"
-          color={rule.over_max ? 'warning' : 'accent'}
-          className="mb-2"
+        <Disclosure
+          isExpanded={!isCollapsed(rule)}
+          onExpandedChange={(open) => toggleRule(rule, open)}
         >
-          <ProgressBar.Track>
-            <ProgressBar.Fill />
-          </ProgressBar.Track>
-        </ProgressBar>
-        {rule.plan_options && (
-          <ToggleButtonGroup
-            className="mb-1.5 flex-col items-stretch"
-            selectionMode="single"
-            selectedKeys={new Set(rule.chosen_plans || [])}
-            onSelectionChange={(keys: 'all' | Set<string | number>) => {
-              if (keys === 'all') return
-              const k = [...keys][0]
-              if (k != null) onSetPlan(String(k))
-              else if ((rule.chosen_plans || [])[0]) onSetPlan((rule.chosen_plans || [])[0])
-            }}
-          >
-            {rule.plan_options.map((po) => (
-              <ToggleButton key={po.code} id={po.code} className="justify-between gap-2">
-                <span className="min-w-0 flex-1 truncate text-left">{po.name}</span>
-                <span className="shrink-0 text-xs text-muted tabular-nums">{po.units_min}u</span>
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
-        )}
-        {body}
+          <Disclosure.Heading>
+            <Disclosure.Trigger className="flex w-full items-baseline gap-2.5 text-left">
+              <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
+                {rule.ref}
+              </Chip>
+              <span className="min-w-0 flex-1 text-sm font-semibold">{rule.title}</span>
+              <span
+                className={`shrink-0 text-xs whitespace-nowrap tabular-nums ${
+                  rule.over_max ? 'text-warning' : rule.done ? 'text-accent' : 'text-muted'
+                }`}
+              >
+                {typeTag} {label}
+                {tail}
+              </span>
+              <Disclosure.Indicator />
+            </Disclosure.Trigger>
+          </Disclosure.Heading>
+          <Disclosure.Content>
+            <Disclosure.Body className="pt-2.5">
+              <ProgressBar
+                aria-label={rule.title}
+                value={pct}
+                size="sm"
+                color={rule.over_max ? 'warning' : 'accent'}
+                className="mb-3.5"
+              >
+                <ProgressBar.Track>
+                  <ProgressBar.Fill />
+                </ProgressBar.Track>
+              </ProgressBar>
+              {rule.plan_options && planPicker(rule)}
+              {body}
+            </Disclosure.Body>
+          </Disclosure.Content>
+        </Disclosure>
       </div>,
     )
   }
 
+  const counted = ov.total_counted ?? 0
+  const totUnits = data.total_units || 0
+  const ovPct = totUnits > 0 ? Math.min((counted / totUnits) * 100, 100) : 0
+  const topRules = data.rules.filter((r) => !r.child_of && !r.inactive)
+  const topTitles = stripSharedPrefix(topRules.map((r) => r.title))
+  const curTab =
+    activeTab && topRules.some((r) => r.ref === activeTab) ? activeTab : topRules[0]?.ref
+
+  const cardCls = 'min-w-0 rounded-2xl border border-border bg-surface p-5 shadow-surface sm:p-6'
+
   return (
-    <section
-      className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface"
-      ref={paneRef}
-    >
-      <div className="mb-3 flex items-center gap-2.5">
-        <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">能修的课</h2>
-        <span className="ml-auto text-xs text-muted">拖到右侧 / 点一下自动放</span>
-      </div>
-      <div className="mb-2.5">
+    <div ref={paneRef} className="flex min-w-0 flex-col gap-4">
+      {/* 完成度 */}
+      <section className="sticky top-4 z-10 min-w-0 rounded-2xl border border-border bg-surface px-5 py-4 shadow-surface sm:px-6">
+        <div className="mb-3 flex items-center gap-2.5">
+          <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
+            能修的课
+          </h2>
+          <span className="ml-auto text-xs text-muted">拖到右侧 / 点一下自动放</span>
+        </div>
+        {topRules.length > 0 && (
+          <>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-xs font-semibold tracking-wide text-muted">学位完成度</span>
+              <span className="ml-auto font-mono text-sm tabular-nums">
+                <span className="font-semibold text-accent">{counted}</span>
+                <span className="text-muted"> / {totUnits} 学分</span>
+              </span>
+            </div>
+            <ProgressBar aria-label="学位完成度" value={ovPct} size="sm" color="accent">
+              <ProgressBar.Track>
+                <ProgressBar.Fill />
+              </ProgressBar.Track>
+            </ProgressBar>
+          </>
+        )}
+      </section>
+      {/* 搜索框 */}
+      <section className={cardCls}>
         <ComboBox
           aria-label="跳到课程:输课程码或课名快速定位…"
           inputValue={jumpQ}
@@ -377,58 +588,55 @@ export default function RulesPane(props: RulesPaneProps) {
                   <span className="shrink-0 font-mono text-xs font-semibold text-accent">
                     {h.code}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-[13px]">{h.title}</span>
+                  <span className="min-w-0 flex-1 truncate text-sm">{h.title}</span>
                 </ListBox.Item>
               )}
             </ListBox>
           </ComboBox.Popover>
         </ComboBox>
-      </div>
-      {/* AI 建议(暂时隐藏,代码保留以便恢复)
-      <div className="csearch advisebar">
-        <input
-          placeholder="AI 建议:说说目标,如「想做 AI 安全」…"
-          value={goal}
-          onChange={(e) => onGoalChange(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && onAdvise()}
-          autoComplete="off"
-        />
-        <button className="btn" onClick={onAdvise} disabled={advising}>
-          {advising ? '思考中…' : '建议'}
-        </button>
-      </div>
-      {advising && <div className="ttempty">AI 思考中…(本地模型,约 30–60 秒)</div>}
-      {advice && (
-        <div>
-          {advice.advice ? (
-            <div className="advicebox">{advice.advice}</div>
-          ) : (
-            <div className="ttempty">{advice.note || '没有候选'}</div>
-          )}
-          {advice.candidates?.length ? (
-            <div className="clist">
-              {advice.candidates.map((c) =>
-                resCard({
-                  code: c.code,
-                  title: c.title ?? null,
-                  offerings: advice.offerings?.[c.code] || [],
-                }),
-              )}
-            </div>
-          ) : null}
-          {advice.unreachable_count ? (
-            <div className="ttempty">
-              另有 {advice.unreachable_count} 门可选课无本学期数据,已排除
-            </div>
-          ) : null}
-        </div>
-      )}
-      */}
-      {nodes.length ? (
-        nodes
-      ) : (
-        <div className="py-5 text-center text-sm text-muted">没有可选课程。</div>
-      )}
-    </section>
+      </section>
+      {/* 规则列表 */}
+      <section className={cardCls}>
+        {topRules.length === 0 ? (
+          <div className="py-5 text-center text-sm text-muted">没有可选课程。</div>
+        ) : (
+          <>
+            {unattNode}
+            {topRules.length > 1 ? (
+              <>
+                <Select
+                  aria-label="顶层规则"
+                  className="mb-4 w-full min-w-0"
+                  selectedKey={curTab}
+                  onSelectionChange={(k) => k != null && setActiveTab(String(k))}
+                >
+                  <Select.Trigger>
+                    <Select.Value />
+                    <Select.Indicator />
+                  </Select.Trigger>
+                  <Select.Popover>
+                    <ListBox>
+                      {topRules.map((r, i) => {
+                        const st = ruleStatus(r)
+                        return (
+                          <ListBox.Item key={r.ref} id={r.ref} textValue={topTitles[i]}>
+                            <span className={`${st.color} shrink-0`}>{st.icon}</span>
+                            <span className="min-w-0 flex-1 truncate">{topTitles[i]}</span>
+                            <ListBox.ItemIndicator />
+                          </ListBox.Item>
+                        )
+                      })}
+                    </ListBox>
+                  </Select.Popover>
+                </Select>
+                {curTab ? nodesByRoot[curTab] || null : null}
+              </>
+            ) : (
+              nodesByRoot[topRules[0].ref] || null
+            )}
+          </>
+        )}
+      </section>
+    </div>
   )
 }

@@ -330,9 +330,18 @@ def run(conn, question: str, generate: bool = True) -> dict:
         else:
             ans = answer.answer(question, r["courses"][:ANSWER_CAP],
                                 _gen_facts(r["courses"], r["program_facts"]))
+    if r["mode"] == "program":                  # 确定性答案,不喂 LLM,无检索上下文
+        gen_ctx: list[str] = []
+    elif r["mode"] in ("kb", "course_detail"):
+        gen_ctx = answer.gen_contexts(r["mode"], chunks=r.get("chunks"), course=r.get("course"))
+    else:                                       # filter/semantic/hybrid:对齐生产实际入参(capped + _gen_facts)
+        gen_ctx = answer.gen_contexts(
+            r["mode"], courses=r["courses"][:ANSWER_CAP],
+            program_facts=_gen_facts(r["courses"], r["program_facts"]))
     return {"plan": r["plan"], "mode": r["mode"], "meta": r["meta"],
             "courses": r["courses"], "program_facts": r["program_facts"],
-            "chunks": r.get("chunks", []), "course": r.get("course"), "answer": ans}
+            "chunks": r.get("chunks", []), "course": r.get("course"),
+            "answer": ans, "gen_context": gen_ctx}
 
 
 def run_stream(conn, question: str):
@@ -360,11 +369,19 @@ def run_stream(conn, question: str):
             yield ("token", answer.KB_REFUSE)
             yield ("done", answer.KB_REFUSE)
             return
+        fixed = answer.fixed_kb_body(chunks)    # 高风险主题(census)走确定性模板,不流 LLM
+        if fixed:
+            yield ("token", fixed)
+            yield ("done", fixed)
+            return
         acc: list[str] = []
         for delta in answer.answer_kb_stream(question, chunks):
             acc.append(delta)
             yield ("token", delta)
-        yield ("done", "".join(acc))
+        full = "".join(acc)
+        if answer.is_empty_kb_answer(full):     # 流式空答兜底:用与非流式一致的重试+降级覆盖 done
+            full = answer.kb_answer_body(question, chunks)
+        yield ("done", full)
         return
     if mode == "course_detail":                 # 单课介绍:流式简介(结构化事实走 meta.course 前端卡)
         acc: list[str] = []

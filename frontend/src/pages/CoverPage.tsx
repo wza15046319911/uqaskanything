@@ -213,14 +213,14 @@ export default function CoverPage() {
   const [cardId, setCardId] = useState('@nilobjectfound')
   const [tags, setTags] = useState('')
   const [palette, setPalette] = useState<PaletteKey>('uqpurple')
-  const [bgType, setBgType] = useState<BgType>('uqphoto')
+  const [bgType, setBgType] = useState<BgType>('diffusion')
   const [diff, setDiff] = useState<DiffusionParams>(() => ({
     colorMix: 18,
     softness: 78,
     texture: 30,
     seed: seedFromString('uq-cover'),
   }))
-  const [fade, setFade] = useState(45)
+  const [fade, setFade] = useState(90)
   const [photo, setPhoto] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [copied, setCopied] = useState(false)

@@ -69,6 +69,15 @@ semicolons, `printWidth` 100.
   }
   ```
 
+## Component Library — HeroUI
+
+- This app uses **HeroUI**. Prefer a HeroUI component over hand-rolled markup
+  whenever one fits (`Button`, `Input`, `Table`, `Modal`, `Card`, `Tabs`, …).
+  Only write custom UI when HeroUI has no suitable component.
+- Use HeroUI variants/props and theme tokens for styling — do not re-style a
+  HeroUI component with arbitrary values that duplicate what a variant already
+  gives you.
+
 ## Data & API
 
 - Keep `fetch` out of components. Put API helpers in `src/api/`
@@ -84,8 +93,6 @@ semicolons, `printWidth` 100.
 - **Folders**: PascalCase for component folders, kebab-case for everything else.
 - Keep Vite entry files as-is: `main.tsx`, `App.tsx`, `index.html`,
   `vite.config.ts`.
-- If `shadcn/ui` is added later, its components live in `src/components/ui/` and
-  use kebab-case (library convention).
 
 > This is a Vite app, **not** Next.js — there is no `src/app/` router, no server
 > actions, and no RSC. Do not assume those exist.

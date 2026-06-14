@@ -185,7 +185,7 @@ export default function Timetable({
 
   const cellCls = (i: number, over: boolean): string => {
     let cls =
-      'min-h-24 min-w-0 rounded-xl border-[1.5px] border-dashed border-border bg-background/50 p-2.5 transition-colors'
+      'min-h-55 min-w-0 rounded-xl border-[1.5px] border-dashed border-border bg-background/50 p-2.5 transition-colors'
     if (dragOver?.cell === i) {
       cls += dragOver.blocked
         ? ' border-solid border-danger bg-danger-soft'
@@ -203,7 +203,7 @@ export default function Timetable({
   const unatt = ov.unattributed?.length ?? 0
 
   return (
-    <section className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface lg:sticky lg:top-4 lg:max-h-[calc(100dvh-32px)] lg:self-start lg:overflow-auto">
+    <section className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface lg:sticky lg:top-4 lg:self-start">
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">时间表</h2>
         <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted tabular-nums">
@@ -240,7 +240,7 @@ export default function Timetable({
         </span>
       </div>
 
-      {sectionMap.legend.length > 0 && (
+      {/* {sectionMap.legend.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5">
           {sectionMap.legend.map((s) => (
             <span key={s.ref} className="flex items-center gap-1.5 text-[11px] text-muted">
@@ -249,7 +249,7 @@ export default function Timetable({
             </span>
           ))}
         </div>
-      )}
+      )} */}
 
       <div className="mb-3 flex flex-wrap items-end gap-2.5">
         <Select
@@ -285,21 +285,14 @@ export default function Timetable({
           <Label>起始年</Label>
           <NumberField.Group>
             <NumberField.DecrementButton />
-            <NumberField.Input className="w-14 text-center" />
+            <NumberField.Input className="w-16 text-center" />
             <NumberField.IncrementButton />
           </NumberField.Group>
         </NumberField>
-        <NumberField
-          value={state.years}
-          minValue={1}
-          maxValue={6}
-          onChange={(v) => onParam({ years: Number.isFinite(v) ? Math.max(1, Math.min(6, v)) : 3 })}
-        >
-          <Label>年数</Label>
+        <NumberField value={state.n_semesters} isReadOnly>
+          <Label>学期数</Label>
           <NumberField.Group>
-            <NumberField.DecrementButton />
             <NumberField.Input className="w-10 text-center" />
-            <NumberField.IncrementButton />
           </NumberField.Group>
         </NumberField>
         <NumberField
@@ -316,6 +309,9 @@ export default function Timetable({
             <NumberField.IncrementButton />
           </NumberField.Group>
         </NumberField>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" onPress={onAuto}>
           一键自动排
         </Button>
@@ -327,91 +323,95 @@ export default function Timetable({
         </Button>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-2.5 gap-y-1.5">
-        {Array.from({ length: state.years }, (_, y) => (
+      <div className="grid grid-cols-2 gap-x-2.5 gap-y-4">
+        {Array.from({ length: Math.ceil(state.n_semesters / 2) }, (_, y) => (
           <Fragment key={y}>
             <div className="col-span-2 mt-1.5 text-[11px] font-semibold tracking-wide text-muted first:mt-0">
               Year {y + 1}
             </div>
-            {[2 * y, 2 * y + 1].map((i) => {
-              const kind = semKind(state.start_sem, i)
-              const year = semYear(state.start_year, state.start_sem, i)
-              const u = val.semester_units?.[i] || 0
-              const over = capOver.has(i)
-              const codes = placedBy[i] || []
-              return (
-                <div
-                  key={i}
-                  className={cellCls(i, over)}
-                  onDragOver={(e) => onCellDragOver(e, i)}
-                  onDragLeave={(e) => onCellDragLeave(e, i)}
-                  onDrop={(e) => onDrop(e, i)}
-                >
-                  <div className="mb-1.5 flex items-baseline gap-1.5">
-                    <span className="text-xs font-semibold text-accent">
-                      {kind} {year}
-                    </span>
-                    <span
-                      className={`ml-auto text-[11px] tabular-nums ${over ? 'font-semibold text-warning' : 'text-muted'}`}
-                    >
-                      {u}/{val.cap}
-                    </span>
-                  </div>
-                  {codes.length === 0 && (
-                    <div className="px-0.5 py-1.5 text-xs text-muted/70 italic">拖课到这里</div>
-                  )}
-                  <AnimatePresence initial={false}>
-                    {codes.map((c) => {
-                      const bad = val.by_course?.[c]
-                      const sec = sectionOf(sectionMap, c)
-                      const cardStyle: CSSProperties = {
-                        borderLeftWidth: 4,
-                        borderLeftColor: sec.color,
-                      }
-                      if (!bad) cardStyle.backgroundColor = sec.color + '0f'
-                      return (
-                        <motion.div key={c} {...chipAnim}>
-                          <div
-                            className={`mb-1.5 flex cursor-grab items-center gap-1.5 rounded-lg border bg-surface px-2 py-1.5 text-xs active:cursor-grabbing ${
-                              bad ? 'border-danger bg-danger-soft' : 'border-border'
-                            }`}
-                            style={cardStyle}
-                            draggable
-                            onDragStart={(e) => {
-                              setDragCode(c)
-                              e.dataTransfer.setData('text/plain', c)
-                            }}
-                          >
-                            <Chip
-                              size="sm"
-                              color="accent"
-                              variant="soft"
-                              className="shrink-0 font-mono"
+            {[2 * y, 2 * y + 1]
+              .filter((i) => i < state.n_semesters)
+              .map((i) => {
+                const kind = semKind(state.start_sem, i)
+                const year = semYear(state.start_year, state.start_sem, i)
+                const u = val.semester_units?.[i] || 0
+                const over = capOver.has(i)
+                const codes = placedBy[i] || []
+                return (
+                  <div
+                    key={i}
+                    className={cellCls(i, over)}
+                    onDragOver={(e) => onCellDragOver(e, i)}
+                    onDragLeave={(e) => onCellDragLeave(e, i)}
+                    onDrop={(e) => onDrop(e, i)}
+                  >
+                    <div className="mb-1.5 flex items-baseline gap-1.5">
+                      <span className="text-xs font-semibold text-accent">
+                        {kind} {year}
+                      </span>
+                      <span
+                        className={`ml-auto text-[11px] tabular-nums ${over ? 'font-semibold text-warning' : 'text-muted'}`}
+                      >
+                        {u}/{val.cap}
+                      </span>
+                    </div>
+                    {codes.length === 0 && placedN === 0 && i === 0 && (
+                      <div className="px-0.5 py-1.5 text-xs text-muted/70 italic">
+                        拖课到这里,或在左侧点课自动放
+                      </div>
+                    )}
+                    <AnimatePresence initial={false}>
+                      {codes.map((c) => {
+                        const bad = val.by_course?.[c]
+                        const sec = sectionOf(sectionMap, c)
+                        const cardStyle: CSSProperties = {
+                          borderLeftWidth: 4,
+                          borderLeftColor: sec.color,
+                        }
+                        if (!bad) cardStyle.backgroundColor = sec.color + '0f'
+                        return (
+                          <motion.div key={c} {...chipAnim}>
+                            <div
+                              className={`mb-1.5 flex cursor-grab items-center gap-1.5 rounded-lg border bg-surface px-2 py-3 text-xs active:cursor-grabbing ${
+                                bad ? 'border-danger bg-danger-soft' : 'border-border'
+                              }`}
+                              style={cardStyle}
+                              draggable
+                              onDragStart={(e) => {
+                                setDragCode(c)
+                                e.dataTransfer.setData('text/plain', c)
+                              }}
                             >
-                              {c}
-                            </Chip>
-                            <span className="min-w-0 flex-1 truncate">{ctitle(c)}</span>
-                            <button
-                              type="button"
-                              aria-label="Remove"
-                              className="shrink-0 cursor-pointer px-0.5 text-[15px] leading-none text-muted transition-colors hover:text-danger"
-                              onClick={() => onRemove(c)}
-                            >
-                              ×
-                            </button>
-                          </div>
-                          {bad && (
-                            <div className="-mt-0.5 mb-1.5 ml-1 text-[11px] text-danger">
-                              {bad.map((b) => b.msg).join(';')}
+                              <Chip
+                                size="sm"
+                                color="accent"
+                                variant="soft"
+                                className="shrink-0 font-mono"
+                              >
+                                {c}
+                              </Chip>
+                              <span className="min-w-0 flex-1 truncate">{ctitle(c)}</span>
+                              <button
+                                type="button"
+                                aria-label="Remove"
+                                className="shrink-0 cursor-pointer px-0.5 text-[15px] leading-none text-muted transition-colors hover:text-danger"
+                                onClick={() => onRemove(c)}
+                              >
+                                ×
+                              </button>
                             </div>
-                          )}
-                        </motion.div>
-                      )
-                    })}
-                  </AnimatePresence>
-                </div>
-              )
-            })}
+                            {bad && (
+                              <div className="-mt-0.5 mb-1.5 ml-1 text-[11px] text-danger">
+                                {bad.map((b) => b.msg).join(';')}
+                              </div>
+                            )}
+                          </motion.div>
+                        )
+                      })}
+                    </AnimatePresence>
+                  </div>
+                )
+              })}
           </Fragment>
         ))}
       </div>
