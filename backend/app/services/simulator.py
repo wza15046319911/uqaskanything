@@ -832,7 +832,11 @@ class PlanSimulator:
         parents.sort(key=lambda r: self._rule_depth(r.get("ref")), reverse=True)
         for rule in parents:
             entries[rule.get("ref")] = self._parent_entry(rule, entries, inactive)
-        return [entries[r.get("ref")] for r in self.rules]
+        out = [entries[r.get("ref")] for r in self.rules]
+        picker = self._picker_rule()
+        if picker is not None:
+            out = self._surface_picker(picker, out)
+        return out
 
     def _rule_depth(self, ref) -> int:
         """规则在子规则树中的深度(顶层=0)。父规则按深度从深到浅计算,
@@ -944,6 +948,215 @@ class PlanSimulator:
             entry["open_max_level"] = self._open_level_cap(rule)
         return entry
 
+    # ---------- 单顶层 plan-picker:子规则上浮 ----------
+    def _picker_rule(self) -> dict | None:
+        """「整学位=选一个 field/plan」程序的判定:顶层只有一条规则、它是带子规则 plan 的选择器
+        (如 5528 MEngSc、2031 BSc Honours)。这类程序选定 field 后,真正的课组(弹性必修 /
+        研究项目 / 各类选修)全在 plan 内部,需上浮成可见进度行,否则结构全塌进一条「0/16」。
+        多顶层规则的程序(如 2559,major 只是规则之一)不在此列,维持 major 卷入单条规则的旧语义。"""
+        if len(self.rules) != 1:
+            return None
+        rule = self.rules[0]
+        if rule.get("children_refs"):
+            return None
+        plans = [it for it in rule.get("items", [])
+                 if it.get("kind") == "plan" and not self._is_self_program(it)]
+        if plans and any(p.get("rules") for p in plans):
+            return rule
+        return None
+
+    def _chosen_field_plans(self, picker: dict) -> list:
+        """picker 规则下已选定、且带子规则的 field/plan 分支(择一,通常 0 或 1 个)。"""
+        return [it for it in picker.get("items", [])
+                if it.get("kind") == "plan" and not self._is_self_program(it)
+                and it.get("code") in self.chosen_plans and it.get("rules")]
+
+    def _surface_picker(self, picker: dict, out: list) -> list:
+        """把已选 field 的子规则上浮为顶层规则 picker 的子行(child_of=picker.ref)。
+        picker 自身改成 parent 口径:进度 = 顶层子规则计入之和(按 plan 学分上限封顶),
+        done 还要求各子规则 done 且 plan 级 level 下限满足(student-facing 安全)。未选 field 时原样返回。"""
+        parent_ref = picker.get("ref")
+        chosen = self._chosen_field_plans(picker)
+        if not chosen:
+            return out
+        parent_entry = out[0]
+        children: list = []
+        top_refs: list = []
+        plan_cap = 0.0
+        for plan in chosen:
+            ents, tops = self._subrule_entries(plan.get("rules") or [], parent_ref)
+            children += ents
+            top_refs += tops
+            plan_cap += self._units_max(plan) or self._required(plan)
+        counted_raw = sum(e["units_done"] for e in children
+                          if e.get("child_of") == parent_ref)
+        counted = sum(e["units_counted"] for e in children
+                      if e.get("child_of") == parent_ref)
+        cap = plan_cap or None
+        counted_capped, over_max = self._capped(counted, cap)
+        required = parent_entry["units_required"]
+        kids_ok = all(e["done"] for e in children if e.get("child_of") == parent_ref)
+        floors_ok, _caps = self._plan_level_aux(chosen)
+        parent_entry["children_refs"] = top_refs
+        parent_entry["units_max"] = cap
+        parent_entry["units_done"] = counted_raw
+        parent_entry["units_counted"] = counted_capped
+        parent_entry["over_max"] = over_max
+        parent_entry["done"] = counted_capped >= required and kids_ok and floors_ok
+        parent_entry["remaining"] = max(required - counted_capped, 0.0)
+        return [parent_entry] + children
+
+    def _subrule_entries(self, subs: list, parent_ref: str) -> tuple[list, list]:
+        """已选 field 的扁平子规则列表 -> (上浮 entry 列表, 顶层子规则的命名空间 ref 列表)。
+        ref 命名空间化为「父ref.子ref」(如 A.A / A.E.1),避免与顶层 ref 冲突、且沿用点号子规则约定。"""
+        def ns(r: str) -> str:
+            return f"{parent_ref}.{r}"
+
+        child_of_local = {ch: r.get("ref") for r in subs
+                          for ch in (r.get("children_refs") or [])}
+        entries: dict[str, dict] = {}
+        for sr in subs:
+            if sr.get("children_refs"):
+                continue
+            entries[sr.get("ref")] = self._subrule_base_entry(
+                sr, parent_ref, ns, child_of_local)
+        parents = sorted((sr for sr in subs if sr.get("children_refs")),
+                         key=lambda s: self._local_depth(s.get("ref"), child_of_local),
+                         reverse=True)
+        for sr in parents:
+            entries[sr.get("ref")] = self._subrule_parent_entry(
+                sr, entries, parent_ref, ns, child_of_local)
+        ordered = [entries[sr.get("ref")] for sr in subs]
+        top_refs = [ns(sr.get("ref")) for sr in subs
+                    if not child_of_local.get(sr.get("ref"))]
+        return ordered, top_refs
+
+    def _local_depth(self, ref, child_of_local: dict) -> int:
+        d, cur, seen = 0, ref, set()
+        while child_of_local.get(cur) and cur not in seen:
+            seen.add(cur)
+            cur = child_of_local[cur]
+            d += 1
+        return d
+
+    def _subrule_base_entry(self, sr: dict, parent_ref: str, ns, child_of_local: dict) -> dict:
+        co = child_of_local.get(sr.get("ref"))
+        required = self._required(sr)
+        units_max = self._units_max(sr)
+        done_units = self._rule_units_done(sr)
+        counted, over_max = self._capped(done_units, units_max)
+        entry = {
+            "ref": ns(sr.get("ref")), "title": sr.get("title") or "",
+            "select_type": sr.get("select_type"),
+            "units_required": required, "units_max": units_max,
+            "units_done": done_units, "units_counted": counted, "over_max": over_max,
+            "done": counted >= required, "remaining": max(required - counted, 0.0),
+            "inactive": False, "child_of": ns(co) if co else parent_ref,
+        }
+        if self._open_rule(sr):                   # 罕见(2052 BA Honours 1 条):标开放 + 兜底计数
+            entry["open"] = True
+            entry["open_scope"] = "any" if sr.get("items") else "program"
+            entry["open_max_level"] = self._open_level_cap(sr)
+            leftover = self._subrule_leftover_units(sr)
+            entry["units_done"] = leftover
+            entry["units_counted"], entry["over_max"] = self._capped(leftover, units_max)
+            entry["done"] = entry["units_counted"] >= required
+            entry["remaining"] = max(required - entry["units_counted"], 0.0)
+        return entry
+
+    def _subrule_parent_entry(self, sr: dict, entries: dict, parent_ref: str,
+                              ns, child_of_local: dict) -> dict:
+        co = child_of_local.get(sr.get("ref"))
+        required = self._required(sr)
+        units_max = self._units_max(sr)
+        kids = [entries[ch] for ch in sr.get("children_refs", []) if ch in entries]
+        raw = sum(k["units_done"] for k in kids)
+        counted, over_max = self._capped(sum(k["units_counted"] for k in kids), units_max)
+        sub = parse_rule_logic(sr.get("rule_logic"))
+        if sub and self._logic_refs(sub) - set(sr.get("children_refs", [])):
+            sub = None
+        kids_ok = (self._eval_logic(
+            sub, {ch: entries[ch]["done"] for ch in sr.get("children_refs", [])
+                  if ch in entries}, branchable=False)
+            if sub else all(k["done"] for k in kids))
+        return {
+            "ref": ns(sr.get("ref")), "title": sr.get("title") or "",
+            "select_type": sr.get("select_type"),
+            "children_refs": [ns(ch) for ch in sr.get("children_refs", [])],
+            "units_required": required, "units_max": units_max,
+            "units_done": raw, "units_counted": counted, "over_max": over_max,
+            "done": counted >= required and kids_ok,
+            "remaining": max(required - counted, 0.0),
+            "inactive": False, "child_of": ns(co) if co else parent_ref,
+        }
+
+    def _subrule_leftover_units(self, sr: dict) -> float:
+        """开放子规则的兜底学分:已选课里未被任何具体子规则(_bin_of)认领、且符合开放范围的码之和。
+        范围:有 items(wildcard)=任意有效课;无 items(空表)=程序课表内;notes 标 undergraduate 的限 level<=6。"""
+        prog_list = self._all_referenced_codes()
+        wild = bool(sr.get("items"))
+        cap_lv = self._open_level_cap(sr)
+        total = 0.0
+        for code in self.selected:
+            if code in self._bin_of or code in self.excluded or code not in self._all_codes:
+                continue
+            if not wild and code not in prog_list:
+                continue
+            m = re.search(r"\d", code)
+            lvl = int(m.group()) if m else None
+            if cap_lv is not None and lvl is not None and lvl > cap_lv:
+                continue
+            total += self._course_units.get(code, DEFAULT_UNITS)
+        return total
+
+    # ---------- plan 级 level 约束(下限门控 / 子规则上限告警) ----------
+    def _plan_level_aux(self, chosen: list) -> tuple[bool, list]:
+        """已选 field 的 level 约束求值。返回 (下限是否全满足, [状态 dict ...])。
+        level_min(如「Selected courses must include at least 8 units at level 7」)= 整 field 范围,
+        门控 field done(student-facing 安全:漏修 level 7 会无法毕业);
+        level_max(如 group D「at most 4 units at level 4」)= 该子规则范围,仅告警不挡 done。
+        aux 数据由 scraper 抓 plan/group 的 auxiliaryRules、随 rules 树入库;缺则返回 (True, [])。"""
+        def units_at(codes, level, or_higher) -> float:
+            tot = 0.0
+            for c in codes:
+                m = re.search(r"\d", c)
+                if not m:
+                    continue
+                lv = int(m.group())
+                if lv == level or (or_higher and lv > level):
+                    tot += self._course_units.get(c, DEFAULT_UNITS)
+            return tot
+
+        field_codes = [c for c in self.selected if c in self._all_codes]
+        out: list = []
+        for plan in chosen:
+            for a in plan.get("aux_rules") or []:
+                out.append(self._aux_status(
+                    a, units_at(field_codes, a["level"], a.get("or_higher")), "field"))
+            for sr in plan.get("rules") or []:
+                sr_codes = [c for c in self.selected if self._bin_of.get(c) == id(sr)]
+                for a in sr.get("aux_rules") or []:
+                    if a["kind"] == "level_min":
+                        scope, base = "field", field_codes
+                    else:
+                        scope, base = f"sub:{sr.get('ref')}", sr_codes
+                    out.append(self._aux_status(
+                        a, units_at(base, a["level"], a.get("or_higher")), scope))
+        floors_ok = all(s["satisfied"] for s in out if s["kind"] == "level_min")
+        return floors_ok, out
+
+    @staticmethod
+    def _aux_status(a: dict, used: float, scope: str) -> dict:
+        units = float(a.get("units") or 0)
+        if a.get("kind") == "level_min":
+            return {"kind": "level_min", "level": a.get("level"), "min_units": units,
+                    "used": used, "or_higher": bool(a.get("or_higher")),
+                    "under": used < units, "satisfied": used >= units,
+                    "scope": scope, "text": a.get("text", "")}
+        return {"kind": "level_max", "level": a.get("level"), "max_units": units,
+                "used": used, "over": used > units, "satisfied": used <= units,
+                "scope": scope, "text": a.get("text", "")}
+
     # ---------- 可选列表 ----------
     def _collect_codes(self, rule: dict, include_chosen_plans: bool) -> list[str]:
         """一条规则下可枚举的课程码(course + equivalence;plan 视参数决定是否下钻)。
@@ -1035,10 +1248,27 @@ class PlanSimulator:
         return slots
 
     def available_by_rule(self) -> dict:
-        """每条「未收敛」顶层规则 -> 可选 slot 列表(course / equiv 二选一)。"""
+        """每条「未收敛」顶层规则 -> 可选 slot 列表(course / equiv 二选一)。
+        单顶层 plan-picker 选定 field 后,改按上浮的命名空间子规则(如 A.A/A.B)分组,
+        不再把整 field 课程平铺到 picker 一个键下。"""
         seen: set[str] = set()
         st = {e["ref"]: e for e in self.status()}
         out: dict[str, list] = {}
+        picker = self._picker_rule()
+        if picker is not None and self._chosen_field_plans(picker):
+            parent_ref = picker.get("ref")
+            for plan in self._chosen_field_plans(picker):
+                for sr in plan.get("rules") or []:
+                    if sr.get("children_refs"):
+                        continue
+                    ref_ns = f"{parent_ref}.{sr.get('ref')}"
+                    e = st.get(ref_ns)
+                    if not e or e.get("inactive") or self._closed(e):
+                        continue
+                    slots = self._slots_for_rule(sr, seen)
+                    if slots:
+                        out[ref_ns] = slots
+            return out
         for rule in self._ordered_rules():
             ref = rule.get("ref")
             if st[ref].get("inactive") or self._closed(st[ref]):
@@ -1085,6 +1315,17 @@ class PlanSimulator:
         out: dict[str, list] = {}
         inactive = self._inactive_refs()
         att = self.attribution()
+        picker = self._picker_rule()
+        if picker is not None and self._chosen_field_plans(picker):
+            parent_ref = picker.get("ref")
+            for plan in self._chosen_field_plans(picker):
+                for sr in plan.get("rules") or []:
+                    if sr.get("children_refs"):
+                        continue
+                    picked = self._selected_in_rule(sr, seen)
+                    if picked:
+                        out[f"{parent_ref}.{sr.get('ref')}"] = picked
+            return out
         for rule in self._ordered_rules():
             ref = rule.get("ref")
             if ref in inactive:
@@ -1139,13 +1380,13 @@ class PlanSimulator:
         return acc
 
     def level_cap_status(self) -> list:
-        """程序级 level 上限的实时状态(如「level 1 最多 24 学分」)。
+        """程序级 level 约束的实时状态。
 
-        每条:{level, max_units, used(已选该级别学分), over(是否超), text}。
-        级别 = 课码第一个数字(CSSE1001 -> 1)。无 cap 数据时返回 []。
+        每条:{level, max_units / min_units, used(已选该级别学分), over / under, scope, text}。
+        含三类:program(程序级 aux_rules level cap)、electives(选修范围 notes cap)、
+        以及单顶层 plan-picker 选定 field 后的 plan/group 级 level 约束(下限 level_min + 组内上限 level_max)。
+        级别 = 课码第一个数字(CSSE7100 -> 7)。无任何约束时返回 []。
         """
-        if not self.level_caps and not self.elective_caps:
-            return []
         um = self.units_map()
 
         def units_of(c):
@@ -1164,16 +1405,26 @@ class PlanSimulator:
         all_used = used_map(self.selected)
         for cap in self.level_caps:                   # 程序级:全部已选
             used = all_used.get(cap["level"], 0.0)
-            out.append({"level": cap["level"], "max_units": cap["max_units"],
-                        "used": used, "over": used > cap["max_units"],
+            out.append({"kind": "level_max", "level": cap["level"],
+                        "max_units": cap["max_units"], "used": used,
+                        "over": used > cap["max_units"], "satisfied": used <= cap["max_units"],
                         "scope": "program", "text": cap["text"]})
         if self.elective_caps:                        # 选修范围:扣掉核心组与已选 major 的课
             elect_used = used_map(self._elective_selected())
             for cap in self.elective_caps:
                 used = elect_used.get(cap["level"], 0.0)
-                out.append({"level": cap["level"], "max_units": cap["max_units"],
-                            "used": used, "over": used > cap["max_units"],
+                out.append({"kind": "level_max", "level": cap["level"],
+                            "max_units": cap["max_units"], "used": used,
+                            "over": used > cap["max_units"], "satisfied": used <= cap["max_units"],
                             "scope": "electives", "text": cap["text"]})
+        picker = self._picker_rule()                  # plan-picker:field 的 level 下限 / 组内上限
+        if picker is not None:
+            chosen = self._chosen_field_plans(picker)
+            if chosen:
+                if not self._bin_of:
+                    self._bin_of = self._assign()
+                _floors_ok, aux = self._plan_level_aux(chosen)
+                out += aux
         return out
 
     def _elective_selected(self) -> set:

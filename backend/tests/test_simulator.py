@@ -210,3 +210,75 @@ def test_formula_satisfied_both_paths(conn):
         elif it["kind"] == "equivalence":
             s2.select(it["options"][0]["code"])
     assert s2.overall()["formula_satisfied"]
+
+
+# ---------- 单顶层 plan-picker:field 子规则上浮(5528 MEngSc / 5530 嵌套) ----------
+@pytest.fixture()
+def meng(conn):
+    return PlanSimulator(conn, "5528")
+
+
+def test_picker_rule_detected(meng, sim):
+    assert meng._picker_rule() is not None         # 5528 整学位=选一个 field
+    assert sim._picker_rule() is None              # 2559 多顶层规则,major 不上浮
+
+
+def test_picker_surfaces_subrules(meng):
+    meng.choose_plan("SOFTWX5528")
+    st = {e["ref"]: e for e in meng.status()}
+    assert set(st) == {"A", "A.A", "A.B", "A.C", "A.D"}
+    assert st["A"]["plan_options"] and st["A"]["children_refs"] == ["A.A", "A.B", "A.C", "A.D"]
+    for ref in ("A.A", "A.B", "A.C", "A.D"):
+        assert st[ref]["child_of"] == "A"
+    assert (st["A.A"]["units_required"], st["A.A"]["units_max"]) == (4.0, 6.0)
+    assert (st["A.B"]["units_required"], st["A.B"]["units_max"]) == (4.0, 10.0)
+    assert (st["A.C"]["units_required"], st["A.C"]["units_max"]) == (0.0, 8.0)
+    assert (st["A.D"]["units_required"], st["A.D"]["units_max"]) == (0.0, 6.0)
+
+
+def test_picker_available_grouped_not_flattened(meng):
+    meng.choose_plan("SOFTWX5528")
+    br = meng.available_by_rule()
+    assert set(br) == {"A.A", "A.B", "A.C", "A.D"}, "课程应按子规则分组,而非平铺到 A"
+    flat = [s["code"] if s["kind"] == "course" else s["options"][0]
+            for slots in br.values() for s in slots]
+    assert "CSSE7100" in [s["code"] for s in br["A.A"] if s["kind"] == "course"]
+    assert "COMP4403" in [s["code"] for s in br["A.D"] if s["kind"] == "course"]
+    assert "CSSE7100" not in [s.get("code") for s in br["A.D"]]
+
+
+def test_picker_full_completion(meng):
+    meng.choose_plan("SOFTWX5528")
+    for c in ("CSSE7100", "CSSE7610", "REIT6811", "REIT7841",
+              "COMP7500", "DECO6500", "COMP4403"):                  # 4+6+4+2 = 16u
+        meng.select(c)
+    st = {e["ref"]: e for e in meng.status()}
+    assert st["A"]["units_counted"] == 16.0 and st["A"]["done"]
+    assert st["A.A"]["units_counted"] == 4.0 and st["A.B"]["units_counted"] == 6.0
+    ov = meng.overall()
+    assert ov["total_counted"] == 16.0 and ov["formula_satisfied"]
+    assert ov["unattributed"] == []
+    sel = meng.selected_by_rule()
+    assert sel["A.A"] == ["CSSE7100", "CSSE7610"] and sel["A.D"] == ["COMP4403"]
+
+
+def test_picker_subrule_min_enforced(meng):
+    meng.choose_plan("SOFTWX5528")
+    for c in ("CSSE7100", "CSSE7610", "INFS7410",                  # A.A 6u
+              "COMP7500", "DECO6500", "ENGG7302", "INFS7205",      # A.C 8u
+              "COMP4403"):                                          # A.D 2u => 共 16u,A.B=0
+        meng.select(c)
+    st = {e["ref"]: e for e in meng.status()}
+    assert st["A"]["units_counted"] == 16.0, "总学分够 16"
+    assert not st["A.B"]["done"], "研究项目 A.B 未达下限 4u"
+    assert not st["A"]["done"], "子规则下限未满足时整 field 不应判完成"
+    assert not meng.overall()["formula_satisfied"]
+
+
+def test_picker_nested_subrules(conn):
+    s = PlanSimulator(conn, "5530")               # 含 E -> E.1..E.4 嵌套
+    s.choose_plan("BIOPEX5530")
+    st = {e["ref"]: e for e in s.status()}
+    assert "A.E" in st and st["A.E"]["child_of"] == "A"
+    assert "A.E.1" in st and st["A.E.1"]["child_of"] == "A.E"
+    assert "A.E.1" in (st["A.E"].get("children_refs") or [])

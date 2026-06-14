@@ -113,6 +113,61 @@ def _items(body: list) -> list[dict]:
     return out
 
 
+def _level_aux(aux_list) -> list[dict]:
+    """auxiliaryRules 里的 level 约束 -> [{kind:level_min|level_max, units, level, or_higher, text}]。
+    只取「at least / at most [N] units at level [LEVEL]」这类(供模拟器按 level 校验下限/上限);
+    其余(无条件 exclude 等)跳过——那些走 parse_aux_rules 入 programs.aux_rules。"""
+    out = []
+    for a in aux_list or []:
+        if not isinstance(a, dict):
+            continue
+        text = a.get("text") or ""
+        low = text.lower()
+        pmap = {p.get("name"): p.get("value") for p in a.get("params", []) if isinstance(p, dict)}
+        n, lvl = pmap.get("N"), pmap.get("LEVEL")
+        if n is None or lvl is None:
+            continue
+        if "at least" in low:
+            kind = "level_min"
+        elif "at most" in low:
+            kind = "level_max"
+        else:
+            continue
+        try:
+            units, level = float(n), int(lvl)
+        except (TypeError, ValueError):
+            continue
+        or_higher = str(pmap.get("OR_HIGHER", "")).strip().lower() in ("yes", "true", "y")
+        rendered = text
+        for k, v in pmap.items():
+            sub = (" or higher" if or_higher else "") if k == "OR_HIGHER" else str(v)
+            rendered = rendered.replace(f"[{k}]", sub)
+        out.append({"kind": kind, "units": units, "level": level,
+                    "or_higher": or_higher, "text": " ".join(rendered.split())})
+    return out
+
+
+def plan_container_aux(data) -> list[dict]:
+    """plan 页里 plan 级 level 约束:挂在无 partReference 的容器 header 上(如 SOFTWX5528 的
+    「at least 8 units at level 7」)。group 级约束(挂带 partReference 的 group header,如 D 的
+    「at most 4 units at level 4」)由 _rule() 收到对应规则,不在此重复。"""
+    raw: list = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            h = o.get("header")
+            if isinstance(h, dict) and not h.get("partReference") and h.get("auxiliaryRules"):
+                raw.extend(h["auxiliaryRules"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk((data or {}).get("programRequirements") or {})
+    return _level_aux(raw)
+
+
 def _rule(header: dict, body: list) -> dict:
     sr = header.get("selectionRule") or {}
     text = _txt(sr.get("text") or header.get("text"))
@@ -140,6 +195,9 @@ def _rule(header: dict, body: list) -> dict:
         nt = _txt(BeautifulSoup(notes, "html.parser").get_text(" "))
         if nt:
             r["notes"] = nt
+    aux = _level_aux(header.get("auxiliaryRules"))   # group 级 level 约束(如 D 的 ≤4@L4)
+    if aux:
+        r["aux_rules"] = aux
     return r
 
 
@@ -168,27 +226,32 @@ def parse_rules(data) -> list[dict]:
 
 
 def expand_plans(rules: list, year: str, seen: set, depth: int):
-    """就地把每个 plan item 的 rules 填上(递归展开 major/minor/...)"""
+    """就地把每个 plan item 的 rules 填上(递归展开 major/minor/...);plan 级 level 约束挂 aux_rules。"""
     for r in rules:
         for it in r["items"]:
             if it.get("kind") == "plan" and it.get("code"):
-                it["rules"] = fetch_plan_rules(it["code"], year, seen, depth)
+                sub_rules, plan_aux = fetch_plan_rules(it["code"], year, seen, depth)
+                it["rules"] = sub_rules
+                if plan_aux:
+                    it["aux_rules"] = plan_aux
 
 
-def fetch_plan_rules(code: str, year: str, seen: set, depth: int) -> list:
+def fetch_plan_rules(code: str, year: str, seen: set, depth: int) -> tuple[list, list]:
+    """返回 (plan 子规则, plan 级 level 约束)。"""
     if code in _plan_cache:
         return _plan_cache[code]
     if depth <= 0 or code in seen:              # 深度耗尽或成环 -> 不再展开
-        return []
+        return [], []
     time.sleep(DELAY)
     try:
         data = _appdata(_get(PLAN.format(code=code, year=year)))
     except Exception:
         data = None
     rules = parse_rules(data) if data else []
+    plan_aux = plan_container_aux(data) if data else []
     expand_plans(rules, year, seen | {code}, depth - 1)
-    _plan_cache[code] = rules
-    return rules
+    _plan_cache[code] = (rules, plan_aux)
+    return rules, plan_aux
 
 
 def _collect_aux(o, out: list):

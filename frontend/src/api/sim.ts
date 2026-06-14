@@ -59,11 +59,16 @@ export interface Validation {
 }
 
 export interface LevelCap {
+  kind?: string // 'level_max'(上限) | 'level_min'(下限)
   level: number
   used: number
-  max_units: number
-  over: boolean
-  scope?: string
+  max_units?: number // level_max
+  min_units?: number // level_min
+  over?: boolean // 超上限
+  under?: boolean // 未达下限
+  satisfied?: boolean
+  or_higher?: boolean
+  scope?: string // 'program' | 'electives' | 'field' | 'sub:<ref>'
   text?: string
 }
 
