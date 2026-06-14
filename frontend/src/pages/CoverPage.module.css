@@ -1,0 +1,311 @@
+/* 封面卡片样式:1080×1440 导出画布及其内部元素。
+   保持十六进制/rgba 取色,与屏幕预览一致,modern-screenshot 导出时不漂色。
+   --c-* 调色板变量由组件按当前配色 inline 注入到 .cardRoot 上,子元素继承。 */
+
+.stage {
+  width: 540px;
+  height: 720px;
+  background: #fff;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(38, 33, 92, 0.14);
+}
+
+@media (max-width: 600px) {
+  .stage {
+    width: 360px;
+    height: 480px;
+  }
+}
+
+.cardRoot {
+  width: 1080px;
+  height: 1440px;
+  background: #fff;
+  position: relative;
+  transform-origin: top left;
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+.frameBorder {
+  position: absolute;
+  inset: 0;
+  border: 2px solid #eeedfe;
+  pointer-events: none;
+}
+
+.bgSketch {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 62%;
+  pointer-events: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.bgSketch svg {
+  width: 100%;
+  height: 100%;
+}
+
+.bgPhoto {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.93) 0%,
+    rgba(255, 255, 255, 0.82) 34%,
+    rgba(255, 255, 255, 0.58) 62%,
+    rgba(255, 255, 255, 0.42) 100%
+  );
+}
+
+.accentBar {
+  position: absolute;
+  left: 90px;
+  top: 90px;
+  width: 76px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--c-main);
+  z-index: 2;
+}
+
+.eyebrow {
+  position: absolute;
+  left: 90px;
+  top: 150px;
+  font-size: 40px;
+  letter-spacing: 4px;
+  color: var(--c-light);
+  z-index: 2;
+}
+
+.code {
+  position: absolute;
+  left: 90px;
+  top: 240px;
+  font-size: 160px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--c-deep);
+  line-height: 1;
+  z-index: 2;
+}
+
+.cname {
+  position: absolute;
+  left: 90px;
+  top: 380px;
+  font-size: 96px;
+  font-weight: 700;
+  color: var(--c-deep);
+  line-height: 1.12;
+  max-width: 900px;
+  width: fit-content;
+  padding: 2px 14px 2px 0;
+  background: linear-gradient(180deg, transparent 0 46%, var(--c-line) 46% 92%, transparent 92%);
+  z-index: 2;
+}
+
+.divider {
+  position: absolute;
+  left: 90px;
+  width: 190px;
+  height: 3px;
+  background: var(--c-line);
+  z-index: 2;
+}
+
+.ratings {
+  position: absolute;
+  left: 90px;
+  display: flex;
+  gap: 48px;
+  z-index: 2;
+}
+
+.rlabel {
+  font-size: 32px;
+  color: var(--c-light);
+  margin-bottom: 4px;
+}
+
+.rstars {
+  font-size: 48px;
+  color: var(--c-main);
+  letter-spacing: 2px;
+}
+
+.quoteCard {
+  position: absolute;
+  left: 90px;
+  width: 900px;
+  z-index: 2;
+}
+
+.qtext {
+  font-size: 50px;
+  font-weight: 700;
+  color: var(--c-deep);
+  line-height: 1.3;
+  letter-spacing: 3px;
+}
+
+.tags {
+  position: absolute;
+  left: 90px;
+  right: 90px;
+  flex-wrap: wrap;
+  gap: 14px;
+  z-index: 2;
+}
+
+.chip {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--c-mid);
+  background: var(--c-card);
+  padding: 9px 22px;
+  border-radius: 999px;
+}
+
+.footer {
+  position: absolute;
+  left: 90px;
+  right: 90px;
+  bottom: 80px;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  z-index: 2;
+}
+
+.right {
+  font-size: 32px;
+  color: var(--c-mid);
+  text-shadow: 0 1px 3px rgba(255, 255, 255, 0.55);
+}
+
+/* 选课搭配封面:整块用流式布局垂直居中,课程清单行数可变,不走绝对定位测量。 */
+.comboWrap {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 110px 90px 150px;
+  box-sizing: border-box;
+}
+
+.comboAccent {
+  width: 76px;
+  height: 10px;
+  border-radius: 5px;
+  background: var(--c-main);
+  margin-bottom: 34px;
+}
+
+.comboEyebrow {
+  font-size: 40px;
+  letter-spacing: 4px;
+  color: var(--c-light);
+  margin-bottom: 20px;
+}
+
+.comboTitle {
+  font-size: 110px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  line-height: 1.04;
+  color: var(--c-deep);
+}
+
+.comboSub {
+  margin-top: 16px;
+  font-size: 33px;
+  font-weight: 600;
+  letter-spacing: 6px;
+  text-transform: uppercase;
+  color: var(--c-light);
+}
+
+.comboDivider {
+  width: 190px;
+  height: 3px;
+  margin: 40px 0 4px;
+  background: var(--c-line);
+}
+
+.comboList {
+  display: flex;
+  flex-direction: column;
+  margin-top: 22px;
+}
+
+.comboRow {
+  display: flex;
+  align-items: baseline;
+  gap: 26px;
+  padding: 22px 2px;
+  border-bottom: 1px solid var(--c-line);
+}
+
+.cidx {
+  flex: 0 0 56px;
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--c-pale);
+}
+
+.ccode {
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 50px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--c-deep);
+}
+
+.cname2 {
+  flex: 1;
+  min-width: 0;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--c-mid);
+}
+
+.comboNote {
+  margin-top: 36px;
+  font-size: 38px;
+  font-weight: 700;
+  line-height: 1.32;
+  letter-spacing: 2px;
+  white-space: pre-line;
+  color: var(--c-deep);
+}
+
+.comboTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 30px;
+}

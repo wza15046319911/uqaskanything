@@ -301,7 +301,13 @@ function CourseDetailCard({ c }: { c: CourseDetail }) {
   )
 }
 
-export default function Results({ res, streaming = false }: { res: AskResult; streaming?: boolean }) {
+export default function Results({
+  res,
+  streaming = false,
+}: {
+  res: AskResult
+  streaming?: boolean
+}) {
   const isCourseDetail = res.mode === 'course_detail'
   const isKb = res.mode === 'kb'
   const isProgList = res.mode === 'program' && Array.isArray(res.program_facts)
@@ -320,14 +326,12 @@ export default function Results({ res, streaming = false }: { res: AskResult; st
         <Chip size="sm" variant="soft" color={LIB_COLOR[res.mode ?? ''] || 'default'}>
           {LIB_ZH[res.mode ?? ''] || res.mode}
         </Chip>
-        {isKb ? (
-          kbSources.length > 0 && (
-            <span className="ml-auto text-[13px] text-muted">{kbSources.length} 个来源</span>
-          )
-        ) : (
-          res.mode !== 'empty' &&
-          hasList && <span className="ml-auto text-[13px] text-muted">{n} 条结果</span>
-        )}
+        {isKb
+          ? kbSources.length > 0 && (
+              <span className="ml-auto text-[13px] text-muted">{kbSources.length} 个来源</span>
+            )
+          : res.mode !== 'empty' &&
+            hasList && <span className="ml-auto text-[13px] text-muted">{n} 条结果</span>}
       </div>
 
       {(res.answer || streaming) && (
@@ -352,7 +356,9 @@ export default function Results({ res, streaming = false }: { res: AskResult; st
       )}
 
       {isCourseDetail ? (
-        res.course ? <CourseDetailCard c={res.course} /> : null
+        res.course ? (
+          <CourseDetailCard c={res.course} />
+        ) : null
       ) : isKb ? (
         kbSources.length ? (
           <div className="grid gap-3">

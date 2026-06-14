@@ -214,7 +214,6 @@ export default function SimPage() {
   return (
     <div className="mx-auto max-w-[1180px] px-5 pt-[clamp(20px,4vw,40px)] pb-20 text-[15px]">
       <header className="mb-5 text-center">
-        
         <h1 className="mb-1.5 text-[clamp(26px,5vw,40px)] leading-[1.05] font-semibold tracking-tight">
           UQ <em className="text-accent not-italic">Program</em> Planner
         </h1>

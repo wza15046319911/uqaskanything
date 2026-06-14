@@ -42,20 +42,24 @@ RRF_K = 60  # RRF 常数,业界默认 60
 # where 白名单:只允许这些结构化列(文本主题列不在内,主题走 semantic)
 ALLOWED_COLS = (
     "code", "semester", "year", "location", "attendance_mode",
-    "level", "units", "has_exam", "has_hurdle",
+    "level", "units", "has_exam", "has_hurdle", "course_type",
 )
 
 # 单个比较条件的合法形态:{白名单列} {运算符} {字面量}
 #   - 字面量:单引号字符串 / 数字 / true|false|null
-#   - IN:仅字面量列表(无子查询),如 IN ('A','B') 或 IN (1,2)
+#   - IN:所有白名单列;字面量列表(无子查询),如 IN ('A','B') 或 IN (1,2)
+#   - NOT IN:仅 course_type(NOT NULL 列,无三值逻辑漏排风险);两种否定写法都收:
+#     `course_type NOT IN (...)` 与 `NOT course_type IN (...)`。可空列禁 NOT IN(会静默漏掉 NULL 行)。
 _COL = r"(?:" + "|".join(ALLOWED_COLS) + r")"
 _CMP = r"(?:=|!=|<>|<=|>=|<|>)"
 _LIT = r"(?:'[^']*'|-?\d+(?:\.\d+)?|true|false|null)"
 _IN_LIST = r"\(\s*" + _LIT + r"(?:\s*,\s*" + _LIT + r")*\s*\)"
 _COND = (
-    r"\s*" + _COL + r"\s*"
-    + r"(?:" + _CMP + r"\s*" + _LIT
-    + r"|in\s*" + _IN_LIST + r")\s*"
+    r"\s*(?:"
+    + r"not\s+course_type\s+in\s*" + _IN_LIST
+    + r"|course_type\s+not\s+in\s*" + _IN_LIST
+    + r"|" + _COL + r"\s*(?:" + _CMP + r"\s*" + _LIT + r"|in\s*" + _IN_LIST + r")"
+    + r")\s*"
 )
 # 整体:条件用 AND/OR 连接,禁止括号/函数/逗号/子查询/SELECT
 WHERE_WHITELIST = re.compile(
@@ -77,6 +81,10 @@ def guard_where(where: str) -> str:
     w = where.strip()
     # 先把单引号字符串字面量替成空串,避免值里含 select/and 等被白名单/危险词误判
     stripped = re.sub(r"'[^']*'", "''", w)
+    # 剥离字面量后只该剩 ASCII(列名/运算符/数字/布尔)。非 ASCII(如 NBSP 等 unicode 空白)
+    # 会被 \s 放过却让 Postgres 报错 -> 在此拦掉,避免绕过白名单后 500。
+    if not stripped.isascii():
+        raise ValueError(f"where 含非 ASCII 字符,已拦截:{where!r}")
     if DANGEROUS.search(stripped):
         raise ValueError(f"where 含非法内容(分号/注释/SELECT),已拦截:{where!r}")
     if not WHERE_WHITELIST.fullmatch(stripped):
@@ -320,11 +328,14 @@ if __name__ == "__main__":
         "", "pg_sleep(0.4) IS NULL", "code IN (SELECT code FROM programs)",
         "true", "1=1", "has_exam=false; drop table courses",
         "title ilike '%ml%'", "1=1 -- x",
+        "requirement_type NOT IN ('thesis')",   # 非白名单列(原 bug)仍须拒
     ]
     must_pass = [
         "has_exam=false",
         "level='Postgraduate Coursework' AND units=2",
         "location='St Lucia'",
+        "has_exam=false AND course_type NOT IN ('placement','thesis','research')",
+        "course_type='thesis'",
     ]
     print("== guard_where 白名单验证 ==")
     for bad in must_reject:

@@ -56,17 +56,57 @@ _PROG_NAME_EXTRACT = re.compile(
     r"((?:bachelors?|masters?|graduate\s+diploma|graduate\s+certificate|diploma|doctor)"
     r"\s+(?:of\s+)?[A-Za-z][A-Za-z /&()'\-]*)", re.I)
 # 学历层级关键词 -> 确定性 level 字面值(规则 12:同样输入永远同样映射)。
-# 只用"研究生/本科/postgraduate/undergraduate",不用"master/bachelor"(那是 program 信号)。
+# 独立的 master/bachelor/硕士/学士 也当层级用(如"Master 没考试的课");
+# 但"Master of X"是 program 名(由 PROGRAM_NAME_RE + _force_program_route 先拦,跑不到这里),
+# 故 master/bachelor 用 (?!\s+of) 排除"X of Y"写法,避免误把专业名当层级。
+# 注意:level 只有 Undergraduate / Postgraduate Coursework 两值,master≈研究生(含证书/文凭)为近似。
 _LEVEL_KW = [
     (re.compile(r"研究生|postgraduate|post-graduate", re.I), "Postgraduate Coursework"),
     (re.compile(r"本科生?|undergraduate|under-graduate", re.I), "Undergraduate"),
+    (re.compile(r"硕士|(?<![A-Za-z])masters?(?![A-Za-z])(?!\s+of)", re.I), "Postgraduate Coursework"),
+    (re.compile(r"学士|(?<![A-Za-z])bachelors?(?![A-Za-z])(?!\s+of)", re.I), "Undergraduate"),
+]
+
+# 学期意图 -> 'S1'/'S2'(确定性)。S1 用 semester 列,S2 走 S2_CODES(列里 S2 不全)。
+_SEM_S1_RE = re.compile(r"(?<![A-Za-z])s1(?![A-Za-z])|第一学期|学期一|semester\s*1|sem\s*1", re.I)
+_SEM_S2_RE = re.compile(r"(?<![A-Za-z])s2(?![A-Za-z])|第二学期|学期二|semester\s*2|sem\s*2", re.I)
+
+# 有/无考试意图(确定性)。先判否定:"没有考试"含"有考试"子串,否定优先。
+_EXAM_NEG_RE = re.compile(r"(没有?|无|不|without|no)\s*(期末|期终|final\s*)?(考试|exam)", re.I)
+_EXAM_POS_RE = re.compile(r"(有|要|含|with)\s*(期末|期终|final\s*)?(考试|exam)", re.I)
+
+# 课程类型排除意图:出现排除触发词 + 类型词 -> course_type NOT IN (...)。
+# 研究(?!生) 避免把"研究生"(postgraduate)误当 research 类型。
+_EXCLUDE_TRIGGER_RE = re.compile(r"排除|不含|不包括|不要|除去|去掉|剔除|except|exclud|without", re.I)
+_TYPE_TOKEN_RE = [
+    (re.compile(r"thesis|论文", re.I), "thesis"),
+    (re.compile(r"research|研究(?!生)", re.I), "research"),
+    (re.compile(r"placement|实习|practicum|internship", re.I), "placement"),
+]
+
+# 学院/学科分组 -> coordinating_unit 受控映射(确定性查表,文本列不进 LLM where)。
+# 这是策划好的近似分组,可按需增删;走参数化 SQL,注入安全。
+_FACULTY_UNITS = {
+    "business": ["Business School", "Economics School"],
+    "arts": ["Communication & Arts School", "Languages & Cultures School",
+             "Historical & Philosophical Inq", "Music School",
+             "Humanities, Arts and Social Sciences", "Politic Sc & Internat Studies"],
+}
+_FACULTY_KW = [
+    (re.compile(r"商科|商学院?|business|commerce|econ(?:omic)?", re.I), "business"),
+    (re.compile(r"文科|人文|humanities|liberal\s*arts|(?<![A-Za-z])arts(?![A-Za-z])", re.I), "arts"),
 ]
 
 MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail")
 
 # WHERE 只允许这些结构化枚举/数值列;文本列(title/code/description...)严禁出现
 ALLOWED_WHERE_COLS = {"semester", "year", "location", "attendance_mode",
-                      "level", "units", "has_exam", "has_hurdle"}
+                      "level", "units", "has_exam", "has_hurdle", "course_type"}
+# 剥离字面量后,where 里允许出现的字母标识符:白名单列 + 逻辑/比较词 + 布尔空值。
+# 出现别的(如 LLM 脑补的 requirement_type)即判非法整段清空。
+# 不含 is:guard_where 不支持 IS (NOT) NULL,这里同步清掉,两层语法保持一致。
+ALLOWED_WHERE_IDENTS = ALLOWED_WHERE_COLS | {
+    "and", "or", "not", "in", "true", "false", "null"}
 TEXT_COLS = re.compile(r"\b(title|code|description|search_blob|learning_outcomes|topics|coordinator|coordinating_unit)\b", re.I)
 LIKE_RE = re.compile(r"\b(like|ilike|similar\s+to)\b", re.I)
 BANNED = re.compile(r"(;|--|/\*|\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|select)\b)", re.I)
@@ -112,8 +152,12 @@ mode 一共 5 种:
   **绝不能**用 title/code/description 做 LIKE 匹配(课名是英文、学科横跨多个课程码)。
 - 缩写也算学科,必须翻成英文放进 semantic_query,**绝不能因为不认识就丢弃**:
   CS=computer science、AI=artificial intelligence、ML=machine learning、IT=information technology、EE=electrical engineering。
-- where 只能用这些列:semester, year, location, attendance_mode, level, units, has_exam, has_hurdle。
+- where 只能用这些列:semester, year, location, attendance_mode, level, units, has_exam, has_hurdle, course_type。
   字符串用单引号,布尔写 true/false(不加引号),不写分号/SELECT/LIKE,绝不碰 title/code/description 等文本列。
+- 课程类型(实习/论文/研究 vs 普通授课课)用 course_type 列(取值 coursework/placement/research/thesis),
+  **绝不能**自己编 requirement_type 之类不存在的列。「不含/排除某些类型」用 NOT IN,「只要某类型」用 = 或 IN。
+- level 只有两个合法值:'Undergraduate' 与 'Postgraduate Coursework'。bachelor/学士/本科 -> 'Undergraduate';
+  master/硕士/研究生 -> 'Postgraduate Coursework'。**绝不能**写 level='Master' 这种不存在的值。
 - **绝不替换用户没说的值**:只能把用户原话里出现的校区/学期/层级照搬进 where。
   若用户要的 location/semester/level 不在 schema 所列枚举内(例如用户问 Gatton 但枚举只有 St Lucia),
   就**原样用用户的字面值**(如 location='Gatton'),让结果正确为空;**绝不能**擅自换成枚举里已知的值(如 St Lucia)。
@@ -124,6 +168,8 @@ mode 一共 5 种:
 例子:
 - "没有考试的课" -> {{"mode":"filter","where":"has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
 - "没有考试的研究生课" -> {{"mode":"filter","where":"level='Postgraduate Coursework' AND has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
+- "没考试的、不含placement/thesis/research类型的课" -> {{"mode":"filter","where":"has_exam=false AND course_type NOT IN ('placement','thesis','research')","semantic_query":"","course_code":"","program_name":"","direction":""}}
+- "Master没考试的课" -> {{"mode":"filter","where":"level='Postgraduate Coursework' AND has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
 - "找跟机器学习相关的课" -> {{"mode":"semantic","where":"","semantic_query":"machine learning","course_code":"","program_name":"","direction":""}}
 - "跟机器学习相关的课" -> {{"mode":"semantic","where":"","semantic_query":"machine learning","course_code":"","program_name":"","direction":""}}
 - "CS有哪些课程没有考试" -> {{"mode":"hybrid","where":"has_exam=false","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
@@ -156,6 +202,8 @@ def build_schema_doc(conn) -> str:
   units REAL             学分
   has_exam BOOLEAN       是否含考试(写 true/false,不加引号)
   has_hurdle BOOLEAN     是否含 hurdle 评估(true/false)
+  course_type TEXT       课程类型,实际值:['coursework', 'placement', 'research', 'thesis']
+                         (普通授课课=coursework;实习/论文/研究类课程用对应值,可用 IN / NOT IN)
   (description / learning_outcomes / topics 等文本不在结构化列里,模糊主题要走 semantic_query)
 表 programs(专业):program_id, title, total_units, rules
 表 program_course(专业-课程扁平):program_id, course_code, requirement_type('core'|'elective')
@@ -181,11 +229,11 @@ def _clean_where(where: str) -> str:
     stripped = re.sub(r"'[^']*'", "''", w)
     if BANNED.search(stripped) or LIKE_RE.search(stripped) or TEXT_COLS.search(stripped):
         return ""
-    # 列白名单:在「剥离字面量后」的串上找「标识符 紧跟比较运算符」,不在白名单 -> 判非法清空
-    for ident in re.findall(r"\b([a-zA-Z_]+)\s*(?:=|<|>|!=|<=|>=|\bin\b|\bis\b)", stripped, re.I):
-        if ident.lower() in {"and", "or", "not", "true", "false", "null", "is", "in"}:
-            continue
-        if ident.lower() not in ALLOWED_WHERE_COLS:
+    # 列白名单:在「剥离字面量后」的串上取所有字母标识符,任何一个不在白名单标识符里
+    # (列/逻辑词/布尔空值)-> 判非法整段清空。逐 token 比锚定运算符更稳,
+    # 能拦住 LLM 脑补列 + NOT IN / IS 这类换了位置的写法。
+    for ident in re.findall(r"[a-zA-Z_]+", stripped):
+        if ident.lower() not in ALLOWED_WHERE_IDENTS:
             return ""
     return w
 
@@ -278,13 +326,78 @@ def _force_program_route(question: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _semester_intent(question: str) -> str:
+    """确定性判学期意图,返回 'S1'/'S2'/''(同时命中以 S1 优先,极少见)。"""
+    if _SEM_S1_RE.search(question):
+        return "S1"
+    if _SEM_S2_RE.search(question):
+        return "S2"
+    return ""
+
+
+def _exam_intent(question: str):
+    """确定性判有无考试意图,返回 True/False/None(否定优先于肯定)。"""
+    if _EXAM_NEG_RE.search(question):
+        return False
+    if _EXAM_POS_RE.search(question):
+        return True
+    return None
+
+
+def _excluded_types(question: str) -> list[str]:
+    """有排除触发词时,抽出问题里提到的可识别课程类型(thesis/research/placement)。"""
+    if not _EXCLUDE_TRIGGER_RE.search(question):
+        return []
+    out = []
+    for rx, val in _TYPE_TOKEN_RE:
+        if rx.search(question) and val not in out:
+            out.append(val)
+    return sorted(out)
+
+
+def _faculty_units(question: str) -> list[str]:
+    """学院/学科词 -> coordinating_unit 列表(确定性查表,去重保序)。"""
+    out: list[str] = []
+    for rx, key in _FACULTY_KW:
+        if rx.search(question):
+            for u in _FACULTY_UNITS[key]:
+                if u not in out:
+                    out.append(u)
+    return out
+
+
+def _strip_semester(where: str) -> str:
+    """从 where 串里剔除 LLM 写的 semester 等值条件(语义意图改走参数化 SQL)。"""
+    if not where:
+        return where
+    w = re.sub(r"\s+(?:and|or)\s+semester\s*=\s*'[^']*'", "", where, flags=re.I)
+    w = re.sub(r"semester\s*=\s*'[^']*'\s+(?:and|or)\s+", "", w, flags=re.I)
+    w = re.sub(r"^\s*semester\s*=\s*'[^']*'\s*$", "", w, flags=re.I)
+    return w.strip()
+
+
+def _force_where_clause(where: str, col_pattern: str, clause: str) -> str:
+    """把 where 里某列条件替换成确定性 clause(列不存在则追加 AND);col_pattern 匹配该列已有条件。"""
+    where = (where or "").strip()
+    if re.search(col_pattern, where, re.I):
+        return re.sub(col_pattern, clause, where, count=1, flags=re.I)
+    return f"{where} AND {clause}" if where else clause
+
+
 def _enforce_level_hint(where: str, question: str) -> str:
-    """确定性注入 level 过滤:问题提"研究生/本科"但 where 未含 level 时补上(规则 12)。"""
-    if re.search(r"\blevel\s*=", where or "", re.I):
-        return where                       # LLM 已给 level,尊重之
+    """确定性注入 level 过滤(规则 12):问题含明确层级词时,确定性值为准。
+
+    问题里出现 研究生/本科/master/bachelor/硕士/学士 等 -> 强制把 level 设成对应字面值:
+    where 已有 level 等值条件就替换(纠正 LLM 写错的值,如 bachelor 被映射成 Postgraduate),
+    没有就追加。问题无层级词时尊重 LLM 已写的 level(可能据 honours 等其它线索给出)。
+    """
+    where = where or ""
     for rx, val in _LEVEL_KW:
         if rx.search(question):
-            return f"{where.strip()} AND level='{val}'" if (where or "").strip() else f"level='{val}'"
+            forced = f"level='{val}'"
+            if re.search(r"\blevel\s*=\s*'[^']*'", where, re.I):
+                return re.sub(r"\blevel\s*=\s*'[^']*'", forced, where, flags=re.I)
+            return f"{where.strip()} AND {forced}" if where.strip() else forced
     return where
 
 
@@ -320,6 +433,9 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
     where_str = raw_where.strip() if isinstance(raw_where, str) else ""
 
     # 归一化所有字段为字符串
+    # semester / coord_units 是确定性结构化附加条件,走参数化 SQL(不进 LLM where 串):
+    #   - semester:S1 用 semester 列,S2 用 S2_CODES(列里 S2 不全,见 CLAUDE.md)
+    #   - coord_units:商科/文科 等学院映射成 coordinating_unit(文本列按设计不进 where 白名单)
     out = {
         "mode": str(p.get("mode", "")).strip().lower(),
         "where": where_str,
@@ -327,6 +443,8 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
         "course_code": str(p.get("course_code", "") or "").strip().upper(),
         "program_name": str(p.get("program_name", "") or "").strip(),
         "direction": str(p.get("direction", "") or "").strip().lower(),
+        "semester": "",
+        "coord_units": [],
     }
 
     if out["mode"] not in MODES:

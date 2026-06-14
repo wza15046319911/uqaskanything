@@ -192,14 +192,22 @@ def _retrieve(conn, question: str) -> dict:
                 "chunks": [], "course": course}
 
     if mode == "filter":
-        courses = retrieval.filter_search(conn, p["where"])
+        try:                                    # guard_where 是硬安全网,失败时降级 empty 而非 500 给学生
+            courses = retrieval.filter_search(conn, p["where"])
+        except ValueError as e:
+            return {"plan": p, "mode": "empty", "meta": f"非法 where 被安全网拦截:{e}",
+                    "courses": [], "program_facts": None, "prog_answer": None, "chunks": []}
         meta = f"WHERE {p['where']}"
     elif mode == "semantic":
         courses = retrieval.semantic_search(conn, p["semantic_query"])
         meta = f"semantic='{p['semantic_query']}'"
     elif mode == "hybrid":
-        courses = retrieval.hybrid_search(conn, p["where"] or None, p["semantic_query"])
-        meta = f"WHERE {p['where']} + semantic='{p['semantic_query']}'"
+        try:                                    # where 过不了安全网时退成纯语义检索,保住主题召回
+            courses = retrieval.hybrid_search(conn, p["where"] or None, p["semantic_query"])
+            meta = f"WHERE {p['where']} + semantic='{p['semantic_query']}'"
+        except ValueError:
+            courses = retrieval.semantic_search(conn, p["semantic_query"])
+            meta = f"semantic='{p['semantic_query']}'(where 被安全网拦截,已降级)"
     elif mode == "program":
         if p.get("direction") == "permit":
             code = p["course_code"]

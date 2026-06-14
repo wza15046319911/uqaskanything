@@ -36,3 +36,6 @@ backend/data/kb/_smoke*.csv
 
 # 含敏感浏览器 cookie 的本地实验脚本,绝不提交
 /main.py
+
+# DB 全量备份(体积大,勿入 git)
+backend/backup/

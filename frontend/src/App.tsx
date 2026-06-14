@@ -2,6 +2,7 @@ import { NavLink, Route, Routes } from 'react-router-dom'
 import { Button, Toast, useTheme } from '@heroui/react'
 import AskPage from './pages/AskPage'
 import SimPage from './pages/SimPage'
+import CoverPage from './pages/CoverPage'
 
 function navCls({ isActive }: { isActive: boolean }): string {
   return `rounded-full px-4 py-1.5 text-[13.5px] font-semibold transition-colors ${
@@ -24,6 +25,9 @@ export default function App() {
         </NavLink>
         <NavLink to="/sim" className={navCls}>
           选课模拟器
+        </NavLink>
+        <NavLink to="/cover" className={navCls}>
+          封面生成
         </NavLink>
         <Button
           isIconOnly
@@ -66,6 +70,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<AskPage />} />
         <Route path="/sim" element={<SimPage />} />
+        <Route path="/cover" element={<CoverPage />} />
       </Routes>
     </div>
   )
