@@ -73,6 +73,54 @@ def test_no_sim_exemption():
     assert not ok
 
 
+def _patch_llm(monkeypatch, raw):
+    monkeypatch.setattr(answerability.llm, "call", lambda *a, **k: raw)
+
+
+def test_llm_gate_off_passes(monkeypatch):
+    # KB_LLM_GATE=0 -> 不调 LLM 直接放行(离线/省调用)
+    monkeypatch.setenv("KB_LLM_GATE", "0")
+    monkeypatch.setattr(answerability.llm, "call",
+                        lambda *a, **k: pytest.fail("门关时不应调用 LLM"))
+    ok, _ = answerability.llm_answerable("怎么申请火星交换生", _ch("apply"))
+    assert ok
+
+
+def test_llm_gate_no_chunk_passes(monkeypatch):
+    monkeypatch.setattr(answerability.llm, "call",
+                        lambda *a, **k: pytest.fail("无 chunk 时不应调用 LLM"))
+    ok, _ = answerability.llm_answerable("anything", [])
+    assert ok
+
+
+def test_llm_gate_refuses_fictional(monkeypatch):
+    _patch_llm(monkeypatch, '{"answerable": false, "reason": "UQ 无火星交换生"}')
+    ok, reason = answerability.llm_answerable("怎么申请 UQ 火星交换生项目",
+                                              _ch("Submit your application"))
+    assert not ok and "火星" in reason
+
+
+def test_llm_gate_passes_real_question(monkeypatch):
+    _patch_llm(monkeypatch, '{"answerable": true, "reason": "真实交换项目"}')
+    ok, _ = answerability.llm_answerable("怎么申请海外交换",
+                                         _ch("student exchange program"))
+    assert ok
+
+
+def test_llm_gate_malformed_json_fails_open(monkeypatch):
+    # 解析不出 JSON -> 放行(误拒=0 优先,漏拒由日志可见)
+    _patch_llm(monkeypatch, "抱歉我无法判断")
+    ok, _ = answerability.llm_answerable("怎么重置密码", _ch("reset password"))
+    assert ok
+
+
+def test_llm_gate_extracts_embedded_json(monkeypatch):
+    # JSON 外带解释/围栏时,抠出首个 {...} 再判
+    _patch_llm(monkeypatch, '```json\n{"answerable": false, "reason": "虚构"}\n```')
+    ok, _ = answerability.llm_answerable("UQ 滑雪场几点开门", _ch("campus facilities"))
+    assert not ok
+
+
 def test_load_vocab_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         load_vocab(tmp_path / "nope.txt")

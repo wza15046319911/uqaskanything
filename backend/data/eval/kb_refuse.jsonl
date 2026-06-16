@@ -22,3 +22,47 @@
 {"q": "怎么在 UQ 宿舍养一只宠物龙", "label": "refuse"}
 {"q": "UQ 2099 年的本科学费是多少", "label": "refuse"}
 {"q": "How do I join the UQ underwater basket weaving team?", "label": "refuse"}
+{"q": "考试的时候能带计算器吗", "label": "answer"}
+{"q": "作业写不完能不能申请延期交", "label": "answer"}
+{"q": "我情况特殊想申请 special consideration 怎么弄", "label": "answer"}
+{"q": "家里经济困难,UQ 有没有补助可以申请", "label": "answer"}
+{"q": "UQ 学生能免费用 Adobe 全家桶吗", "label": "answer"}
+{"q": "登录老是要我做双重验证,Okta MFA 怎么设置", "label": "answer"}
+{"q": "我想在主修之外再加修一个 diploma", "label": "answer"}
+{"q": "考试会不会被排在周末", "label": "answer"}
+{"q": "最近压力很大很焦虑,学校有心理支持吗", "label": "answer"}
+{"q": "想退掉一门已经选了的课怎么操作", "label": "answer"}
+{"q": "怎么报名 UQ 的火星基地实习项目", "label": "refuse"}
+{"q": "怎么申请 UQ 的月球交换学期", "label": "refuse"}
+{"q": "怎么申请去 UQ 火星校区交换一学期", "label": "refuse"}
+{"q": "怎么选 UQ 的星际航行本科专业", "label": "refuse"}
+{"q": "申请 UQ 海底校区的学生宿舍", "label": "refuse"}
+{"q": "我想申请 UQ 的时间旅行硕士项目", "label": "refuse"}
+{"q": "UQ 隐形斗篷借用服务在哪办理", "label": "refuse"}
+{"q": "UQ 时间旅行研究中心在哪", "label": "refuse"}
+{"q": "UQ 有没有教驯服独角兽的课", "label": "refuse"}
+{"q": "怎么预订 UQ 的反重力实验室", "label": "refuse"}
+{"q": "怎么重新设置我的 UQ 登录密码", "label": "answer"}
+{"q": "VPN 连不上怎么办", "label": "answer"}
+{"q": "怎么开一份在读证明", "label": "answer"}
+{"q": "迟注册要交多少钱", "label": "answer"}
+{"q": "有没有紧急贷款可以申请", "label": "answer"}
+{"q": "UQ 的住宿选择有哪些", "label": "answer"}
+{"q": "UQ 学生可以免费用哪些软件", "label": "answer"}
+{"q": "怎么成为 UQ 的学生导师", "label": "answer"}
+{"q": "我觉得期末成绩判错了怎么申诉", "label": "answer"}
+{"q": "延期考试怎么申请", "label": "answer"}
+{"q": "GPA 是怎么计算的", "label": "answer"}
+{"q": "census date 具体是哪天", "label": "answer"}
+{"q": "怎么申请奖学金", "label": "answer"}
+{"q": "想申请 special consideration 该怎么办", "label": "answer"}
+{"q": "How do I enrol in the UQ dragon riding course?", "label": "refuse"}
+{"q": "Where is the UQ teleportation research lab?", "label": "refuse"}
+{"q": "How do I book the UQ invisibility cloak?", "label": "refuse"}
+{"q": "What time does the UQ underwater ski resort open?", "label": "refuse"}
+{"q": "How much is UQ tuition in the year 2099?", "label": "refuse"}
+{"q": "How do I join the UQ time-travel master program?", "label": "refuse"}
+{"q": "UQ 的恐龙骑乘体验馆在哪栋楼", "label": "refuse"}
+{"q": "怎么报名 UQ 的魔法药剂学本科专业", "label": "refuse"}
+{"q": "UQ 2099 年的硕士学费是多少", "label": "refuse"}
+{"q": "怎么预约 UQ 的瞬间移动通勤服务", "label": "refuse"}

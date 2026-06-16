@@ -32,7 +32,7 @@
 {"q": "GPA 怎么算", "mode": "kb"}
 {"q": "2026 年第一学期什么时候开学", "mode": "kb"}
 {"q": "什么时候是 census date", "mode": "kb"}
-{"q": "有哪些线上授课的课", "mode": "filter", "where_has": ["attendance_mode"]}
+{"q": "有哪些线上授课的课", "mode": "filter", "where_equals": ["attendance_mode='Online'"]}
 {"q": "第一学期开的本科课", "mode": "filter", "where_has": ["semester", "level"]}
 {"q": "Gatton 校区有没有跟农业相关的课", "mode": "hybrid", "where_has": ["gatton"], "semantic": true}
 {"q": "AI 方向的研究生课", "mode": "hybrid", "where_has": ["level"], "semantic": true}
@@ -50,3 +50,61 @@
 {"q": "怎么连 UQ 的 VPN", "mode": "kb"}
 {"q": "图书馆借书可以借多久", "mode": "kb"}
 {"q": "毕业典礼一般在几月", "mode": "kb"}
+{"q": "哪些课没有期中考试", "mode": "filter", "where_has": ["midterm_status"]}
+{"q": "有期中考试的研究生课", "mode": "filter", "where_has": ["midterm_status", "level"]}
+{"q": "不含期中考试的本科课", "mode": "filter", "where_has": ["midterm_status", "level"]}
+{"q": "CS 有哪些课有期中考试", "mode": "hybrid", "where_has": ["midterm_status"], "semantic": true}
+{"q": "St Lucia 校区有哪些课没有期中", "mode": "filter", "where_has": ["midterm_status", "location"]}
+{"q": "没考试的、不含实习和论文的课", "mode": "filter", "where_has": ["has_exam", "course_type"]}
+{"q": "排除研究类的本科课", "mode": "filter", "where_has": ["course_type", "level"]}
+{"q": "Bachelor of Computer Science 里没有考试的课", "mode": "program", "direction": "program_to_courses", "where_has": ["has_exam"]}
+{"q": "Master of Data Science 有哪些 2 学分的课", "mode": "program", "direction": "program_to_courses", "where_has": ["units"]}
+{"q": "Bachelor of Computer Science 课表里不含实习和论文的课", "mode": "program", "direction": "program_to_courses", "where_has": ["course_type"]}
+{"q": "Master of Information Technology 的研究生课有哪些没有考试", "mode": "program", "direction": "program_to_courses", "where_has": ["has_exam", "level"]}
+{"q": "能躺平的课", "mode": "filter", "where_has": ["has_exam", "has_hurdle", "course_type"]}
+{"q": "轻松好过的研究生课", "mode": "filter", "where_has": ["has_exam", "has_hurdle", "level"]}
+{"q": "作业少的课", "mode": "filter", "where_has": ["has_exam", "has_hurdle"]}
+{"q": "semester 1 没有期末也没有期中、course code 1或3开头的", "mode": "filter", "where_has": ["semester", "has_exam", "midterm_status"]}
+{"q": "CSSE2002 这门课讲什么", "mode": "course_detail"}
+{"q": "MATH1052 有没有期末考试", "mode": "course_detail"}
+{"q": "INFS1200 在第几学期开课", "mode": "course_detail"}
+{"q": "DECO1400 是几学分", "mode": "course_detail"}
+{"q": "STAT1201 怎么考核", "mode": "course_detail"}
+{"q": "ELEC3300 难不难", "mode": "course_detail"}
+{"q": "CSSE2310 在哪个校区上课", "mode": "course_detail"}
+{"q": "MATH1051 是哪些专业的必修课", "mode": "program", "direction": "course_to_programs"}
+{"q": "STAT1201 是哪些专业的选修", "mode": "program", "direction": "course_to_programs"}
+{"q": "INFS1200 是哪些 major 的核心课", "mode": "program", "direction": "course_to_programs"}
+{"q": "ENGG1100 属于哪些专业的培养方案", "mode": "program", "direction": "course_to_programs"}
+{"q": "Master of Cyber Security 要修哪些课", "mode": "program", "direction": "program_to_courses"}
+{"q": "Bachelor of Science 的必修课有哪些", "mode": "program", "direction": "program_to_courses"}
+{"q": "Master of Information Technology 培养方案是什么", "mode": "program", "direction": "program_to_courses"}
+{"q": "Bachelor of Engineering 的选修课有哪些", "mode": "program", "direction": "program_to_courses"}
+{"q": "Master of Data Science 能修 CSSE1001 吗", "mode": "program", "direction": "permit"}
+{"q": "Bachelor of Engineering 可以修 MATH1051 吗", "mode": "program", "direction": "permit"}
+{"q": "Master of Computer Science 能不能修 STAT1201", "mode": "program", "direction": "permit"}
+{"q": "线上授课的研究生课", "mode": "filter", "where_equals": ["attendance_mode='Online'", "level='Postgraduate Coursework'"]}
+{"q": "4 学分的课", "mode": "filter", "where_has": ["units"]}
+{"q": "有 hurdle 的本科课", "mode": "filter", "where_equals": ["has_hurdle=true", "level='Undergraduate'"]}
+{"q": "含期中考试的本科课", "mode": "filter", "where_equals": ["midterm_status='has'", "level='Undergraduate'"]}
+{"q": "排除论文和实习的课", "mode": "filter", "where_has": ["course_type"]}
+{"q": "Herston 校区的课", "mode": "filter", "where_has": ["location"]}
+{"q": "有没有好过的课", "mode": "filter", "where_has": ["has_exam", "has_hurdle", "course_type"]}
+{"q": "负担轻的研究生课", "mode": "filter", "where_has": ["has_exam", "has_hurdle", "level"]}
+{"q": "不含实习的本科课", "mode": "filter", "where_has": ["course_type", "level"]}
+{"q": "有没有跟人工智能相关的课", "mode": "semantic", "semantic": true}
+{"q": "推荐一些数据科学方向的课", "mode": "semantic", "semantic": true}
+{"q": "关于心理学的课程", "mode": "semantic", "semantic": true}
+{"q": "想学点金融相关的", "mode": "semantic", "semantic": true}
+{"q": "生物医学相关的课", "mode": "semantic", "semantic": true}
+{"q": "St Lucia 校区的人工智能课", "mode": "hybrid", "where_has": ["location"], "semantic": true}
+{"q": "没有考试的机器学习课", "mode": "hybrid", "where_has": ["has_exam"], "semantic": true}
+{"q": "本科的数据科学课", "mode": "hybrid", "where_has": ["level"], "semantic": true}
+{"q": "4 学分的计算机课", "mode": "hybrid", "where_has": ["units"], "semantic": true}
+{"q": "研究生阶段的网络安全课", "mode": "hybrid", "where_has": ["level"], "semantic": true}
+{"q": "补考是怎么安排的", "mode": "kb"}
+{"q": "怎么申请休学", "mode": "kb"}
+{"q": "成绩什么时候公布", "mode": "kb"}
+{"q": "怎么缴纳学费", "mode": "kb"}
+{"q": "退学需要办什么手续", "mode": "kb"}
+{"q": "图书馆周末开放吗", "mode": "kb"}

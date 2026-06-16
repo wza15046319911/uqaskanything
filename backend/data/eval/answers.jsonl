@@ -10,3 +10,31 @@
 {"q": "没有考试的研究生课", "mode": "filter"}
 {"q": "跟机器学习相关的课", "mode": "semantic"}
 {"q": "CS有哪些课程没有考试", "mode": "hybrid"}
+{"q": "Bachelor of Computer Science 里没有考试的课", "mode": "program", "answer_has": ["符合条件"]}
+{"q": "Master of Data Science 有哪些 2 学分的课", "mode": "program", "answer_has": ["符合条件"]}
+{"q": "Bachelor of Computer Science 能修 CSSE1001 吗", "mode": "program", "answer_has": ["CSSE1001"]}
+{"q": "CSSE1001 的先修课是什么", "mode": "course_detail"}
+{"q": "哪些课没有期中考试", "mode": "filter"}
+{"q": "master of CS 能选的没有考试的课，不要thesis、research", "mode": "program", "answer_has": ["Master of Computer Science"]}
+{"q": "能躺平的课", "mode": "filter", "answer_has": ["不判断课程难度"]}
+{"q": "semester 1没有期末考试也没有期中考试的，course code为1或3开头的", "mode": "filter"}
+{"q": "Bachelor of Computer Science 的必修课有哪些", "mode": "program", "answer_has": ["CSSE1001"], "answer_hasnt": ["DATA7001"]}
+{"q": "Master of Data Science 的核心课有哪些", "mode": "program", "answer_has": ["DATA7001"], "answer_hasnt": ["CSSE1001"]}
+{"q": "Bachelor of Engineering 的必修课", "mode": "program", "answer_has": ["ENGG1100"], "answer_hasnt": ["DATA7001"]}
+{"q": "Bachelor of Computer Science 的选修课", "mode": "program"}
+{"q": "Bachelor of Engineering 可以修 MATH1051 吗", "mode": "program", "answer_has": ["MATH1051"]}
+{"q": "MATH1051 是哪些专业的必修", "mode": "program", "answer_has": ["MATH1051"]}
+{"q": "怎么报名 UQ 的龙骑士训练营", "refuse": true}
+{"q": "UQ 的瞬间移动校车几点发车", "refuse": true}
+{"q": "怎么申请 UQ 的时间旅行奖学金", "refuse": true}
+{"q": "How do I enrol in UQ's dragon taming course?", "refuse": true}
+{"q": "没有考试的本科课", "mode": "filter", "courses_satisfy": {"has_exam": false, "level": "Undergraduate"}}
+{"q": "有期中考试的课", "mode": "filter", "courses_satisfy": {"midterm_status": "has"}}
+{"q": "有 hurdle 的本科课", "mode": "filter", "courses_satisfy": {"has_hurdle": true, "level": "Undergraduate"}, "answer_hasnt": ["无法确认"]}
+{"q": "2 学分的课", "mode": "filter", "courses_satisfy": {"units": 2}}
+{"q": "跟网络安全相关的课", "mode": "semantic"}
+{"q": "St Lucia 校区的人工智能课", "mode": "hybrid"}
+{"q": "CSSE1001 怎么考核", "mode": "course_detail"}
+{"q": "GPA 怎么算的", "mode": "kb", "source_has": "来源"}
+{"q": "怎么申请缓考", "mode": "kb"}
+{"q": "怎么开在读证明", "mode": "kb", "source_has": "来源"}

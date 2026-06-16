@@ -10,6 +10,7 @@ program_lookup.py — program 维度问答助手(纯 SQL)
 """
 from __future__ import annotations
 import os
+import re
 
 import psycopg
 
@@ -145,19 +146,29 @@ def has_plan_level_core(conn, program_id: str) -> bool:
 
 
 def find_program(conn, name_substr: str) -> list[tuple[str, str]]:
-    """按 title ILIKE 模糊找 program,返回 [(program_id, title)],按 title 排序。
+    """按 title ILIKE 模糊找 program,返回 [(program_id, title)]。
+
+    排序确定性:精确同名 > 标题以该名开头 > 标题更短(更具体)> 字母序。
+    调用方取 progs[0],所以子串查询(如 'Master of Data Science')必须让独立专业
+    排在组合专业('Bachelor of X / Master of Data Science')之前,否则答非所问。
 
     空串/纯空白短路返回 []:否则 '%%' 会命中全部 program(无意义的全表返回)。
     """
     if name_substr is None or not name_substr.strip():
         return []
+    # 归一内部空白:用户/LLM 可能在词间多打空格(如 'Bachelor of  Information Technology'),
+    # 而库内 title 是单空格,ILIKE 对空格敏感会整串落空。折成单空格再匹配。
+    name = re.sub(r"\s+", " ", name_substr.strip())
     sql = """
         SELECT program_id, title
         FROM programs
         WHERE title ILIKE %s
-        ORDER BY title
+        ORDER BY (LOWER(title) = LOWER(%s)) DESC,
+                 (title ILIKE %s) DESC,
+                 length(title) ASC,
+                 title ASC
     """
-    rows = conn.execute(sql, (f"%{name_substr}%",)).fetchall()
+    rows = conn.execute(sql, (f"%{name}%", name, f"{name}%")).fetchall()
     return [(r[0], r[1]) for r in rows]
 
 
@@ -191,7 +202,13 @@ if __name__ == "__main__":
         assert find_program(conn, "") == [], "find_program('') 应短路返回 []"
         assert find_program(conn, "  ") == [], "find_program('  ') 应短路返回 []"
         assert len(find_program(conn, "Computer Science")) > 0, "Computer Science 仍应命中"
-        print("[OK] find_program 空串/纯空白短路;'Computer Science' 仍命中")
+        # 子串查询命中多个时,独立专业(精确同名)必须排第一,否则 progs[0] 选到组合专业
+        mds = find_program(conn, "Master of Data Science")
+        assert len(mds) > 1, "Master of Data Science 应命中独立 + 组合多个专业"
+        assert mds[0][1].lower() == "master of data science", \
+            f"独立专业应排第一,实际 progs[0]={mds[0]!r}"
+        print(f"[OK] find_program 空串/纯空白短路;'Computer Science' 仍命中;"
+              f"'Master of Data Science' 在 {len(mds)} 个命中中独立专业排第一({mds[0][0]})")
 
         raw = programs_for_course(conn, "CSSE1001")
         collapsed = programs_for_course(conn, "CSSE1001", collapse=True)

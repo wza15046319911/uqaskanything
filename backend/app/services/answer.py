@@ -49,6 +49,23 @@ USER_TMPL = """问题:{q}
 
 请只依据上面的【事实】用中文回答。"""
 
+# 主题相关性诚实(approach-3,折叠进答案生成同一次调用,不加 LLM 调用):语料可能根本没有讲该
+# 主题的课,bi-encoder 仍按语义近邻返回噪声(如「游戏开发」召回 Gaming Cultures/生物课),且绝对
+# sim 无法把噪声(game design 0.550)和真课(statistics 0.556)分开。让 LLM 判 top 召回是否真有讲该
+# 主题的课(分类活,规则12),全是噪声时给诚实兜底声明而非自信当成「X 课」列出(红线:refuse over
+# wrong)。软兜底:仍列出最接近结果,非硬拒。仅 semantic/hybrid 主题查询启用;结构化 filter
+# (如「没有考试的课」)无主题,不启用以免无端添加声明。
+_TOPIC_RELEVANCE_RULE = (
+    "\n- 相关性诚实:先判断【事实】里是否至少有一门课真正讲该问题主题。只要有一门真正相关,就"
+    "正常作答——聚焦相关的课、忽略明显无关的噪声,不要因为列表里混了无关课就加声明。仅当没有"
+    "任何一门真正讲该主题(全部只是课名/语义沾边的无关课)时,才在开头声明「未找到与『<主题>』"
+    "强相关的课程,以下仅是语义最接近的结果,请自行甄别」再列出。")
+
+
+def _answer_system(topical: bool) -> str:
+    """topical=True(主题查询)时在基础 SYSTEM 上追加相关性诚实指令,否则原样返回。"""
+    return SYSTEM + _TOPIC_RELEVANCE_RULE if topical else SYSTEM
+
 
 # requirement_type 白名单:program_course 里的取值 -> 中文标签(确定性映射,不交给模型)
 _REQ_TYPE_LABEL = {
@@ -165,29 +182,32 @@ def guard_citations(text: str, courses: list[dict]) -> str:
     return result
 
 
-def answer(question: str, courses: list[dict], program_facts=None) -> str:
-    """grounded 答案生成:无任何事实走固定句,否则把事实清单喂 qwen 生成中文回答。"""
+def answer(question: str, courses: list[dict], program_facts=None, topical: bool = False) -> str:
+    """grounded 答案生成:无任何事实走固定句,否则把事实清单喂 qwen 生成中文回答。
+    topical=True(semantic/hybrid 主题查询)追加相关性诚实指令:召回全是噪声则诚实兜底,不当 X 课列。"""
     if not courses and not program_facts:
         return EMPTY_ANSWER
 
     facts = build_facts(courses, program_facts)
     out = llm.call([
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": _answer_system(topical)},
         {"role": "user", "content": USER_TMPL.format(q=question, facts=facts)},
     ]).strip()
     # 生产护栏:越界引用校验(原先只在 __main__,现移入生产路径)
     return guard_citations(out, courses)
 
 
-def answer_stream(question: str, courses: list[dict], program_facts=None) -> Iterator[str]:
+def answer_stream(question: str, courses: list[dict], program_facts=None,
+                  topical: bool = False) -> Iterator[str]:
     """流式 grounded 生成:逐 token yield 原始增量。无任何事实时 yield 固定句。
-    护栏 guard_citations 需全文,由调用方(qa.run_stream)在收尾时对完整文本兜底。"""
+    护栏 guard_citations 需全文,由调用方(qa.run_stream)在收尾时对完整文本兜底。
+    topical 含义同 answer():主题查询追加相关性诚实指令。"""
     if not courses and not program_facts:
         yield EMPTY_ANSWER
         return
     facts = build_facts(courses, program_facts)
     yield from llm.call_stream([
-        {"role": "system", "content": SYSTEM},
+        {"role": "system", "content": _answer_system(topical)},
         {"role": "user", "content": USER_TMPL.format(q=question, facts=facts)},
     ])
 
@@ -332,15 +352,16 @@ def answer_kb_stream(question: str, chunks: list[dict]) -> Iterator[str]:
 COURSE_DETAIL_SYSTEM = """你是 UQ 选课助手。根据【课程资料】(UQ 官方课程大纲)用简洁中文介绍这门课。
 硬性规则:
 - 只依据【课程资料】,英文要转述成中文,绝不编造内容。
-- 2-4 句话说清「这门课讲什么、适合谁修」;不要罗列先修/学分/考核(这些另行结构化展示)。
-- 不写网址、不寒暄、不重复课程码。"""
+- 按资料信息量自适应展开,可分「课程内容、核心主题、学完能做什么、适合谁修」几个方面:
+  资料丰富就多写几段,资料很少就只写能覆盖的部分;不强求句数,也不要为凑长度注水或重复。
+- 不要罗列先修/学分/考核(这些另行结构化展示);不写网址、不寒暄、不重复课程码。"""
 
 COURSE_DETAIL_USER = """课程:{code} {title}
 
 【课程资料】
 {facts}
 
-请用 2-4 句中文介绍这门课讲什么、适合谁修。"""
+请依据上面的【课程资料】用中文介绍这门课讲什么、有哪些核心主题、适合谁修。"""
 
 
 def _course_detail_facts(course: dict) -> str:
@@ -355,11 +376,120 @@ def _course_detail_facts(course: dict) -> str:
     return "\n\n".join(parts)
 
 
+# ---------- 单课结构化子问题(先修/考核/学分/开课):确定性作答,不交 LLM ----------
+# 高成本事实(先修的 and/or 逻辑、考核权重数字、学分、开课)走结构化字段精准回应(红线1),
+# 不让 LLM 自由转述以免改动逻辑/数字;意图判定走代码(规则12),无命中才回退 LLM 通用简介。
+_DETAIL_INTENT_KW: dict[str, tuple[str, ...]] = {
+    "prereq": ("先修", "先决", "前置", "前导", "修读要求", "prerequisite", "prereq"),
+    "assessment": ("考核", "考评", "评估", "评分", "成绩构成", "怎么考", "如何考",
+                   "考试", "占比", "assessment"),
+    "units": ("学分", "几分", "多少分", "units"),
+    "semester": ("开课", "哪个学期", "什么时候开", "第几学期", "何时开", "开设", "semester"),
+}
+
+
+def _detail_intents(question: str) -> list[str]:
+    """命中的子问题意图键(确定性关键词),按 _DETAIL_INTENT_KW 固定顺序返回;无命中返回空表。"""
+    q = (question or "").lower()
+    return [key for key, kws in _DETAIL_INTENT_KW.items()
+            if any(kw.lower() in q for kw in kws)]
+
+
+def _fmt_num(x) -> str:
+    """2.0 -> '2',22.5 -> '22.5'(去掉整数的 .0,保留真小数)。"""
+    f = float(x)
+    return str(int(f)) if f == int(f) else str(f)
+
+
+def _detail_prereq(course: dict) -> str:
+    code = course.get("code", "?")
+    title = course.get("title") or ""
+    raw = (course.get("prerequisite_raw") or "").strip().rstrip("。.")
+    if not raw:
+        return f"{code}({title})没有先修课要求。"
+    return f"{code} 的先修课要求:{raw}。以官方课程页(ECP)为准。"
+
+
+def _detail_assessment(course: dict) -> str:
+    code = course.get("code", "?")
+    items = course.get("assessments")
+    parts: list[str] = []
+    if isinstance(items, list):
+        for a in items:
+            if not isinstance(a, dict):
+                continue
+            task = str(a.get("task") or "").strip() or "考核项"
+            extra: list[str] = []
+            if a.get("weight") is not None:
+                extra.append(f"{_fmt_num(a['weight'])}%")
+            if a.get("hurdle"):
+                extra.append("hurdle")
+            parts.append(task + (f"({'、'.join(extra)})" if extra else ""))
+    if not parts:
+        return f"{code} 暂无结构化考核信息,请查看官方课程页(ECP)。"
+    return f"{code} 的考核组成:" + "、".join(parts) + "。以官方课程页为准。"
+
+
+def _detail_units(course: dict) -> str:
+    code = course.get("code", "?")
+    title = course.get("title") or ""
+    u = course.get("units")
+    if u is None:
+        return f"{code} 暂无学分信息,请查看官方课程页。"
+    return f"{code}({title})是 {_fmt_num(u)} 学分。"
+
+
+def _detail_semester(course: dict) -> str:
+    code = course.get("code", "?")
+    sems = [s for s in (course.get("semesters") or []) if s]
+    locs = [l for l in (course.get("locations") or []) if l]
+    if not sems:
+        return f"{code} 暂无开课学期信息,请查看官方课程页。"
+    base = f"{code} 开设学期:{'、'.join(sems)}"
+    if locs:
+        base += f";校区:{'、'.join(locs)}"
+    return base + "。以官方课程页为准。"
+
+
+_DETAIL_FMT = {
+    "prereq": _detail_prereq,
+    "assessment": _detail_assessment,
+    "units": _detail_units,
+    "semester": _detail_semester,
+}
+
+
+def detail_structured_answer(question: str, course: dict) -> str | None:
+    """命中先修/考核/学分/开课子问题 -> 用结构化字段确定性作答(每项一段);无命中返回 None。"""
+    intents = _detail_intents(question)
+    if not intents:
+        return None
+    return "\n\n".join(_DETAIL_FMT[i](course) for i in intents)
+
+
+def _detail_struct_context(course: dict, intents: list[str]) -> list[str]:
+    """子问题确定性答案的事实依据(给 llm_judge faithfulness 用,与答案取自同一组字段)。"""
+    out: list[str] = []
+    if "prereq" in intents:
+        out.append("prerequisite_raw=" + ((course.get("prerequisite_raw") or "").strip() or "(空=无先修)"))
+    if "assessment" in intents:
+        out.append("assessments=" + json.dumps(course.get("assessments") or [], ensure_ascii=False))
+    if "units" in intents:
+        out.append(f"units={course.get('units')}")
+    if "semester" in intents:
+        out.append("semesters=" + json.dumps(course.get("semesters") or [], ensure_ascii=False)
+                   + " locations=" + json.dumps(course.get("locations") or [], ensure_ascii=False))
+    return out
+
+
 def answer_course_detail(question: str, course: dict | None) -> str:
-    """单课介绍:有大纲资料则 LLM grounded 生成 2-4 句中文简介,否则确定性短句。
-    先修/学分/考核等结构化事实由前端详情卡确定性展示(红线 1),不经 LLM。"""
+    """单课问答:命中先修/考核/学分/开课子问题走结构化确定性答案(红线1),否则 LLM grounded 简介。
+    结构化事实同时由前端详情卡展示;通用「讲什么」无子问题命中时交 LLM 生成中文简介。"""
     if not course:
         return "未找到该课程,请检查课程码是否正确。"
+    structured = detail_structured_answer(question, course)
+    if structured is not None:
+        return structured
     facts = _course_detail_facts(course)
     if not facts.strip():
         return f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
@@ -371,9 +501,13 @@ def answer_course_detail(question: str, course: dict | None) -> str:
 
 
 def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[str]:
-    """流式版单课介绍:无课程/无资料时 yield 确定性短句,否则逐 token 流式简介。"""
+    """流式版单课问答:命中子问题 yield 结构化确定性答案(单块,不走 LLM);否则逐 token 流式简介。"""
     if not course:
         yield "未找到该课程,请检查课程码是否正确。"
+        return
+    structured = detail_structured_answer(question, course)
+    if structured is not None:
+        yield structured
         return
     facts = _course_detail_facts(course)
     if not facts.strip():
@@ -387,15 +521,20 @@ def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[
 
 
 def gen_contexts(mode: str, courses: list[dict] | None = None, program_facts=None,
-                 chunks: list[dict] | None = None, course: dict | None = None) -> list[str]:
+                 chunks: list[dict] | None = None, course: dict | None = None,
+                 question: str | None = None) -> list[str]:
     """返回各 mode 实际喂给 LLM 的检索上下文,逐条(评测/调试用,与生产生成同源,零漂移)。
 
     复用生产序列化(_fmt_course / _kb_facts 同源 / _course_detail_facts),逐条对应 RAGAS
     的 retrieved_contexts;program/empty 等无 LLM 上下文的 mode 返回空列表。
+    course_detail 命中子问题时返回结构化字段依据(答案确定性、非 LLM),与 program 同理。
     """
     if mode == "kb":
         return [(c.get("text") or "").strip() for c in (chunks or []) if c.get("text")]
     if mode == "course_detail":
+        intents = _detail_intents(question or "")
+        if intents:
+            return _detail_struct_context(course or {}, intents)
         facts = _course_detail_facts(course or {})
         return [facts] if facts.strip() else []
     items = [_fmt_course(c) for c in (courses or [])]

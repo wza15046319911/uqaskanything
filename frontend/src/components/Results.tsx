@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from 'react'
-import { Card, Chip } from '@heroui/react'
+import { Card, Chip, Disclosure } from '@heroui/react'
 import { motion, useReducedMotion } from 'motion/react'
 import type { AskResult, Course, CourseDetail, KbChunk, ProgramFact } from '../api/ask'
 import { cnNum, collapseSlots, levelZh, type Slot } from '../lib/courses'
@@ -8,25 +8,20 @@ import { easeOut, riseDelay, riseIn } from '../lib/motion'
 const DISPLAY_CAP = 40
 const PROG_CAP = 24
 
-// mode -> 来源库标签:对学生有意义的是「答案来自哪个库」,不是检索算法
-const LIB_ZH: Record<string, string> = {
-  filter: '课程库',
-  semantic: '课程库',
-  hybrid: '课程库',
-  course_detail: '课程库',
-  program: '培养方案',
-  kb: '知识库',
-  empty: '需更具体',
-}
-
-const LIB_COLOR: Record<string, 'default' | 'accent' | 'warning'> = {
-  filter: 'accent',
-  semantic: 'accent',
-  hybrid: 'accent',
-  course_detail: 'accent',
-  program: 'warning',
-  kb: 'default',
-  empty: 'default',
+function Sources({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Disclosure className="mt-4">
+      <Disclosure.Heading>
+        <Disclosure.Trigger className="inline-flex items-center gap-1 text-[13px] font-medium text-muted transition-colors hover:text-foreground">
+          {label}
+          <Disclosure.Indicator />
+        </Disclosure.Trigger>
+      </Disclosure.Heading>
+      <Disclosure.Content>
+        <Disclosure.Body className="pt-3">{children}</Disclosure.Body>
+      </Disclosure.Content>
+    </Disclosure>
+  )
 }
 
 // 把回答里的课程码(CSSE1001)包成 <code>,用拆分而非 dangerouslySetInnerHTML
@@ -120,6 +115,16 @@ function CourseCard({ c, i }: { c: Course; i: number }) {
             {c.title || <span className="text-muted">(本学期无开课信息)</span>}
           </div>
           <CourseTags c={c} />
+          {c.profile_url && (
+            <a
+              href={c.profile_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-2 inline-block text-[13px] font-medium text-accent hover:underline"
+            >
+              官方课程页 →
+            </a>
+          )}
         </div>
         {c.sim != null && (
           <span className="shrink-0 pt-0.5 text-xs font-semibold text-accent tabular-nums">
@@ -317,73 +322,54 @@ export default function Results({
   const kbSources = isKb ? dedupeSources(res.chunks ?? []) : []
   const progFacts = isProgList ? (res.program_facts as ProgramFact[]) : []
   const slots = hasCourses ? collapseSlots(res.courses!) : []
-  const hasList = isProgList || hasCourses
-  const n = isProgList ? progFacts.length : slots.length
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center gap-2.5">
-        <Chip size="sm" variant="soft" color={LIB_COLOR[res.mode ?? ''] || 'default'}>
-          {LIB_ZH[res.mode ?? ''] || res.mode}
-        </Chip>
-        {isKb
-          ? kbSources.length > 0 && (
-              <span className="ml-auto text-[13px] text-muted">{kbSources.length} 个来源</span>
-            )
-          : res.mode !== 'empty' &&
-            hasList && <span className="ml-auto text-[13px] text-muted">{n} 条结果</span>}
-      </div>
-
       {(res.answer || streaming) && (
-        <Card className="mb-5" variant="secondary">
-          <Card.Header>
-            <Card.Title className="text-xs font-bold tracking-[0.08em] text-accent uppercase">
-              回答
-            </Card.Title>
-          </Card.Header>
-          <Card.Content>
-            <div className="text-[15.5px] leading-[1.72] whitespace-pre-wrap [&_code]:rounded-md [&_code]:bg-accent-soft [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:font-semibold [&_code]:text-accent-soft-foreground">
-              {highlightCodes(res.answer ?? '')}
-              {streaming && (
-                <span
-                  className="ml-0.5 inline-block h-[1.05em] w-[2px] -translate-y-px animate-pulse bg-accent align-middle"
-                  aria-hidden="true"
-                />
-              )}
-            </div>
-          </Card.Content>
-        </Card>
+        <div className="text-[15.5px] leading-[1.72] whitespace-pre-wrap [&_code]:rounded-md [&_code]:bg-accent-soft [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:font-semibold [&_code]:text-accent-soft-foreground">
+          {highlightCodes(res.answer ?? '')}
+          {streaming && (
+            <span
+              className="ml-0.5 inline-block h-[1.05em] w-[2px] -translate-y-px animate-pulse bg-accent align-middle"
+              aria-hidden="true"
+            />
+          )}
+        </div>
       )}
 
       {isCourseDetail ? (
         res.course ? (
-          <CourseDetailCard c={res.course} />
+          <Sources label="课程详情">
+            <CourseDetailCard c={res.course} />
+          </Sources>
         ) : null
       ) : isKb ? (
         kbSources.length ? (
-          <div className="grid gap-3">
-            {kbSources.map((s, i) => (
-              <KbSourceCard key={s.url} s={s} i={i} />
-            ))}
-          </div>
+          <Sources label={`${kbSources.length} 个来源`}>
+            <div className="grid gap-3">
+              {kbSources.map((s, i) => (
+                <KbSourceCard key={s.url} s={s} i={i} />
+              ))}
+            </div>
+          </Sources>
         ) : null
       ) : isProgList ? (
         progFacts.length ? (
-          <>
+          <Sources label={`${progFacts.length} 条结果`}>
             <div className="grid gap-3">
               {progFacts.slice(0, PROG_CAP).map((p, i) => (
                 <ProgramRow key={`${p.title}-${i}`} p={p} i={i} />
               ))}
             </div>
             <MoreNote total={progFacts.length} cap={PROG_CAP} unit="个专业" />
-          </>
+          </Sources>
         ) : (
           <div className="py-9 text-center text-[15px] text-muted">
             这门课不在任何已收录专业的课表里。
           </div>
         )
       ) : answerOnly ? null : slots.length ? (
-        <>
+        <Sources label={`${slots.length} 条结果`}>
           <div className="grid gap-3">
             {slots
               .slice(0, DISPLAY_CAP)
@@ -396,7 +382,7 @@ export default function Results({
               )}
           </div>
           <MoreNote total={slots.length} cap={DISPLAY_CAP} unit="门" />
-        </>
+        </Sources>
       ) : (
         <div className="py-9 text-center text-[15px] text-muted">
           没有命中课程。换个说法或放宽条件试试。

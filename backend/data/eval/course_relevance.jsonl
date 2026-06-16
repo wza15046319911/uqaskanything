@@ -1,0 +1,21 @@
+{"q": "跟机器学习相关的课", "topic": "机器学习", "semantic_query": "machine learning", "expect": "relevant", "codes": ["COMP4702", "COMP7703", "DATA7703"]}
+{"q": "数据科学相关的课程", "topic": "数据科学", "semantic_query": "data science", "expect": "relevant", "codes": ["DATA7001", "DATA7002"]}
+{"q": "跟金融相关的课", "topic": "金融", "semantic_query": "finance", "expect": "relevant", "codes": ["FINM7401", "FINM1415", "FINM2415"]}
+{"q": "网络安全相关的课", "topic": "网络安全", "semantic_query": "cyber security", "expect": "relevant", "codes": ["CYBR7001", "CYBR7003"]}
+{"q": "数据库相关的课程", "topic": "数据库", "semantic_query": "database", "expect": "relevant", "codes": ["INFS7901", "INFS7903"]}
+{"q": "人工智能相关的课", "topic": "人工智能", "semantic_query": "artificial intelligence", "expect": "relevant", "codes": ["COMP3702"]}
+{"q": "统计学相关的课", "topic": "统计学", "semantic_query": "statistics", "expect": "relevant", "codes": ["STAT3001", "STAT3006", "STAT3901"]}
+{"q": "软件工程相关的课", "topic": "软件工程", "semantic_query": "software engineering", "expect": "relevant", "codes": ["CSSE1001", "CSSE3012", "CSSE3200"]}
+{"q": "计算机网络相关的课", "topic": "计算机网络", "semantic_query": "computer networks", "expect": "relevant", "codes": ["COMS3200", "COMS6200"]}
+{"q": "算法相关的课程", "topic": "算法", "semantic_query": "algorithm", "expect": "relevant", "codes": ["COMP3506", "COMP4500", "COMP7505"]}
+{"q": "量子计算相关的课", "topic": "量子计算", "semantic_query": "quantum computing", "expect": "relevant", "codes": ["MATH7306"]}
+{"q": "机器人相关的课", "topic": "机器人", "semantic_query": "robotics", "expect": "relevant", "codes": ["METR4202"]}
+{"q": "生物信息学相关的课", "topic": "生物信息学", "semantic_query": "bioinformatics", "expect": "relevant", "codes": ["SCIE2100", "BINF7000", "BINF6000"]}
+{"q": "数字营销相关的课", "topic": "数字营销", "semantic_query": "digital marketing", "expect": "relevant", "codes": ["MKTG3506"]}
+{"q": "虚拟现实相关的课", "topic": "虚拟现实", "semantic_query": "virtual reality", "expect": "relevant", "codes": ["DECO7230", "DECO2300"]}
+{"q": "跟游戏开发相关的课", "topic": "游戏开发", "semantic_query": "game development", "expect": "no_strong_match"}
+{"q": "游戏设计相关的课", "topic": "游戏设计", "semantic_query": "game design", "expect": "no_strong_match"}
+{"q": "加密货币相关的课", "topic": "加密货币", "semantic_query": "cryptocurrency", "expect": "no_strong_match"}
+{"q": "动画制作相关的课", "topic": "动画制作", "semantic_query": "animation", "expect": "no_strong_match"}
+{"q": "时装设计相关的课", "topic": "时装设计", "semantic_query": "fashion design", "expect": "no_strong_match"}
+{"q": "烹饪相关的课", "topic": "烹饪", "semantic_query": "cooking", "expect": "no_strong_match"}

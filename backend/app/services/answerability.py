@@ -11,8 +11,12 @@ answerability.py — KB 答案可答性确定性门(student-facing 红线 3:refu
 只对英文实体做缺席判定的原因(已用 data/eval/kb_refuse.jsonl 实测,见 docs/
 rerank_answerability_findings.md):KB 语料 2521 chunk 几乎全英文,中文词天然全部缺席——
 对中文词做缺席判定会把**所有**中文真问题(密码 / 学生证 / 图书馆)误拒,踩穿红线。
-中文「半相关虚构」(火星 / 太空站,bi-encoder sim 又高)无确定性信号可分,交 min_sim
-阈值兜一部分、其余留给 P2 LLM gate;这里只做能 100% 保证不误拒的确定性判定。
+中文「半相关虚构」(火星 / 太空站,bi-encoder sim 又高)无确定性信号可分:answerable() 只做
+能 100% 保证不误拒的确定性判定,放行后再由 P2 的 llm_answerable()(LLM 分类门)兜中文虚构实体。
+
+P2 门(llm_answerable):确定性门放行后再过一次 LLM 分类(只判可答/不可答,不决定高风险事实,
+规则 12)。LLM 抖动/解析失败一律 fail-open(放行)——「误拒真问题」比「漏拒虚构」更伤,红线 3 的
+「误拒=0」优先;漏拒由调用方日志可见(规则 19)。KB_LLM_GATE=0 可关(离线/省调用)。
 
 词表 data/kb/kb_vocab.txt 由 build_kb_vocab 随 KB 重建产出。缺失则**抛错**,不静默当空集
 (规则 19:配置缺失要 fail loud,否则缺席判定恒为真会批量误拒)。
@@ -22,10 +26,13 @@ rerank_answerability_findings.md):KB 语料 2521 chunk 几乎全英文,中文词
     ok, reason = answerability.answerable(question, chunks)   # ok=False 表示应拒答
 """
 from __future__ import annotations
+import json
+import os
 import re
 from pathlib import Path
 
 from app.core.config import DATA_DIR
+from app.services import llm
 
 VOCAB_PATH = DATA_DIR / "kb" / "kb_vocab.txt"
 
@@ -130,3 +137,57 @@ def answerable(question: str, chunks: list[dict], vocab: set[str] | None = None)
         return False, f"英文实体缺席(全语料+召回片段均查无):{'、'.join(missing)}"
 
     return True, "ok"
+
+
+# ---------- P2:LLM 可答性门(确定性门放行后再判,补中文虚构实体)----------
+
+_LLM_GATE_PROMPT = """你是 UQ 学生问答系统的「可答性判定器」。系统已用向量检索从 UQ 官方知识库取到若干页面,
+现在要你判断:这些官方页面是否真的覆盖了学生问题问的【那个具体事物】。
+
+判 false(不可答)的唯一情形:问题问的实体/项目/设施/活动在 UQ **并不存在**,属虚构、玩笑或离谱内容
+(例:火星交换生、太空站实习、校内滑雪场、魔法学院、在宿舍养宠物龙)。这类即使检索到名字相近的
+通用页面(如通用申请页),也判 false——绝不能拿通用页给学生编一套。
+
+判 true(可答)的情形:问题问的是 UQ 真实存在的事务/服务/政策,且页面相关。包括交换生、海外学习、
+缴费、census date、改密码、VPN、图书馆借书、缓考、在读证明、奖学金、学生证、住宿、转学分、退费等——
+**这些都是真问题,必须判 true**,哪怕页面只是部分相关。判定与语言无关(中英文一视同仁)。
+
+只输出 JSON:{{"answerable": true 或 false, "reason": "简短中文理由"}}
+
+学生问题:{q}
+
+检索到的官方页面标题(按相关度):
+{titles}"""
+
+
+def llm_gate_enabled() -> bool:
+    """P2 LLM 门开关(默认开;KB_LLM_GATE=0 关闭,用于离线/省调用场景)。"""
+    return os.environ.get("KB_LLM_GATE", "1") != "0"
+
+
+def llm_answerable(question: str, chunks: list[dict]) -> tuple[bool, str]:
+    """P2:LLM 判定召回页面是否真覆盖问题(补确定性门兜不住的中文虚构实体)。
+
+    只做分类(规则 12:LLM 不决定高风险事实,只判可答/不可答)。门关或无 chunk 直接放行。
+    解析失败按放行处理(宁可漏拒也不误拒真问题,红线 3 的「误拒=0」优先;漏拒由调用方日志可见)。
+    LLM 调用本身的异常不在此吞——向上抛给调用方决定 fail-open。"""
+    if not llm_gate_enabled() or not chunks:
+        return True, "gate off / no chunk"
+    titles = "\n".join(
+        f"{i + 1}. {c.get('page_title') or c.get('title') or '(无标题)'}"
+        for i, c in enumerate(chunks))
+    raw = llm.call([{"role": "user",
+                     "content": _LLM_GATE_PROMPT.format(q=question, titles=titles)}],
+                   json_mode=True)
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", raw, re.S)
+        if not m:
+            return True, f"LLM 门返回非 JSON,放行:{raw[:60]!r}"
+        try:
+            obj = json.loads(m.group(0))
+        except json.JSONDecodeError:
+            return True, f"LLM 门返回非 JSON,放行:{raw[:60]!r}"
+    ok = bool(obj.get("answerable", True))
+    return ok, str(obj.get("reason", "") or "")

@@ -9,6 +9,7 @@ export interface Course {
   equiv_group?: string | null
   course_list?: string | null
   sim?: number | null
+  profile_url?: string | null
 }
 
 export interface ProgramFact {

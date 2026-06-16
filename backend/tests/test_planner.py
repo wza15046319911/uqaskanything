@@ -2,7 +2,12 @@
 
 覆盖 master/bachelor 当层级用,以及"Master of X"(program 名)不被误当层级。
 """
-from app.services.planner import _enforce_level_hint
+from app.services import planner
+from app.services.planner import (
+    _enforce_level_hint, _program_filter_where, _force_program_route,
+    _expand_program_abbr, _code_level_digits, _faculty_units,
+    _validate_coord_unit, _both_semesters_intent, _strip_semester_any,
+    _excluded_title_kw, plan)
 
 PG = "level='Postgraduate Coursework'"
 UG = "level='Undergraduate'"
@@ -35,3 +40,150 @@ def test_no_keyword_respects_llm_level_and_unchanged():
     assert _enforce_level_hint(UG, "honours 课") == UG
     # 无层级关键词不动 where
     assert _enforce_level_hint("has_exam=false", "没考试的课") == "has_exam=false"
+
+
+def test_program_filter_where_rebuilds_structured_conditions():
+    # 有/无考试确定性映射(否定优先)
+    assert _program_filter_where("没有考试的课") == "has_exam=false"
+    assert _program_filter_where("有考试的课") == "has_exam=true"
+    # 学分 + 考试叠加
+    assert _program_filter_where("2学分没考试的课") == "has_exam=false AND units=2"
+    # 排除课型
+    assert _program_filter_where("不含thesis和placement的课") == \
+        "course_type NOT IN ('placement','thesis')"
+    # 有/无小组评估确定性映射(否定优先,中英关键词)
+    assert _program_filter_where("没有小组作业的课") == "group_status='none'"
+    assert _program_filter_where("没有 group project 的课") == "group_status='none'"
+    assert _program_filter_where("有 groupwork 的课") == "group_status='has'"
+    # 考试 + 小组叠加
+    assert _program_filter_where("没考试也没有小组作业的课") == \
+        "has_exam=false AND group_status='none'"
+    # 层级词经 _enforce_level_hint 注入
+    assert _program_filter_where("研究生没考试的课") == f"has_exam=false AND {PG}"
+    # 无任何可映射维度 -> 空串(退化为普通 program_to_courses)
+    assert _program_filter_where("Bachelor of Commerce 的必修课") == ""
+
+
+def test_force_program_route_combined_program_filter():
+    # 学位名 + 结构化筛选意图 -> program_to_courses(开启「专业 + 筛选」组合查询)
+    assert _force_program_route("bachelor of commerce 没有考试的课") == \
+        ("program_to_courses", "", "bachelor of commerce")
+    # 学位名 + 课型/要求词仍走老路径
+    assert _force_program_route("Bachelor of Computer Science 要修哪些课") == \
+        ("program_to_courses", "", "Bachelor of Computer Science")
+    # 只有筛选、无学位名 -> 不强制 program(仍是普通 filter)
+    assert _force_program_route("没有考试的课") is None
+
+
+def test_expand_program_abbr():
+    # 学科缩写整词展开,使 ILIKE 命中库里全称(库 title 是 Computer Science 而非 CS)
+    assert _expand_program_abbr("master of CS") == "master of computer science"
+    assert _expand_program_abbr("Master of IT") == "Master of information technology"
+    assert _expand_program_abbr("bachelor of EE") == "bachelor of electrical engineering"
+    # 已是全称/无缩写 -> 原样;空串安全
+    assert _expand_program_abbr("Bachelor of Computer Science") == "Bachelor of Computer Science"
+    assert _expand_program_abbr("") == ""
+    # 整词边界:不切单词内部的字母组合(Science 里的子串不动)
+    assert _expand_program_abbr("Master of Data Science") == "Master of Data Science"
+
+
+def test_low_burden_short_circuits_before_llm():
+    # 「躺平/水课」确定性快路径:先于 LLM 短路(给了 schema_doc 则不连 DB/不调模型)
+    # -> 客观负担过滤(无考试+无hurdle+排除项目课)+ 按考核项数升序,绝不靠 LLM 判难度。
+    p = plan("能躺平的课", schema_doc="x")
+    assert p["mode"] == "filter" and p["order"] == "assessments_asc"
+    assert "has_exam=false" in p["where"] and "has_hurdle=false" in p["where"]
+    assert "thesis" in p["where"] and "research" in p["where"] and "placement" in p["where"]
+    # 层级词确定性合并
+    p2 = plan("轻松好过的研究生课", schema_doc="x")
+    assert "Postgraduate Coursework" in p2["where"] and p2["order"] == "assessments_asc"
+    # 其它低负担同义触发词
+    for q in ["作业少的课", "水课推荐", "考核少的课"]:
+        assert plan(q, schema_doc="x")["order"] == "assessments_asc", q
+    # 「assessment/考核 组成简单」锚定触发,落到同一客观排序快路径(不再误拒成 empty)
+    for q in ["assessment组成最简单的课", "考核最简单的课", "考核组成简单的课"]:
+        p3 = plan(q, schema_doc="x")
+        assert p3["mode"] == "filter" and p3["order"] == "assessments_asc", q
+        assert "has_exam=false" in p3["where"] and "has_hurdle=false" in p3["where"], q
+
+
+def test_code_level_digit_extraction():
+    # 「按 code 首位数字筛年级」:digit + 开头/字头/Xxxx/英文 starting with
+    assert _code_level_digits("course code为1或3开头的") == ["1", "3"]
+    assert _code_level_digits("3字头的课") == ["3"]
+    assert _code_level_digits("starting with 2") == ["2"]
+    assert _code_level_digits("1xxx 的课") == ["1"]
+    assert _code_level_digits("2、3 打头的研究生课") == ["2", "3"]
+    # 前置写法:数字在「开头/字头/首位」之后(开头为X / 开头是X / 首位为X)
+    assert _code_level_digits("course code开头为1或2或3的课") == ["1", "2", "3"]
+    assert _code_level_digits("开头是2或3的课") == ["2", "3"]
+    assert _code_level_digits("首位为3的课") == ["3"]
+    # 无 code 级别意图 -> 空;尤其 'semester 1' 的 1 不被误当级别(无开头/字头绑定)
+    assert _code_level_digits("没有考试的课") == []
+    assert _code_level_digits("semester 1 的课") == []
+
+
+def test_faculty_units_mapping():
+    # 学科 -> coordinating_unit 受控映射(确定性,用于把语义召回限定回本学院)
+    eecs = ["Elec Engineering & Comp Science School"]
+    assert _faculty_units("IT有哪些课没有考试") == eecs
+    assert _faculty_units("软件相关的课") == eecs
+    assert _faculty_units("electrical engineering 的课") == eecs
+    assert _faculty_units("商科有哪些没考试的课") == ["Business School", "Economics School"]
+    # AI/ML/数据 跨数学统计,不锁学院(保持宽召回);无学科词也不锁
+    assert _faculty_units("机器学习的课") == []
+    assert _faculty_units("没有考试的课") == []
+
+
+def test_both_semesters_intent():
+    # S1、S2 同时出现 + 「都/both」量词 -> 跨学期合取意图
+    assert _both_semesters_intent("S1和S2都没有期中考试和期末考试的课") is True
+    assert _both_semesters_intent("S1 S2 两个学期都开的课") is True
+    assert _both_semesters_intent("courses with no exam in both S1 and S2") is True
+    # 缺量词(并集语义,仍走普通 IN)/ 只点一个学期 -> 非合取
+    assert _both_semesters_intent("S1和S2的课") is False
+    assert _both_semesters_intent("S2没考试的课") is False
+    assert _both_semesters_intent("没有考试的课") is False
+
+
+def test_strip_semester_any():
+    # 剥掉 IN 写法(尾部连接词一并清),保留其余结构化条件
+    assert _strip_semester_any("semester IN ('S1','S2') AND midterm_status='none' AND has_exam=false") \
+        == "midterm_status='none' AND has_exam=false"
+    # 剥掉等值写法(前部连接词一并清)
+    assert _strip_semester_any("has_exam=false AND semester='S1'") == "has_exam=false"
+    # 仅 semester 条件 -> 清成空串(此时由 both-semester 路径固定补 IN)
+    assert _strip_semester_any("semester IN ('S1','S2')") == ""
+    # 无 semester 条件 -> 原样
+    assert _strip_semester_any("has_exam=false") == "has_exam=false"
+
+
+def test_excluded_title_kw():
+    # 排除触发词 + 性质词 -> 标题受控关键词(course_type 列分不出的 capstone/project/review…)
+    kw = _excluded_title_kw(
+        "S1和S2都没有考试的课,不要thesis, project, proposal, "
+        "industry placement, research, literature review, review, capstone")
+    assert "capstone" in kw and "project" in kw and "proposal" in kw
+    assert "review" in kw and "literature review" in kw and "research" in kw
+    assert "placement" in kw  # industry placement -> placement/internship/practicum
+    # 无排除触发词 -> 空(避免把主题词当排除)
+    assert _excluded_title_kw("有capstone和project的课") == []
+    # research 不误伤"研究生";review 词边界(preview 不算)
+    assert _excluded_title_kw("不要research的研究生课") == ["research"]
+    assert _excluded_title_kw("排除capstone") == ["capstone"]
+
+
+def test_validate_coord_unit_accepts_only_real_enum(monkeypatch):
+    # Option C:LLM 选出的学院串必须逐字命中真实枚举才放行,否则丢弃(防自由生成的拼写→精确IN命中0)
+    monkeypatch.setitem(planner._ENUM_CACHE, "coordinating_unit",
+                        {"elec engineering & comp science school", "business school"})
+    # 逐字命中(大小写不敏感)-> 原样放行
+    assert _validate_coord_unit("Elec Engineering & Comp Science School") == \
+        "Elec Engineering & Comp Science School"
+    assert _validate_coord_unit("business school") == "business school"
+    # LLM 自由编的、看似合理但 DB 没有的串 -> 丢弃成空(不放行)
+    assert _validate_coord_unit("EECS School") == ""
+    assert _validate_coord_unit("Electrical Engineering & Computer Science School") == ""
+    # 空/None 安全
+    assert _validate_coord_unit("") == ""
+    assert _validate_coord_unit(None) == ""
