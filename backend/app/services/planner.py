@@ -134,23 +134,19 @@ _EXCLUDE_TITLE_KW = [
 
 # 学院/学科分组 -> coordinating_unit 受控映射(确定性查表,文本列不进 LLM where)。
 # 这是策划好的近似分组,可按需增删;走参数化 SQL,注入安全。
+# 注:计算机/CS/IT/软件 等学科词「不」在此硬锁学院。CS 课大量跨学院挂靠(COSC 在
+# Mathematics & Physics、CYBR 在 Business、DATA 在 Historical & Philosophical Inq 等),
+# 硬锁 EECS 会误杀这些课(如「计算机相关、没有hurdle的研究生课」会返回空)。计算机类学科
+# 一律靠语义召回处理;只有用户「显式点名学院」时才经 Option C(_validate_coord_unit)硬锁。
 _FACULTY_UNITS = {
     "business": ["Business School", "Economics School"],
     "arts": ["Communication & Arts School", "Languages & Cultures School",
              "Historical & Philosophical Inq", "Music School",
              "Humanities, Arts and Social Sciences", "Politic Sc & Internat Studies"],
-    # CS/IT/EE/AI/ML 等计算机类:全聚在 EECS School,用它把「information technology」这类
-    # 宽语义召回(会粘上 Teaching Technologies / Language and Technology)限定回本学院。
-    "computing": ["Elec Engineering & Comp Science School"],
 }
 _FACULTY_KW = [
     (re.compile(r"商科|商学院?|business|commerce|econ(?:omic)?", re.I), "business"),
     (re.compile(r"文科|人文|humanities|liberal\s*arts|(?<![A-Za-z])arts(?![A-Za-z])", re.I), "arts"),
-    # 只收明确聚在 EECS 单一学院的学科(CS/IT/EE/软件);AI/ML/数据 跨数学统计 EECS,
-    # 不锁学院(否则漏 STAT/MATH 的相关课),保持宽召回。
-    (re.compile(r"(?<![A-Za-z])(cs|it|ee)(?![A-Za-z])|计算机|软件(?:工程)?|信息技术|"
-                r"电气工程|电子工程|computer\s*science|software(?:\s*engineering)?|"
-                r"information\s*technology|electrical\s*engineering", re.I), "computing"),
 ]
 
 MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail")
@@ -726,8 +722,9 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
     out["exclude_title"] = _excluded_title_kw(question)
     # 确定性抽「按 code 首位数字筛年级」(code 不进 where,qa 层 Python 后过滤);非课程模式忽略。
     out["code_levels"] = _code_level_digits(question)
-    # 学科 -> coordinating_unit 受控映射(确定性查表,走参数化 SQL);命中则把语义召回限定回本学院,
-    # 排除跨学院噪声(如「IT」粘上 Teaching Technologies)。非课程模式(program/kb)由 qa 忽略。
+    # 学科 -> coordinating_unit 受控映射(确定性查表,走参数化 SQL);命中则把语义召回限定回本学院。
+    # 只收聚在单一学院、跨学院挂靠少的学科(商科/文科);计算机类不在此(见 _FACULTY_UNITS 注)。
+    # 非课程模式(program/kb)由 qa 忽略。
     out["coord_units"] = _faculty_units(question)
     # Option C:LLM 从真实学院清单选出的 coord_unit(逐字命中真实枚举才放行)并入范围,
     # 覆盖确定性查表没收的院名/缩写(如 EECS)。两路取并集,确定性查表仍优先保底。
@@ -824,6 +821,14 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
     # 范围交给 coord_units 走纯 filter、清掉 semantic_query —— 否则 LLM 易把院名(尤其 EECS 这类缩写,
     # bge-m3 几乎 embed 不出)当主题走 hybrid,全被 min_sim 滤成 0。有真主题(机器学习…)才保留院内语义。
     if out["coord_units"] and out["where"] and not topic:
+        out["semantic_query"] = ""
+        out["mode"] = "filter"
+
+    # 反向守卫(对称于下面「兜底 1」):无真实主题词(_has_topic=False)却已有结构化 where,
+    # 但被 LLM 误判成 semantic/hybrid——常见是把「code 开头为 X」这类结构化约束当主题塞进
+    # semantic_query。code 前缀已由 code_levels 确定性处理,这里清空伪 semantic_query、降回 filter,
+    # 否则纯筛选查询会被向量 min_sim 门滤成寥寥几条(LLM 非确定性偶发踩到,结果时多时少)。
+    if not topic and out["where"] and out["mode"] in ("semantic", "hybrid"):
         out["semantic_query"] = ""
         out["mode"] = "filter"
 

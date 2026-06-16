@@ -21,6 +21,17 @@ export interface ProgramFact {
   plan_subtype?: string | null
 }
 
+// program_to_courses / permit 时 program_facts 是单个对象(course_to_programs 是 ProgramFact[])
+export interface ProgramAnswer {
+  program: string
+  program_id?: string
+  requirement?: string
+  course?: string
+  excluded?: boolean
+  in_program?: boolean
+  filter?: string
+}
+
 export interface KbChunk {
   url: string
   page_title?: string | null
@@ -56,7 +67,7 @@ export interface AskResult {
   answer?: string | null
   courses?: Course[]
   // course_to_programs 时是数组;permit 等场景是对象;空时 null
-  program_facts?: ProgramFact[] | Record<string, unknown> | null
+  program_facts?: ProgramFact[] | ProgramAnswer | null
   chunks?: KbChunk[]
   course?: CourseDetail | null
   meta?: string
@@ -77,7 +88,7 @@ export interface AskMeta {
   mode?: AskMode
   meta?: string
   courses?: Course[]
-  program_facts?: ProgramFact[] | Record<string, unknown> | null
+  program_facts?: ProgramFact[] | ProgramAnswer | null
   chunks?: KbChunk[]
   course?: CourseDetail | null
 }

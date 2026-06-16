@@ -1498,6 +1498,94 @@ class PlanSimulator:
             walk(rule)
         return codes
 
+    def _subtree_codes(self, rule_or_plan: dict) -> list[str]:
+        """某规则/分支子树下全部 course+equivalence 课码,**无条件下钻所有 plan 分支**
+        (不依赖已选 plan;去重保序由调用方做)。供 structure_overview 枚举整结构用。"""
+        out: list[str] = []
+        for it in rule_or_plan.get("items", []):
+            k = it.get("kind")
+            if k in ("course", "equivalence"):
+                out += self._item_codes(it)
+            elif k == "plan" and not self._is_self_program(it):
+                for sr in it.get("rules", []):
+                    out += self._subtree_codes(sr)
+        return out
+
+    def structure_overview(self) -> dict:
+        """确定性枚举整个 program 结构(不依赖已选 plan、不调 LLM),按规则与方向(major/field)
+        分组列出课组。供问答「某专业有哪些选修/核心课」按方向完整列出——覆盖 major 门控的课
+        (扁平 program_course 的直属查询只含 via_plan='' 的课,会漏掉这些)。
+
+        返回 {program_id, title, groups:[...]},每组:
+          {ref, title, kind('core'|'elective'|'open'), select_type, plan_code, plan_name,
+           subtype, courses:[code...], open_scope}。
+        kind:开放规则(E/F)-> 'open';否则按**官方区块标题**判(标题含 elective -> 'elective',
+        含 core/compulsory -> 'core';标题无明确词时退回 select_type:'all'->'core'、'select'->
+        'elective')。标题优先于 select_type——数据里偶有把 'X Elective Courses' 标成 select_type='all'
+        的(如 2559 Cyber),按学生在官方页看到的标题归类才不误导(规则14:两信号冲突时取更权威的)。
+        含子规则的父规则(如 2559 C、5522 A/B)只作占位,其子规则各自成组(已在 self.rules 内);
+        plan 分支(major/field)按其内部子规则逐组展开(每组带 plan_name 前缀),
+        kind 仍由各子规则的 select_type 决定(major 自身的必修/选修得以区分)。
+
+        去重约定:major 子规则里指向「程序通用选修池」的那条(标题与某顶层规则同名,如各 major 都
+        引用的 'BCompSc Program Elective Courses')跳过——它对所有方向相同,已由对应顶层规则(如
+        开放规则 E)覆盖,逐 major 重复列出只是噪音。"""
+        def dedup(seq: list[str]) -> list[str]:
+            seen: set[str] = set()
+            out: list[str] = []
+            for c in seq:
+                if c and c not in seen:
+                    seen.add(c)
+                    out.append(c)
+            return out
+
+        toplevel_titles = {r.get("title") for r in self.rules}
+        groups: list[dict] = []
+
+        def kind_of(title: str | None, st: str | None, open_rule: bool) -> str:
+            if open_rule:
+                return "open"
+            t = (title or "").lower()
+            has_elec = "elective" in t
+            has_core = "core" in t or "compulsory" in t
+            if has_elec and not has_core:
+                return "elective"
+            if has_core and not has_elec:
+                return "core"
+            return "core" if st == "all" else "elective"   # 标题无明确词时退回 select_type
+
+        def emit(rule: dict, plan_code: str | None, plan_name: str | None,
+                 subtype: str | None) -> None:
+            ref = rule.get("ref")
+            st = rule.get("select_type")
+            direct = dedup(self._direct_codes(rule))
+            open_rule = self._open_rule(rule)
+            if direct or open_rule:
+                groups.append({
+                    "ref": f"{plan_code}/{ref}" if plan_code else ref,
+                    "title": rule.get("title"),
+                    "kind": kind_of(rule.get("title"), st, open_rule),
+                    "select_type": st, "plan_code": plan_code, "plan_name": plan_name,
+                    "subtype": subtype, "courses": direct,
+                    "open_scope": (("any" if any(it.get("kind") == "wildcard"
+                                                 for it in rule.get("items", []))
+                                    else "program") if open_rule else None),
+                })
+            for it in rule.get("items", []):
+                if (it.get("kind") == "plan" and not self._is_self_program(it)
+                        and it.get("rules")):
+                    for sr in it["rules"]:
+                        # major 子规则中复用顶层「程序通用选修池」标题的那条:跳过(去重,见 docstring)
+                        if sr.get("title") in toplevel_titles:
+                            continue
+                        emit(sr, it.get("code"), it.get("name"), it.get("subtype"))
+
+        for rule in self.rules:
+            if rule.get("children_refs"):            # 父占位:子规则各自成组,跳过
+                continue
+            emit(rule, None, None, None)
+        return {"program_id": self.program_id, "title": self.title, "groups": groups}
+
     def prereq_report(self, conn) -> dict:
         """先修覆盖缺口(显式报告,不静默):按 DB 真实状态分类每个引用码。
 

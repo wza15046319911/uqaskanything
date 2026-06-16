@@ -206,11 +206,11 @@ export default function AskPage() {
   if (empty) {
     return (
       <div className="mx-auto flex min-h-[calc(100dvh-64px)] w-full max-w-2xl flex-col justify-center px-5 pb-24">
-        <h1 className="mb-7 text-center text-[clamp(26px,5vw,36px)] leading-tight font-semibold tracking-tight">
+        <h1 className="mb-20 text-center text-[clamp(26px,5vw,36px)] leading-tight font-semibold tracking-tight">
           有什么想问 UQ 的?
         </h1>
         <Composer value={q} onChange={setQ} onSend={() => ask()} busy={busy} />
-        <ExampleChips onPick={(t) => ask(t)} className="mt-4 justify-center" />
+        <ExampleChips onPick={(t) => ask(t)} className="mt-10" />
       </div>
     )
   }

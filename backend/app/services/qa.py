@@ -22,7 +22,7 @@ import argparse
 
 import psycopg
 
-from app.services import planner, retrieval, program_lookup, answer, answerability
+from app.services import planner, retrieval, program_lookup, answer, answerability, simulator
 
 from app.core.config import DSN
 ANSWER_CAP = 20      # 喂给答案模型的最多课程数(过多无意义且拉长 prompt)
@@ -151,6 +151,89 @@ def _ans_p2c(title: str, req: str | None, courses: list) -> str:
         seg.append(f"可{word}项:" + "、".join(" 或 ".join(s["codes"]) for s in groups))
     grp_note = f"(其中 {len(groups)} 门{word})" if groups else ""
     return f"{title} 的{REQ_LABEL.get(req, '')}课共 {n} 门{grp_note}:{';'.join(seg)}。"
+
+
+def _titles_for(conn, codes) -> dict:
+    """批量取课程标题(DISTINCT ON code;无 offering 记录的码不在结果里)。"""
+    codes = list(dict.fromkeys(codes))
+    if not codes:
+        return {}
+    rows = conn.execute(
+        "SELECT DISTINCT ON (code) code, title FROM courses WHERE code = ANY(%s) ORDER BY code",
+        (codes,)).fetchall()
+    return {r[0]: r[1] for r in rows}
+
+
+def _structure_or_none(conn, program_id: str):
+    """取 program 的结构化枚举(simulator.structure_overview);构建失败不抛断主流程,
+    退回 None 让上游用扁平枚举(规则19:失败显式记日志,不静默装成功)。"""
+    try:
+        return simulator.PlanSimulator(conn, program_id).structure_overview()
+    except Exception as e:
+        print(f"[qa] structure_overview 失败,退回扁平枚举: {type(e).__name__}: {e}")
+        return None
+
+
+# req -> 纳入哪些课组 kind(elective 含开放规则;core 只 core;None 全列)
+_REQ_KINDS = {"core": {"core"}, "elective": {"elective", "open"}}
+
+
+def _fmt_group(g: dict, titles: dict, show: int = 8) -> str:
+    """一个课组的课列表文案:开放规则给范围说明,否则列前 show 门(带课名)+ 余数。"""
+    if g["open_scope"]:
+        return "程序课表内任选" if g["open_scope"] == "program" else "全校任意课程"
+    cs = g["courses"]
+    parts = [f"{c}({titles[c]})" if titles.get(c) else c for c in cs[:show]]
+    tail = f" 等 {len(cs)} 门" if len(cs) > show else ""
+    return "、".join(parts) + tail
+
+
+def _ans_p2c_structured(title: str, req: str | None, overview: dict, titles: dict) -> str:
+    """带方向结构专业的确定性回答:按官方区块 + 方向(major/field)分组列出,零虚构、不走 LLM。"""
+    kinds = _REQ_KINDS.get(req, {"core", "elective", "open"})
+    groups = [g for g in overview["groups"] if g["kind"] in kinds]
+    if not groups:
+        return f"未找到 {title} 的{REQ_LABEL.get(req, '')}课程。"
+    codes = {c for g in groups for c in g["courses"]}
+    scope = REQ_LABEL.get(req, "全部")
+    lines = [f"{title} 的{scope}课按官方区块分组(共 {len(codes)} 门可枚举,"
+             f"另含开放选修池;选定方向后可用选课模拟器看完整要求):"]
+    general = [g for g in groups if not g["plan_name"]]
+    for g in general:
+        cnt = f"({len(g['courses'])} 门)" if g["courses"] else ""
+        lines.append(f"· {g['title']}{cnt}:{_fmt_group(g, titles)}")
+    by_plan: dict[str, list] = {}
+    order: list[str] = []
+    for g in groups:
+        if g["plan_name"]:
+            if g["plan_name"] not in by_plan:
+                by_plan[g["plan_name"]] = []
+                order.append(g["plan_name"])
+            by_plan[g["plan_name"]].append(g)
+    for pn in order:
+        lines.append(f"【{pn} 方向】")
+        for g in by_plan[pn]:
+            lines.append(f"· {g['title']}({len(g['courses'])} 门):{_fmt_group(g, titles)}")
+    return "\n".join(lines)
+
+
+def _engine_p2c(conn, title: str, req: str | None, overview: dict) -> tuple[list, str]:
+    """structure_overview -> (courses 卡片列表, 分组文案)。courses 去重并带 requirement_type/区块名,
+    覆盖 major 门控的课。开放规则无可枚举码,只进文案不进卡片。"""
+    kinds = _REQ_KINDS.get(req, {"core", "elective", "open"})
+    groups = [g for g in overview["groups"] if g["kind"] in kinds]
+    code_grp: dict[str, dict] = {}
+    order: list[str] = []
+    for g in groups:
+        for c in g["courses"]:
+            if c not in code_grp:
+                code_grp[c] = g
+                order.append(c)
+    titles = _titles_for(conn, order)
+    courses = [{"code": c, "title": titles.get(c),
+                "requirement_type": "core" if code_grp[c]["kind"] == "core" else "elective",
+                "course_list": code_grp[c]["title"]} for c in order]
+    return courses, _ans_p2c_structured(title, req, overview, titles)
 
 
 def _ans_program_filter(title: str, courses: list) -> str:
@@ -302,7 +385,7 @@ def _retrieve(conn, question: str) -> dict:
                 excluded = program_lookup.is_excluded(conn, pid, code)
                 owns = [r for r in program_lookup.programs_for_course(conn, code)
                         if r["program_id"] == pid]
-                program_facts = {"program": title, "course": code,
+                program_facts = {"program": title, "program_id": pid, "course": code,
                                  "excluded": excluded, "in_program": bool(owns)}
                 meta = f"{code} @ program='{title}' 能否修(禁课={excluded})"
                 prog_answer = _ans_permit(code, title, excluded, owns)
@@ -332,22 +415,35 @@ def _retrieve(conn, question: str) -> dict:
                                 "meta": f"非法 where 被安全网拦截:{e}", "courses": [],
                                 "program_facts": None, "prog_answer": None, "chunks": []}
                     courses = [c for c in filtered if c["code"] in prog_codes]
-                    program_facts = {"program": title, "requirement": req or "all",
-                                     "filter": p["where"]}
+                    program_facts = {"program": title, "program_id": pid,
+                                     "requirement": req or "all", "filter": p["where"]}
                     meta = f"program='{title}'{pick} ∩ WHERE {p['where']} 命中 {len(courses)} 门"
                     prog_answer = _ans_program_filter(title, courses)
                 else:
-                    program_facts = {"program": title, "requirement": req or "all"}
-                    meta = f"program='{title}'{pick} 的{REQ_LABEL.get(req, '')}课程"
-                    prog_answer = _ans_p2c(title, req, courses)
-                    # B: 该专业还有 plan 层(major/方向)核心课时补提示(direct 查询不展示这些)
-                    if req != "elective" and program_lookup.has_plan_level_core(conn, pid):
-                        prog_answer += " 注:该专业含 major/方向,其核心课需选定方向后确定,可用选课模拟器查看。"
-                    # 禁课标注:该专业明确不计学分的课
+                    # 带方向结构的专业(有 major/field)走 simulator 规则引擎按方向完整枚举,覆盖
+                    # major 门控的课(扁平 program_course 只有 via_plan='' 直属课会漏);无方向结构
+                    # 的专业(如 5522/5519)维持扁平枚举(其直属课表已完整)。引擎失败则退回扁平。
+                    ov = _structure_or_none(conn, pid)
+                    if ov and any(g["plan_name"] for g in ov["groups"]):
+                        courses, prog_answer = _engine_p2c(conn, title, req, ov)
+                        program_facts = {"program": title, "program_id": pid,
+                                         "requirement": req or "all", "structured": True}
+                        meta = (f"program='{title}'{pick} 结构化枚举(按方向),"
+                                f"{len(courses)} 门可枚举")
+                    else:
+                        program_facts = {"program": title, "program_id": pid,
+                                         "requirement": req or "all"}
+                        meta = f"program='{title}'{pick} 的{REQ_LABEL.get(req, '')}课程"
+                        prog_answer = _ans_p2c(title, req, courses)
+                        # B: 该专业还有 plan 层(major/方向)核心课时补提示(direct 查询不展示这些)
+                        if req != "elective" and program_lookup.has_plan_level_core(conn, pid):
+                            prog_answer += " 注:该专业含 major/方向,其核心课需选定方向后确定,可用选课模拟器查看。"
+                    # 禁课标注:该专业明确不计学分的课(两路共用;结构化多行答案用换行分隔)
                     ex = program_lookup.excluded_courses(conn, pid)
                     if ex:
                         tail = f" 等 {len(ex)} 门" if len(ex) > 8 else ""
-                        prog_answer += f" 该专业禁修(不计学分):{'、'.join(ex[:8])}{tail}。"
+                        sep = "\n" if "\n" in prog_answer else " "
+                        prog_answer += f"{sep}该专业禁修(不计学分):{'、'.join(ex[:8])}{tail}。"
             else:
                 name = p.get("program_name") or ""
                 meta = f"未找到 program '{name}'"

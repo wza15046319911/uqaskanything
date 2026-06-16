@@ -282,3 +282,42 @@ def test_picker_nested_subrules(conn):
     assert "A.E" in st and st["A.E"]["child_of"] == "A"
     assert "A.E.1" in st and st["A.E.1"]["child_of"] == "A.E"
     assert "A.E.1" in (st["A.E"].get("children_refs") or [])
+
+
+# ---------- structure_overview(供问答按方向完整枚举选修) ----------
+def test_structure_overview_directions_2559(sim):
+    ov = sim.structure_overview()
+    groups = ov["groups"]
+    plan_names = {g["plan_name"] for g in groups if g["plan_name"]}
+    assert plan_names == {"Artificial Intelligence", "Cyber Security",
+                          "Data Science", "Programming Theory"}, "应按 4 个 major 方向分组"
+    core = next(g for g in groups if g["title"] == "BCompSc Core Courses")
+    assert core["kind"] == "core" and core["plan_name"] is None
+    # 标题含 Elective 但 select_type='all' 的 Cyber 选修组,按标题归 elective(规则14:标题更权威)
+    cyber_elec = next(g for g in groups if g["title"] == "Cyber Security Elective Courses")
+    assert cyber_elec["kind"] == "elective"
+    # 每个 major 不重复列「程序通用选修池」(子规则标题与顶层 E 同名的已跳过)
+    assert all(g["title"] != "BCompSc Program Elective Courses"
+               for g in groups if g["plan_name"]), "major 不应重复列程序通用选修池"
+    # 开放规则(E/F)无可枚举码但仍列出,带 scope 标注
+    opens = [g for g in groups if g["kind"] == "open"]
+    assert opens and all(g["courses"] == [] and g["open_scope"] in ("program", "any")
+                         for g in opens)
+
+
+def test_structure_overview_covers_major_gated_electives(conn):
+    """结构化枚举的选修池应是扁平直属(via_plan='')选修的真超集——多出的正是 major 门控选修。"""
+    from app.services import program_lookup as pl
+    ov = PlanSimulator(conn, "2559").structure_overview()
+    struct_elec = {c for g in ov["groups"] if g["kind"] == "elective" for c in g["courses"]}
+    flat = {r["course_code"] for r in pl.courses_for_program(conn, "2559", "elective",
+                                                             direct_only=True)}
+    assert flat - struct_elec == set(), "扁平直属选修应被结构化枚举完全覆盖"
+    assert struct_elec - flat, "结构化枚举应多出 major 门控选修(扁平 via_plan='' 查不到)"
+
+
+def test_structure_overview_no_direction_5522(conn):
+    ov = PlanSimulator(conn, "5522").structure_overview()
+    assert ov["groups"], "5522 应有课组"
+    assert all(g["plan_name"] is None for g in ov["groups"]), \
+        "5522 无 major/方向结构,不应有方向分组(QA 据此保留扁平枚举)"

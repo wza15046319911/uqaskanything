@@ -72,6 +72,9 @@ def main() -> None:
             }
             if "reference" in row:
                 sample["reference"] = row["reference"]
+            for k in ("tier", "refuse", "broad"):   # 透传题面标注,供下游分层 / 拒答判定
+                if k in row:
+                    sample[k] = row[k]
             if not ctxs:
                 skipped.append(f"{q!r} (mode={res.get('mode')}: 无检索上下文)")
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")

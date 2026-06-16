@@ -14,7 +14,7 @@ LLM 只在这个固定候选集内排序和说明,永远不能引入集合外的
 from __future__ import annotations
 import re
 
-from app.services import answer, llm, retrieval
+from app.services import answer, llm, retrieval, planner
 from app.services.simulator import PlanSimulator
 
 MAX_CANDIDATES = 8
@@ -24,8 +24,36 @@ MIN_SIM_RETRY = 0.30
 SYSTEM = (
     "你是 UQ 选课助手。只能从给定候选课程里挑选和排序,绝不能提到候选之外的课程码。"
     "用简体中文,按推荐度排序,每门一行:课程码 课名 —— 一句话理由(贴合学生目标)。"
+    "考核事实(有无考试/小组等)以系统给定为准,绝不臆测或编造;不确定就不要提该属性。"
     "最多推荐 5 门。没有合适的就说明原因。"
 )
+
+
+def _goal_constraint_desc(goal: str) -> str:
+    """把目标里确定性识别到的结构化约束(有无考试/小组/层级/学分/排除课型)拼成中文描述,
+    供 prompt 告知 LLM「候选已据实满足这些条件」。复用 planner 的提取器(规则15:不重造)。"""
+    parts: list[str] = []
+    ex = planner._exam_intent(goal)
+    if ex is False:
+        parts.append("无考试")
+    elif ex is True:
+        parts.append("有考试")
+    gr = planner._group_intent(goal)
+    if gr is False:
+        parts.append("无小组评估")
+    elif gr is True:
+        parts.append("有小组评估")
+    for rx, val in planner._LEVEL_KW:
+        if rx.search(goal):
+            parts.append("研究生课" if val.startswith("Post") else "本科课")
+            break
+    mu = planner.UNITS_RE.search(goal)
+    if mu:
+        parts.append(f"{mu.group(1)} 学分")
+    types = planner._excluded_types(goal)
+    if types:
+        parts.append("不含 " + "/".join(types))
+    return "、".join(parts)
 
 
 def _legal_target(sim, st: dict, prog_list: set, enum_ref: dict, code: str) -> str | None:
@@ -79,7 +107,19 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
                 "available_count": 0, "unreachable_count": len(unreachable),
                 "unreachable_codes": unreachable, "note": "可选池为空,未调用 LLM"}
 
-    rows = retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM)
+    # 确定性识别目标里的结构化约束(有无考试/小组/学分/层级/排除课型),复用 planner 的受控
+    # where 生成器。红线1/规则12:这类是结构化事实,绝不让 LLM 猜——它会把「像项目课」的课
+    # 当成「没考试」推荐(如曾把有考试的 RELN1000 说成考试少)。识别到约束就在候选池上确定性过滤。
+    where = planner._program_filter_where(goal)
+    has_topic = planner._has_topic(goal)
+    valid_codes: set | None = None
+    if where:
+        try:
+            valid_codes = {r["code"] for r in retrieval.filter_search(conn, where)}
+        except ValueError:                    # where 受控生成本不该非法;兜底不阻断,记日志
+            print(f"[sim_advise] 结构化 where 被安全网拦截,降级为不过滤: {where!r}")
+            where = ""
+    constraint = _goal_constraint_desc(goal)
     cands: list[dict] = []
 
     def collect(rows):
@@ -87,6 +127,8 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
             code = r["code"]
             if code in sim.selected or code in sim.excluded:
                 continue
+            if valid_codes is not None and code not in valid_codes:
+                continue                       # 确定性过滤:不满足结构化约束的课一律剔除
             if any(c["code"] == code for c in cands):
                 continue
             ref = _legal_target(sim, st, prog_list, enum_ref, code)
@@ -99,9 +141,14 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
             if len(cands) >= MAX_CANDIDATES:
                 return
 
-    collect(rows)
-    if len(cands) < 3:                        # 召回不足:降相似度地板重试一次
-        collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM_RETRY))
+    # 候选来源:有主题(或没有结构化约束)走语义召回 + 上面的确定性过滤;纯结构化目标(无主题,
+    # 如「我想选没考试的课」)直接走确定性 filter_search 取真满足条件的池,不靠语义猜。
+    if has_topic or not where:
+        collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM))
+        if len(cands) < 3:                    # 召回不足:降相似度地板重试一次(仅语义路径)
+            collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM_RETRY))
+    else:
+        collect(retrieval.filter_search(conn, where))
 
     out = {"goal": goal, "candidates": cands,
            "available_count": len(enum_ref),
@@ -115,10 +162,16 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
 
     facts = "\n".join(
         f"- {c['code']} {c['title'] or ''}({c['units']}u, level {c['level']}, "
-        f"计入规则 {c['counts_into']}, 相关度 {c['sim']:.2f})" for c in cands)
+        f"计入规则 {c['counts_into']}"
+        + (f", 相关度 {c['sim']:.2f}" if c.get("sim") is not None else "") + ")"
+        for c in cands)
+    user = f"学生目标:{goal}\n\n候选课程(只能从这里挑):\n{facts}"
+    if constraint:
+        user += (f"\n\n这些候选已由系统按确定性数据筛选,均满足「{constraint}」;"
+                 f"请据此说明,不要臆测或质疑其考核情况。")
     raw = llm.call([
         {"role": "system", "content": SYSTEM},
-        {"role": "user", "content": f"学生目标:{goal}\n\n候选课程(只能从这里挑):\n{facts}"},
+        {"role": "user", "content": user},
     ], temperature=0)
     out["advice"] = answer.guard_citations(raw, cands)
     return out

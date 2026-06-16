@@ -1,12 +1,32 @@
 import { Fragment, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, Chip, Disclosure } from '@heroui/react'
 import { motion, useReducedMotion } from 'motion/react'
-import type { AskResult, Course, CourseDetail, KbChunk, ProgramFact } from '../api/ask'
+import type {
+  AskResult,
+  Course,
+  CourseDetail,
+  KbChunk,
+  ProgramAnswer,
+  ProgramFact,
+} from '../api/ask'
 import { cnNum, collapseSlots, levelZh, type Slot } from '../lib/courses'
 import { easeOut, riseDelay, riseIn } from '../lib/motion'
+import AnswerMarkdown from './AnswerMarkdown'
 
 const DISPLAY_CAP = 40
 const PROG_CAP = 24
+
+function PlanInSimLink({ programId, programName }: { programId: string; programName: string }) {
+  return (
+    <Link
+      to={`/sim?program=${encodeURIComponent(programId)}`}
+      className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3.5 py-1.5 text-[13.5px] font-semibold text-accent-soft-foreground transition hover:opacity-90"
+    >
+      用选课模拟器规划 {programName} →
+    </Link>
+  )
+}
 
 function Sources({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -22,13 +42,6 @@ function Sources({ label, children }: { label: string; children: ReactNode }) {
       </Disclosure.Content>
     </Disclosure>
   )
-}
-
-// 把回答里的课程码(CSSE1001)包成 <code>,用拆分而非 dangerouslySetInnerHTML
-function highlightCodes(text: string): ReactNode[] {
-  return text
-    .split(/\b([A-Z]{4}\d{4})\b/)
-    .map((part, i) => (/^[A-Z]{4}\d{4}$/.test(part) ? <code key={i}>{part}</code> : part))
 }
 
 function Rise({ i, children }: { i: number; children: ReactNode }) {
@@ -322,12 +335,17 @@ export default function Results({
   const kbSources = isKb ? dedupeSources(res.chunks ?? []) : []
   const progFacts = isProgList ? (res.program_facts as ProgramFact[]) : []
   const slots = hasCourses ? collapseSlots(res.courses!) : []
+  // program_to_courses / permit:program_facts 是单对象且带 program_id -> 给一键跳模拟器的入口
+  const progAnswer =
+    res.mode === 'program' && res.program_facts && !Array.isArray(res.program_facts)
+      ? (res.program_facts as ProgramAnswer)
+      : null
 
   return (
     <>
       {(res.answer || streaming) && (
-        <div className="text-[15.5px] leading-[1.72] whitespace-pre-wrap [&_code]:rounded-md [&_code]:bg-accent-soft [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:font-semibold [&_code]:text-accent-soft-foreground">
-          {highlightCodes(res.answer ?? '')}
+        <div className="text-[15.5px] leading-[1.72] [&_a]:font-medium [&_a]:text-accent [&_a]:underline [&_code]:rounded-md [&_code]:bg-accent-soft [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.92em] [&_code]:font-semibold [&_code]:text-accent-soft-foreground [&_h1]:mt-3 [&_h1]:mb-1.5 [&_h1]:text-[17px] [&_h1]:font-semibold [&_h2]:mt-3 [&_h2]:mb-1.5 [&_h2]:text-[16px] [&_h2]:font-semibold [&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:text-[15.5px] [&_h3]:font-semibold [&_li]:my-0.5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_p]:my-0 [&_p+p]:mt-3 [&_strong]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5">
+          <AnswerMarkdown text={res.answer ?? ''} />
           {streaming && (
             <span
               className="ml-0.5 inline-block h-[1.05em] w-[2px] -translate-y-px animate-pulse bg-accent align-middle"
@@ -335,6 +353,10 @@ export default function Results({
             />
           )}
         </div>
+      )}
+
+      {progAnswer?.program_id && !streaming && (
+        <PlanInSimLink programId={progAnswer.program_id} programName={progAnswer.program} />
       )}
 
       {isCourseDetail ? (

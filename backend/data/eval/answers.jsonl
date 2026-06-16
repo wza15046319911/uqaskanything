@@ -21,7 +21,7 @@
 {"q": "Bachelor of Computer Science 的必修课有哪些", "mode": "program", "answer_has": ["CSSE1001"], "answer_hasnt": ["DATA7001"]}
 {"q": "Master of Data Science 的核心课有哪些", "mode": "program", "answer_has": ["DATA7001"], "answer_hasnt": ["CSSE1001"]}
 {"q": "Bachelor of Engineering 的必修课", "mode": "program", "answer_has": ["ENGG1100"], "answer_hasnt": ["DATA7001"]}
-{"q": "Bachelor of Computer Science 的选修课", "mode": "program"}
+{"q": "Bachelor of Computer Science 的选修课", "mode": "program", "answer_has": ["方向】", "STAT3006"], "answer_hasnt": ["CSSE1001"]}
 {"q": "Bachelor of Engineering 可以修 MATH1051 吗", "mode": "program", "answer_has": ["MATH1051"]}
 {"q": "MATH1051 是哪些专业的必修", "mode": "program", "answer_has": ["MATH1051"]}
 {"q": "怎么报名 UQ 的龙骑士训练营", "refuse": true}

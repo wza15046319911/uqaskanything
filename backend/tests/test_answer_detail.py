@@ -1,4 +1,5 @@
 """单课子问题(先修/考核/学分/开课)确定性作答:意图判定 + 结构化字段渲染。无 DB / 无 LLM。"""
+from app.services import answer as answer_mod
 from app.services.answer import (
     _detail_intents,
     detail_structured_answer,
@@ -90,8 +91,101 @@ def test_general_question_returns_none_for_llm_path():
     assert detail_structured_answer("CSSE1001 讲什么", CSSE1001) is None
 
 
+# 仿真实:DECO3800 含 presentation 考核;CSSE1001 无;DECO_NO_DATA 无结构化考核。
+DECO3800 = {
+    "code": "DECO3800",
+    "title": "Design Computing Studio 3 - Build",
+    "assessments": [
+        {"task": "Studio Portfolio", "category": "Portfolio", "weight": 50.0, "hurdle": True},
+        {"task": "Final Oral Presentation", "category": "Presentation", "weight": 30.0},
+    ],
+}
+DECO_NO_DATA = {"code": "DECO9999", "title": "Ghost Course", "assessments": []}
+
+
+def test_assessment_type_present_lists_matched_items():
+    ans = detail_structured_answer("DECO3800 有没有 presentation", DECO3800)
+    assert ans is not None
+    assert "有演讲/展示类考核" in ans
+    assert "Final Oral Presentation" in ans and "30%" in ans
+    assert "Studio Portfolio" not in ans          # 只列命中项,不混入其他考核
+
+
+def test_assessment_type_present_chinese_question():
+    ans = detail_structured_answer("DECO3800 这门课要演讲吗", DECO3800)
+    assert ans is not None and "Final Oral Presentation" in ans
+
+
+def test_assessment_type_absent_says_no():
+    ans = detail_structured_answer("CSSE1001 有 presentation 吗", CSSE1001)
+    assert ans is not None
+    assert "没有演讲/展示类考核" in ans
+
+
+def test_assessment_type_no_data_is_unknown_not_no():
+    # 无结构化考核数据时归 unknown,绝不静默当「没有」(refuse over wrong)
+    ans = detail_structured_answer("DECO9999 有 presentation 吗", DECO_NO_DATA)
+    assert ans is not None
+    assert "无法确认" in ans and "没有" not in ans
+
+
+def test_assessment_type_takes_precedence_over_generic_list():
+    # 同时含类型词与「占比」时,先答具体类型而非列全部考核
+    ans = detail_structured_answer("DECO3800 presentation 占比多少", DECO3800)
+    assert "有演讲/展示类考核" in ans
+    assert "Studio Portfolio" not in ans
+
+
+def test_seeded_type_portfolio_present():
+    ans = detail_structured_answer("DECO3800 有没有作品集", DECO3800)
+    assert "有作品集类考核" in ans and "Studio Portfolio" in ans
+
+
+def test_seeded_type_quiz_absent():
+    ans = detail_structured_answer("CSSE1001 有 quiz 吗", CSSE1001)
+    assert "没有测验类考核" in ans
+
+
+def test_catchall_feeds_question_and_full_record_to_llm(monkeypatch):
+    # 非关键词长尾问题 -> 走 LLM 兜底,且学生问题 + 完整记录(考核/先修)都进 prompt
+    captured = {}
+
+    def fake_call(messages):
+        captured["user"] = messages[-1]["content"]
+        return "这门课的难度因人而异。"
+
+    monkeypatch.setattr(answer_mod.llm, "call", fake_call)
+    course = {**CSSE1001, "description": "Intro course.", "prerequisite_raw": "MATH1051"}
+    ans = answer_course_detail("CSSE1001 这门课难吗", course)
+    u = captured["user"]
+    assert "这门课难吗" in u                                   # 学生问题进 prompt
+    assert "Assignment 1" in u and "In-semester exam" in u      # 完整考核进上下文
+    assert "MATH1051" in u                                      # 先修原文进上下文
+    assert "这门课的难度因人而异。" in ans
+
+
 def test_answer_course_detail_missing_course():
     assert "未找到该课程" in answer_course_detail("CSSE9999 的先修课", None)
+
+
+def test_general_intro_appends_assessment(monkeypatch):
+    # 通用「介绍这门课」要在简介末尾追加确定性考核组成(考核字段直出,不经 LLM)
+    monkeypatch.setattr(answer_mod.llm, "call", lambda messages: "这是一门软件工程入门课。")
+    course = {**CSSE1001, "description": "Intro to software engineering."}
+    ans = answer_course_detail("详细介绍 CSSE1001", course)
+    assert "这是一门软件工程入门课。" in ans
+    assert "考核组成" in ans
+    assert "Assignment 1" in ans and "15%" in ans
+    assert "In-semester exam" in ans and "hurdle" in ans
+
+
+def test_general_intro_no_assessment_data_no_appendix(monkeypatch):
+    # 无结构化考核数据时通用简介不追加,也不出「暂无」占位
+    monkeypatch.setattr(answer_mod.llm, "call", lambda messages: "微积分与线性代数入门。")
+    course = {**MATH1051, "description": "Calculus and linear algebra."}
+    ans = answer_course_detail("介绍一下 MATH1051", course)
+    assert ans == "微积分与线性代数入门。"
+    assert "考核组成" not in ans and "暂无结构化考核信息" not in ans
 
 
 def test_struct_context_carries_answer_fields():

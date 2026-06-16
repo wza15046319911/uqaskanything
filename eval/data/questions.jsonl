@@ -1,25 +1,44 @@
-{"q": "What exactly is the census date and why does it matter?", "mode": "kb", "reference": "census date 是每个学习周期(study period)最终确定选课状态的截止日期;当天的选课情况决定该学期的费用责任,也是办理 HECS-HELP/FEE-HELP 等的截止日;具体日期因课程而异,需在 mySI-net 查看。"}
-{"q": "census date 是什么时候", "mode": "kb", "reference": "census date 是确定选课与费用责任的截止日期;具体日期因课程和教学周期而异,需登录 mySI-net 的 Enrolments 查看每门课的 census date。"}
-{"q": "How do I work out my GPA?", "mode": "kb", "reference": "GPA = 各课程(成绩点 × 学分)之和 / 总学分之和。"}
-{"q": "I missed my exam, can I apply for a deferred exam?", "mode": "kb", "reference": "可以申请 deferred exam,但须在规定时间内提交申请并提供不可抗力/医疗等证明材料。"}
-{"q": "怎么重置 UQ 密码", "mode": "kb"}
-{"q": "Where can I find the academic calendar?", "mode": "kb"}
-{"q": "What are course date variations?", "mode": "kb"}
-{"q": "CSSE1001 讲什么", "mode": "course_detail", "reference": "CSSE1001 是软件工程入门课,教编程基础。"}
-{"q": "INFS2200 是什么课", "mode": "course_detail", "reference": "INFS2200 讲关系数据库系统(relational database systems)。"}
-{"q": "COMP2011 讲什么内容", "mode": "course_detail", "reference": "COMP2011 是数据科学基础(fundamentals of data science)。"}
-{"q": "介绍一下 STAT1201", "mode": "course_detail", "reference": "STAT1201 讲科学数据分析(analysis of scientific data),即统计学入门。"}
-{"q": "DATA7001 这门课讲什么", "mode": "course_detail", "reference": "DATA7001 是数据科学导论(introduction to data science)。"}
-{"q": "CSSE2002 是什么", "mode": "course_detail", "reference": "CSSE2002 讲大型程序设计(programming in the large)。"}
-{"q": "跟机器学习相关的课", "mode": "semantic"}
-{"q": "数据库方面的课程", "mode": "semantic"}
-{"q": "教编程入门的课", "mode": "semantic"}
-{"q": "统计相关的课程", "mode": "semantic"}
-{"q": "数据科学有哪些课", "mode": "semantic"}
-{"q": "CS有哪些课程没有考试", "mode": "hybrid"}
-{"q": "信息系统类有考试的课", "mode": "hybrid"}
-{"q": "有编程内容的研究生课", "mode": "hybrid"}
-{"q": "没有考试的研究生课", "mode": "filter"}
-{"q": "一年级的数学课", "mode": "filter"}
-{"q": "2学分的课程", "mode": "filter"}
-{"q": "有 hurdle 的课", "mode": "filter"}
+{"q": "CSSE1001 讲什么", "mode": "course_detail", "tier": 1, "reference": "CSSE1001 是软件工程入门(introduction to software engineering),讲编程基础(Python)。"}
+{"q": "INFS2200 是什么课", "mode": "course_detail", "tier": 1, "reference": "INFS2200 讲关系数据库系统(relational database systems),关系数据库与 DBMS 管理。"}
+{"q": "STAT1201 讲什么", "mode": "course_detail", "tier": 1, "reference": "STAT1201 讲科学数据分析(analysis of scientific data),即统计学入门。"}
+{"q": "DATA7001 这门课讲什么", "mode": "course_detail", "tier": 1, "reference": "DATA7001 讲数据科学导论(introduction to data science),研究生课。"}
+{"q": "CSSE2002 是什么", "mode": "course_detail", "tier": 1, "reference": "CSSE2002 讲大型程序设计(programming in the large)。"}
+{"q": "COMP3702 讲什么内容", "mode": "course_detail", "tier": 1, "reference": "COMP3702 讲人工智能(artificial intelligence)。"}
+{"q": "MATH1051 是几学分", "mode": "course_detail", "tier": 1, "reference": "MATH1051 是 2 学分(units=2)。"}
+{"q": "INFS1200 在第几学期开课", "mode": "course_detail", "tier": 1, "reference": "INFS1200 在第一学期(S1)和第二学期(S2)都有开课。"}
+{"q": "census date 是什么时候", "mode": "kb", "tier": 1, "reference": "census date 是确定选课与费用责任的截止日期;具体日期因课程和教学周期而异,需登录 mySI-net 查看每门课的 census date。"}
+{"q": "GPA 怎么算", "mode": "kb", "tier": 1, "reference": "GPA = 各课程(成绩点 × 学分)之和 / 总学分之和。"}
+{"q": "怎么重置 UQ 密码", "mode": "kb", "tier": 1}
+{"q": "怎么申请在读证明", "mode": "kb", "tier": 1}
+{"q": "跟机器学习相关的课", "mode": "semantic", "tier": 2}
+{"q": "数据库方面的课程", "mode": "semantic", "tier": 2}
+{"q": "网络安全相关的课", "mode": "semantic", "tier": 2}
+{"q": "教编程入门的课", "mode": "semantic", "tier": 2}
+{"q": "统计相关的课程", "mode": "semantic", "tier": 2}
+{"q": "没有考试的研究生课", "mode": "filter", "tier": 2}
+{"q": "2 学分的课程", "mode": "filter", "tier": 2}
+{"q": "有 hurdle 的本科课", "mode": "filter", "tier": 2}
+{"q": "St Lucia 校区的课", "mode": "filter", "tier": 2}
+{"q": "哪些课没有期中考试", "mode": "filter", "tier": 2}
+{"q": "CS有哪些课程没有考试", "mode": "hybrid", "tier": 3}
+{"q": "St Lucia 校区的人工智能课", "mode": "hybrid", "tier": 3}
+{"q": "没有考试的机器学习课", "mode": "hybrid", "tier": 3}
+{"q": "研究生阶段的网络安全课", "mode": "hybrid", "tier": 3}
+{"q": "计算机相关、没有hurdle的研究生课", "mode": "hybrid", "tier": 3}
+{"q": "CS 有哪些课有期中考试", "mode": "hybrid", "tier": 3}
+{"q": "4 学分的计算机课", "mode": "hybrid", "tier": 3}
+{"q": "semester 1没有期末考试也没有期中考试的,course code为1或3开头的", "mode": "filter", "tier": 3}
+{"q": "没考试的、不含实习和论文的课", "mode": "filter", "tier": 3}
+{"q": "轻松好过的研究生课", "mode": "filter", "tier": 3}
+{"q": "Bachelor of Computer Science 的必修课有哪些", "mode": "program", "tier": 4}
+{"q": "Master of Data Science 的核心课有哪些", "mode": "program", "tier": 4}
+{"q": "CSSE1001 是哪些专业的必修", "mode": "program", "tier": 4}
+{"q": "Bachelor of Computer Science 能修 CSSE1001 吗", "mode": "program", "tier": 4}
+{"q": "怎么申请 UQ 的火星交换生项目", "tier": 4, "refuse": true}
+{"q": "UQ 量子菠萝研究中心在哪栋楼", "tier": 4, "refuse": true}
+{"q": "怎么在 UQ 宿舍养一只宠物龙", "tier": 4, "refuse": true}
+{"q": "UQ 2099 年的本科学费是多少", "tier": 4, "refuse": true}
+{"q": "烹饪相关的课", "mode": "semantic", "tier": 4}
+{"q": "加密货币相关的课", "mode": "semantic", "tier": 4}
+{"q": "能躺平的课", "mode": "filter", "tier": 4}
+{"q": "有哪些课", "tier": 4, "broad": true}

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import {
   Alert,
+  Button,
   Chip,
   ComboBox,
   Disclosure,
@@ -64,7 +65,8 @@ const stripSharedPrefix = (titles: string[]): string[] => {
 
 export default function RulesPane(props: RulesPaneProps) {
   const { data, csQuery, csResults, offered } = props
-  const { onSetBranch, onSetPlan, onPick, onCsearch } = props
+  const { goal, advising, advice } = props
+  const { onSetBranch, onSetPlan, onPick, onCsearch, onGoalChange, onAdvise } = props
 
   const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
 
@@ -594,6 +596,66 @@ export default function RulesPane(props: RulesPaneProps) {
             </ListBox>
           </ComboBox.Popover>
         </ComboBox>
+      </section>
+      {/* AI 选课建议:自然语言说目标 -> 引擎定池 + LLM 在合法候选内排序 */}
+      <section className={cardCls}>
+        <div className="mb-3 flex items-center gap-2.5">
+          <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
+            AI 选课建议
+          </h2>
+          <span className="ml-auto text-xs text-muted">只在你能修的课里推荐</span>
+        </div>
+        <div className="flex flex-col gap-2.5">
+          <Input
+            placeholder="说说你的方向或目标,如「我想做 AI 和机器学习」"
+            value={goal}
+            onChange={(e) => onGoalChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !advising) onAdvise()
+            }}
+            autoComplete="off"
+            className="w-full"
+          />
+          <Button isDisabled={advising || !goal.trim()} onPress={onAdvise} className="self-start">
+            {advising ? '思考中…' : '给我推荐'}
+          </Button>
+        </div>
+        {advice && (
+          <div className="mt-3 flex flex-col gap-3">
+            {advice.advice && (
+              <div className="rounded-xl border border-border bg-default-soft px-3.5 py-3 text-sm leading-relaxed whitespace-pre-wrap">
+                {advice.advice}
+              </div>
+            )}
+            {advice.candidates && advice.candidates.length > 0 && (
+              <div className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold tracking-wide text-muted">
+                  候选(点一下放进计划)
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {advice.candidates.map((c) => (
+                    <button
+                      key={c.code}
+                      type="button"
+                      onClick={() => onPick(c.code)}
+                      className="rounded-full bg-default-soft px-2.5 py-1 text-xs transition hover:bg-accent-soft"
+                    >
+                      <span className="font-mono font-semibold text-accent">{c.code}</span>
+                      {c.title ? ` ${c.title}` : ''}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {advice.note && <div className="text-xs text-muted italic">{advice.note}</div>}
+            {!!advice.unreachable_count && (
+              <div className="text-xs text-muted italic">
+                另有 {advice.unreachable_count}{' '}
+                门可选课暂无开课/检索信息,未纳入推荐,可在官方课表核对。
+              </div>
+            )}
+          </div>
+        )}
       </section>
       {/* 规则列表 */}
       <section className={cardCls}>

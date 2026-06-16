@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Alert, toast } from '@heroui/react'
 import ProgramSearch from '../components/sim/ProgramSearch'
 import RulesPane from '../components/sim/RulesPane'
@@ -34,13 +35,16 @@ export default function SimPage() {
   const [goal, setGoal] = useState('')
   const [advising, setAdvising] = useState(false)
   const [advice, setAdvice] = useState<AdviseResponse | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
   const csTimer = useRef<number | undefined>(undefined)
+  const refreshSeq = useRef(0)
 
   const showToast = (m: string) => {
     toast(m)
   }
 
   const refresh = async (s: SimLocalState) => {
+    const seq = ++refreshSeq.current
     try {
       const d = await postSimState({
         program_id: s.program_id,
@@ -52,6 +56,7 @@ export default function SimPage() {
         n_semesters: s.n_semesters,
         start_sem: s.start_sem,
       })
+      if (seq !== refreshSeq.current) return
       if (d.error) {
         setErr(d.error)
         return
@@ -59,6 +64,7 @@ export default function SimPage() {
       setErr(null)
       setData(d)
     } catch (e) {
+      if (seq !== refreshSeq.current) return
       setErr(`连不上服务:${e instanceof Error ? e.message : String(e)}`)
     }
   }
@@ -99,6 +105,14 @@ export default function SimPage() {
       start_sem: state.start_sem,
     })
   }
+
+  // 从问答页跳转而来:?program=<id> 预选该专业(切到新专业即清空已选,符合「换专业重开」语义)。
+  useEffect(() => {
+    const pid = searchParams.get('program')
+    if (pid && pid !== state.program_id) pickProgram(pid)
+    if (pid) setSearchParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams])
 
   const offered = (code: string): string[] | null =>
     (data?.offerings && data.offerings[code]) || extraOff[code] || null

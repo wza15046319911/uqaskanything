@@ -348,24 +348,50 @@ def answer_kb_stream(question: str, chunks: list[dict]) -> Iterator[str]:
     ])
 
 
-# ---------- 单课详情答案(课程介绍,grounded 在官方大纲) ----------
-COURSE_DETAIL_SYSTEM = """你是 UQ 选课助手。根据【课程资料】(UQ 官方课程大纲)用简洁中文介绍这门课。
+# ---------- 单课详情答案(grounded 在官方大纲,兜底任意单课问题) ----------
+# 清晰表述的高风险/精确问题(先修、考核占比、有没有某类考核…)已被前置确定性门拦截走结构化答案;
+# 这里只兜底长尾问题(讲什么/适合谁/难不难/某字段是否提及…),全部 grounded 在喂入的完整记录。
+COURSE_DETAIL_SYSTEM = """你是 UQ 选课助手。只依据【课程资料】(UQ 官方课程大纲)用简洁中文回答学生关于这门课的问题。
 硬性规则:
-- 只依据【课程资料】,英文要转述成中文,绝不编造内容。
-- 按资料信息量自适应展开,可分「课程内容、核心主题、学完能做什么、适合谁修」几个方面:
-  资料丰富就多写几段,资料很少就只写能覆盖的部分;不强求句数,也不要为凑长度注水或重复。
-- 不要罗列先修/学分/考核(这些另行结构化展示);不写网址、不寒暄、不重复课程码。"""
+- 只用【课程资料】里的信息,英文转述成中文;资料没覆盖的就直说「资料未提供」,绝不编造或猜测。
+- 高风险/精确信息(先修要求、精确权重或分数、学分、日期):只能照搬资料原文,绝不改写其 and/or 逻辑或数字。
+- 问「有没有某类考核」时据【考核项】如实回答有/无;但不要逐条罗列全部考核或复述精确权重(考核明细另行结构化展示)。
+- 介绍类问题(讲什么/核心主题/适合谁修)按资料信息量自适应展开,不注水、不重复;不寒暄、不写网址、不重复课程码。"""
 
 COURSE_DETAIL_USER = """课程:{code} {title}
+学生的问题:{question}
 
 【课程资料】
 {facts}
 
-请依据上面的【课程资料】用中文介绍这门课讲什么、有哪些核心主题、适合谁修。"""
+请只依据上面的【课程资料】用中文回答学生的问题;资料未覆盖的部分明确说明,不要编造。"""
+
+
+def _assessments_for_llm(course: dict) -> str:
+    """考核项序列化给 LLM(含类别,供判断「有没有某类考核」);无数据返回空串。"""
+    items = course.get("assessments")
+    if not isinstance(items, list):
+        return ""
+    rows: list[str] = []
+    for a in items:
+        if not isinstance(a, dict):
+            continue
+        task = str(a.get("task") or "").strip() or "考核项"
+        bits: list[str] = []
+        if a.get("category"):
+            bits.append(f"类别 {a['category']}")
+        if a.get("weight") is not None:
+            bits.append(f"{_fmt_num(a['weight'])}%")
+        if a.get("hurdle"):
+            bits.append("hurdle")
+        rows.append(task + (f"[{','.join(bits)}]" if bits else ""))
+    return ";".join(rows)
 
 
 def _course_detail_facts(course: dict) -> str:
-    """单课内容字段序列化给 LLM(只取介绍相关;先修/考核走确定性展示,不喂 LLM)。"""
+    """单课完整结构化记录序列化给 grounded LLM 兜底问答。
+    高风险字段(先修原文/精确权重)随记录给出,prompt 要求逐字照搬不改写;
+    清晰表述的高风险问题已被前置确定性门拦在 LLM 之前。"""
     parts: list[str] = []
     if course.get("description"):
         parts.append("课程简介:" + str(course["description"]))
@@ -373,7 +399,27 @@ def _course_detail_facts(course: dict) -> str:
         parts.append("主题:" + str(course["topics"])[:600])
     if course.get("learning_outcomes"):
         parts.append("学习成果:" + str(course["learning_outcomes"])[:600])
+    asmt = _assessments_for_llm(course)
+    if asmt:
+        parts.append("考核项:" + asmt)
+    raw = (course.get("prerequisite_raw") or "").strip()
+    parts.append("先修要求(原文):" + raw if raw else "先修要求:无")
+    if course.get("units") is not None:
+        parts.append(f"学分:{_fmt_num(course['units'])}")
+    sems = [s for s in (course.get("semesters") or []) if s]
+    if sems:
+        parts.append("开课学期:" + "、".join(sems))
+    locs = [l for l in (course.get("locations") or []) if l]
+    if locs:
+        parts.append("校区:" + "、".join(locs))
     return "\n\n".join(parts)
+
+
+def _has_detail_content(course: dict) -> bool:
+    """是否有可供 LLM 兜底作答的实质结构化内容;全空时走兜底文案不调 LLM。"""
+    return bool(course.get("description") or course.get("topics")
+                or course.get("learning_outcomes") or _has_assessments(course)
+                or (course.get("prerequisite_raw") or "").strip())
 
 
 # ---------- 单课结构化子问题(先修/考核/学分/开课):确定性作答,不交 LLM ----------
@@ -410,21 +456,22 @@ def _detail_prereq(course: dict) -> str:
     return f"{code} 的先修课要求:{raw}。以官方课程页(ECP)为准。"
 
 
+def _fmt_assessment_item(a: dict) -> str:
+    """单个考核项 -> 'task(权重%、hurdle)';无权重/hurdle 时只出 task。"""
+    task = str(a.get("task") or "").strip() or "考核项"
+    extra: list[str] = []
+    if a.get("weight") is not None:
+        extra.append(f"{_fmt_num(a['weight'])}%")
+    if a.get("hurdle"):
+        extra.append("hurdle")
+    return task + (f"({'、'.join(extra)})" if extra else "")
+
+
 def _detail_assessment(course: dict) -> str:
     code = course.get("code", "?")
     items = course.get("assessments")
-    parts: list[str] = []
-    if isinstance(items, list):
-        for a in items:
-            if not isinstance(a, dict):
-                continue
-            task = str(a.get("task") or "").strip() or "考核项"
-            extra: list[str] = []
-            if a.get("weight") is not None:
-                extra.append(f"{_fmt_num(a['weight'])}%")
-            if a.get("hurdle"):
-                extra.append("hurdle")
-            parts.append(task + (f"({'、'.join(extra)})" if extra else ""))
+    parts = ([_fmt_assessment_item(a) for a in items if isinstance(a, dict)]
+             if isinstance(items, list) else [])
     if not parts:
         return f"{code} 暂无结构化考核信息,请查看官方课程页(ECP)。"
     return f"{code} 的考核组成:" + "、".join(parts) + "。以官方课程页为准。"
@@ -459,12 +506,78 @@ _DETAIL_FMT = {
 }
 
 
+# 低歧义考核类型查表(单课「有没有 X 考核」用):type -> (中文标签, 关键词)。
+# 关键词同时用于「识别问的是哪类」(中英文)与「匹配考核 task/category」(数据多为英文)。
+# 命名直白的类型才进表(加新类型 = 加一行);exam/midterm/group 等高歧义维度走专门三态分类器,不在此。
+_ASSESSMENT_TYPES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "presentation": ("演讲/展示", ("presentation", "demonstration", "演讲", "展示", "汇报")),
+    "quiz": ("测验", ("quiz", "测验", "小测")),
+    "essay": ("论文", ("essay", "论文", "小论文")),
+    "report": ("报告", ("report", "报告")),
+    "project": ("项目", ("project", "项目")),
+    "poster": ("海报", ("poster", "海报")),
+    "portfolio": ("作品集", ("portfolio", "作品集")),
+    "participation": ("课堂参与", ("participation", "参与", "出勤")),
+    "reflection": ("反思", ("reflection", "reflective", "反思")),
+}
+
+
+def _matched_assessment_type(question: str) -> str | None:
+    """问题命中的考核类型键(按查表顺序);无命中返回 None。"""
+    q = (question or "").lower()
+    for t, (_label, kws) in _ASSESSMENT_TYPES.items():
+        if any(k.lower() in q for k in kws):
+            return t
+    return None
+
+
+def _assessment_type_answer(question: str, course: dict) -> str | None:
+    """单课「有没有 <某类> 考核」-> 据 assessments 确定性答有/无 + 命中项;问题未提类型返回 None。
+
+    有考核数据才下「有/无」结论;无 assessments 数据归 unknown(refuse over wrong),绝不静默当「没有」。
+    """
+    t = _matched_assessment_type(question)
+    if t is None:
+        return None
+    label, kws = _ASSESSMENT_TYPES[t]
+    code = course.get("code", "?")
+    items = course.get("assessments")
+    if not isinstance(items, list) or not any(isinstance(a, dict) for a in items):
+        return f"{code} 暂无结构化考核信息,无法确认是否有{label}考核,请查看官方课程页(ECP)。"
+    kws_l = tuple(k.lower() for k in kws)
+    matched = [
+        a for a in items if isinstance(a, dict)
+        and any(k in ((a.get("task") or "") + " " + (a.get("category") or "")).lower() for k in kws_l)
+    ]
+    if not matched:
+        return f"{code} 没有{label}类考核。以官方课程页为准。"
+    return f"{code} 有{label}类考核:" + "、".join(_fmt_assessment_item(a) for a in matched) + "。以官方课程页为准。"
+
+
 def detail_structured_answer(question: str, course: dict) -> str | None:
-    """命中先修/考核/学分/开课子问题 -> 用结构化字段确定性作答(每项一段);无命中返回 None。"""
+    """命中先修/考核/学分/开课子问题 -> 用结构化字段确定性作答(每项一段);无命中返回 None。
+    先判「有没有某类考核」(更具体),再判通用子问题。"""
+    typed = _assessment_type_answer(question, course)
+    if typed is not None:
+        return typed
     intents = _detail_intents(question)
     if not intents:
         return None
     return "\n\n".join(_DETAIL_FMT[i](course) for i in intents)
+
+
+def _has_assessments(course: dict) -> bool:
+    """是否有可渲染的结构化考核项(任一 dict 带非空 task)。"""
+    items = course.get("assessments")
+    return isinstance(items, list) and any(
+        isinstance(a, dict) and str(a.get("task") or "").strip() for a in items)
+
+
+def _with_assessment_appendix(intro: str, course: dict) -> str:
+    """通用简介后追加确定性考核组成(有数据才追加);考核仍走结构化字段,不交 LLM。"""
+    if not _has_assessments(course):
+        return intro
+    return intro + "\n\n" + _detail_assessment(course)
 
 
 def _detail_struct_context(course: dict, intents: list[str]) -> list[str]:
@@ -490,14 +603,16 @@ def answer_course_detail(question: str, course: dict | None) -> str:
     structured = detail_structured_answer(question, course)
     if structured is not None:
         return structured
-    facts = _course_detail_facts(course)
-    if not facts.strip():
-        return f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
-    return llm.call([
-        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
-        {"role": "user", "content": COURSE_DETAIL_USER.format(
-            code=course["code"], title=course.get("title") or "", facts=facts)},
-    ]).strip()
+    if not _has_detail_content(course):
+        intro = f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
+    else:
+        intro = llm.call([
+            {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+            {"role": "user", "content": COURSE_DETAIL_USER.format(
+                code=course["code"], title=course.get("title") or "",
+                question=question, facts=_course_detail_facts(course))},
+        ]).strip()
+    return _with_assessment_appendix(intro, course)
 
 
 def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[str]:
@@ -509,15 +624,17 @@ def answer_course_detail_stream(question: str, course: dict | None) -> Iterator[
     if structured is not None:
         yield structured
         return
-    facts = _course_detail_facts(course)
-    if not facts.strip():
+    if not _has_detail_content(course):
         yield f"{course['code']} {course.get('title') or ''}。详细信息见下方课程卡与官方课程页。"
-        return
-    yield from llm.call_stream([
-        {"role": "system", "content": COURSE_DETAIL_SYSTEM},
-        {"role": "user", "content": COURSE_DETAIL_USER.format(
-            code=course["code"], title=course.get("title") or "", facts=facts)},
-    ])
+    else:
+        yield from llm.call_stream([
+            {"role": "system", "content": COURSE_DETAIL_SYSTEM},
+            {"role": "user", "content": COURSE_DETAIL_USER.format(
+                code=course["code"], title=course.get("title") or "",
+                question=question, facts=_course_detail_facts(course))},
+        ])
+    if _has_assessments(course):
+        yield "\n\n" + _detail_assessment(course)
 
 
 def gen_contexts(mode: str, courses: list[dict] | None = None, program_facts=None,

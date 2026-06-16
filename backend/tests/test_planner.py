@@ -125,11 +125,13 @@ def test_code_level_digit_extraction():
 
 def test_faculty_units_mapping():
     # 学科 -> coordinating_unit 受控映射(确定性,用于把语义召回限定回本学院)
-    eecs = ["Elec Engineering & Comp Science School"]
-    assert _faculty_units("IT有哪些课没有考试") == eecs
-    assert _faculty_units("软件相关的课") == eecs
-    assert _faculty_units("electrical engineering 的课") == eecs
     assert _faculty_units("商科有哪些没考试的课") == ["Business School", "Economics School"]
+    # 计算机类学科词「不」锁学院:CS 课跨学院挂靠(COSC 在 Math&Physics、CYBR 在 Business、
+    # DATA 在 HPI),硬锁 EECS 会误杀。一律靠语义召回,显式点名学院才经 Option C 锁。
+    assert _faculty_units("IT有哪些课没有考试") == []
+    assert _faculty_units("软件相关的课") == []
+    assert _faculty_units("electrical engineering 的课") == []
+    assert _faculty_units("计算机相关、没有hurdle的研究生课") == []
     # AI/ML/数据 跨数学统计,不锁学院(保持宽召回);无学科词也不锁
     assert _faculty_units("机器学习的课") == []
     assert _faculty_units("没有考试的课") == []
