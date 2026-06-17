@@ -1,11 +1,11 @@
 """
-backfill_course_type.py — 给已灌库的 courses 回填 course_type 派生列。
+backfill_course_type.py — backfill the derived course_type column for courses already loaded.
 
-build_db 灌库时会算 course_type;但线上库是早先灌的、没有该列(或全是默认 coursework)。
-本脚本幂等补列 + 按 classify_course_type 逐 offering 回填,复用同一套判定逻辑(规则 15)。
-不重灌、不动 embedding,只读 title/assessments 改 course_type。
+build_db computes course_type at load time; but the live DB was loaded earlier without this column (or it is all the default coursework).
+This script idempotently adds the column + backfills each offering by classify_course_type, reusing the same decision logic (rule 15).
+It does not reload or touch embedding, it only reads title/assessments and updates course_type.
 
-用法:
+Usage:
     python -m app.pipelines.backfill_course_type
 """
 from __future__ import annotations

@@ -87,8 +87,8 @@ export default function Timetable({
     seed: seedFromString(state.program_id),
   })
 
-  // 弥散底图很重(180 万像素 getImageData + PNG 编码)。用 deferred 值驱动生成,让滑块即时响应、
-  // 拖动时跳过中间值;两个导出节点(预览 + 离屏)共用这一张,避免重复计算。
+  // The diffusion background is heavy (1.8M pixels getImageData + PNG encoding). Drive generation with a deferred value so the slider responds at once
+  // and skips intermediate values while dragging; the two export nodes (preview + offscreen) share this one image to avoid recomputing.
   const deferredDiff = useDeferredValue(diff)
   const bg = useMemo(
     () =>
@@ -164,8 +164,8 @@ export default function Timetable({
     }
   }
 
-  // 预览用实时渲染的离屏全尺寸节点(exportRef),按容器宽度缩放显示;导出直接截全尺寸节点。
-  // 这里只测量缩放比例与缩放后高度,不再走 html2canvas 生成预览图。
+  // The preview uses the live, full-size offscreen node (exportRef), scaled to the container width; export captures the full-size node directly.
+  // Here we only measure the scale ratio and the scaled height, no longer using html2canvas to make a preview image.
   useEffect(() => {
     if (!previewOpen) return
     function measure() {
@@ -467,7 +467,7 @@ export default function Timetable({
             </div>
           </div>
 
-          {/* 离屏全尺寸节点:导出高清图用,避免截到被 CSS 缩放的预览。 */}
+          {/* Offscreen full-size node: used for the high-res export, to avoid capturing the CSS-scaled preview. */}
           <div
             ref={exportRef}
             aria-hidden

@@ -64,6 +64,12 @@ def test_program_filter_where_rebuilds_structured_conditions():
         {"has_exam": False, "group_status": "none"}
     # 层级词经 _enforce_level_hint 注入
     assert _program_filter_where("研究生没考试的课") == {"has_exam": False, "level": PG}
+    # 学期限定:S2/S1 进 filters(build_where 再路由到 offered_s2/offered_s1 标记)
+    assert _program_filter_where("S2开放的没有考试的课") == \
+        {"has_exam": False, "semester": "S2"}
+    assert _program_filter_where("第一学期的课") == {"semester": "S1"}
+    # 「两个学期都」全称量词不落单学期(program p2c 无跨学期合取,落单会答错)
+    assert "semester" not in _program_filter_where("S1和S2都没有考试的课")
     # 无任何可映射维度 -> 空 dict(退化为普通 program_to_courses)
     assert _program_filter_where("Bachelor of Commerce 的必修课") == {}
 

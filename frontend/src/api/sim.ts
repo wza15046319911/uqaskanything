@@ -1,4 +1,4 @@
-// 选课模拟器 API 层。类型对齐后端 backend/app/api/sim.py 的返回结构。
+// Course planning simulator API layer. Types match the return shape of backend/app/api/sim.py.
 
 export interface Program {
   program_id: string
@@ -16,7 +16,7 @@ export interface Rule {
   ref: string
   title: string
   inactive?: boolean
-  select_type?: string // 'all' = 必修;否则选修
+  select_type?: string // 'all' = required; otherwise elective
   units_counted: number
   units_required: number
   units_max?: number | null
@@ -30,7 +30,7 @@ export interface Rule {
   children_refs?: string[]
 }
 
-// available_by_rule 的槽:单课 或 二选一组
+// Slot of available_by_rule: a single course or a pick-one-of-two group
 export type RuleSlot = { kind: 'course'; code: string } | { kind: 'equiv'; options: string[] }
 
 export interface Overall {
@@ -59,13 +59,13 @@ export interface Validation {
 }
 
 export interface LevelCap {
-  kind?: string // 'level_max'(上限) | 'level_min'(下限)
+  kind?: string // 'level_max' (upper bound) | 'level_min' (lower bound)
   level: number
   used: number
   max_units?: number // level_max
   min_units?: number // level_min
-  over?: boolean // 超上限
-  under?: boolean // 未达下限
+  over?: boolean // over the upper bound
+  under?: boolean // below the lower bound
   satisfied?: boolean
   or_higher?: boolean
   scope?: string // 'program' | 'electives' | 'field' | 'sub:<ref>'

@@ -1,12 +1,12 @@
 """
-query.py — 阶段四:查询层
-自然语言问题 -> 本地 qwen2.5-coder 出「查询计划」-> 结构化过滤 / 向量检索 / 混合。
+query.py — stage four: the query layer
+Natural language question -> local qwen2.5-coder makes a "query plan" -> structured filter / vector search / hybrid.
 
-分工(对应「确定性决策用代码,语言任务交模型」):
-  - LLM 只做语言活:判类型(filter/semantic/hybrid)、写 WHERE 表达式、给语义关键词
-  - 代码做确定性活:SELECT-only 拦截 + 只读连接、SQL 拼装、向量检索、结果输出
+Division of work (matches "deterministic decisions in code, language tasks to the model"):
+  - LLM only does language work: judge the type (filter/semantic/hybrid), write the WHERE expression, give semantic keywords
+  - Code does the deterministic work: SELECT-only blocking + read-only connection, SQL assembly, vector search, result output
 
-用法:
+Usage:
     python query.py "哪些课没有考试"
     python query.py "找跟机器学习相关的课"
     python query.py "研究生阶段跟会计相关的课"
@@ -27,7 +27,7 @@ EMBED_MODEL = "bge-m3"
 
 SELECT_COLS = "code, title, semester, level, units, location, has_exam"
 
-LOWCARD = ["semester", "location", "attendance_mode", "level"]  # 低基数列,枚举值实时取
+LOWCARD = ["semester", "location", "attendance_mode", "level"]  # low-cardinality columns, enum values fetched live
 
 PROMPT = """你是课程库查询规划器。把用户问题转成 JSON 查询计划,只输出 JSON,不要解释。
 {schema}
@@ -94,7 +94,7 @@ def guard_where(where: str) -> str:
         raise ValueError("filter/hybrid 模式缺少 where 条件")
     if BANNED.search(where):
         raise ValueError(f"where 含非法内容,已拦截:{where!r}")
-    if TEXT_COLS.search(where):                  # 主题/学科不能用文本列过滤,应走 semantic
+    if TEXT_COLS.search(where):                  # topics/subjects must not filter on text columns, use semantic
         raise ValueError(f"where 不应过滤文本列(主题走 semantic):{where!r}")
     return where.strip()
 

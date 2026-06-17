@@ -1,7 +1,7 @@
-// 把 DOM 节点导出为图片(默认 PNG,可选 JPG)。
-// 用 modern-screenshot(SVG foreignObject):浏览器直接渲染真实 DOM,文字与屏幕一致,
-// 原生支持 oklch,无需像 html2canvas 那样清洗自定义变量。仅用系统字体,故关掉字体内嵌。
-// 导出前等字体就绪,避免中文回退导致字形不一致。pages/CoverPage.tsx 复用同一套函数。
+// Export a DOM node as an image (PNG by default, JPG optional).
+// Uses modern-screenshot (SVG foreignObject): the browser renders the real DOM directly, so text matches the screen,
+// oklch is supported natively, and there is no need to clean custom variables like html2canvas does. Only system fonts are used, so font embedding is turned off.
+// Wait for fonts to be ready before exporting, to avoid glyph mismatch from Chinese fallback. pages/CoverPage.tsx reuses the same functions.
 
 import { domToJpeg, domToPng } from 'modern-screenshot'
 

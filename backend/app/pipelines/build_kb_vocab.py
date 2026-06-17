@@ -1,18 +1,18 @@
 """
-build_kb_vocab.py — KB 全语料词表(answerability 门用)
-(对应 .claude/plans/kb-answerability.md P0 第 1 步)
+build_kb_vocab.py — KB whole-corpus vocabulary (used by the answerability gate)
+(matches step 1 of P0 in .claude/plans/kb-answerability.md)
 
-把全量 kb_chunks.text 分词成词集,写 data/kb/kb_vocab.txt(每行「词\\t词频」,频次降序)。
-answerability.answerable() 用它判「英文实体在全语料是否缺席」。随 KB 重建跑(kb_build 之后),
-否则语料更新了词表过期,会把新页里的真问题误判成虚构(plan 风险条)。
+Tokenize the full kb_chunks.text into a word set, written to data/kb/kb_vocab.txt (each line is "word\\tfrequency", sorted by frequency descending).
+answerability.answerable() uses it to decide "whether an English entity is absent from the whole corpus". Run it whenever the KB is rebuilt (after kb_build),
+otherwise the vocabulary goes stale after a corpus update and a real question about a new page is misjudged as fictional (a plan risk item).
 
-分词:英文用 answerability.EN_WORD(与查询同口径,保证词表能命中问题词);含中文的 chunk
-额外用 jieba 切词收进表(当前语料几乎全英文,中文仅个位数 chunk——收进来是为语料将来含中文页
-时词表完整,answerability 当前不对中文做缺席判定,见该模块说明)。
+Tokenizing: English uses answerability.EN_WORD (same as the query, so the vocabulary can match question words); a chunk containing Chinese
+is additionally cut with jieba and added to the table (the current corpus is almost all English, only a handful of chunks are Chinese — they are added so the vocabulary is complete when the corpus contains Chinese pages later;
+answerability currently does not do absence checks on Chinese, see that module's notes).
 
-用法(从 backend/ 跑):
-    python -m app.pipelines.build_kb_vocab                 # 默认读 DB 的 kb_chunks
-    python -m app.pipelines.build_kb_vocab --chunks data/kb/chunks_all.jsonl   # 离线从 JSONL 读
+Usage (run from backend/):
+    python -m app.pipelines.build_kb_vocab                 # default reads kb_chunks from the DB
+    python -m app.pipelines.build_kb_vocab --chunks data/kb/chunks_all.jsonl   # offline read from JSONL
 """
 from __future__ import annotations
 import re
@@ -30,14 +30,14 @@ CJK = re.compile(r"[一-鿿]")
 
 
 def _texts_from_db() -> list[str]:
-    """从 DB kb_chunks 读全部 text(已灌库的权威语料)。"""
+    """Read all text from DB kb_chunks (the authoritative corpus already loaded)."""
     with psycopg.connect(DSN) as conn:
         conn.read_only = True
         return [r[0] or "" for r in conn.execute("SELECT text FROM kb_chunks").fetchall()]
 
 
 def _texts_from_file(path: Path) -> list[str]:
-    """从 chunks JSONL 读 text(离线、不依赖 DB)。"""
+    """Read text from the chunks JSONL (offline, does not depend on the DB)."""
     out: list[str] = []
     for ln in path.read_text(encoding="utf-8").splitlines():
         if ln.strip():
@@ -46,7 +46,7 @@ def _texts_from_file(path: Path) -> list[str]:
 
 
 def build_vocab(texts: list[str]) -> Counter:
-    """文本列表 -> 词频 Counter(英文 regex + 含中文文本走 jieba)。"""
+    """List of texts -> word-frequency Counter (English via regex + texts containing Chinese go through jieba)."""
     freq: Counter = Counter()
     jieba_cut = None
     for t in texts:

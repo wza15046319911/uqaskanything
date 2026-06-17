@@ -1,18 +1,20 @@
 """
-kb_parse.py — 知识库 阶段三(3c 通用文章解析器)+ 阶段四质量统计
-(对应 plan.md 第 3c / 第 4 / 第 1.5 节)
+kb_parse.py — knowledge base stage three (3c general article parser) + stage four quality stats
+(maps to plan.md sections 3c / 4 / 1.5)
 
-读 fetched.jsonl 指向的 raw HTML,用 trafilatura 抽正文(markdown 输出保留
-h2/h3),按标题切分,每个 chunk 前缀面包屑「页面标题 > h2 > h3」,控制
-300–800 token、超长硬切并保留 ~50 token 重叠。产出:
-  - data/kb/chunks.jsonl(给阶段五 embed 入库)
-  - 终端打印质量报告(解析成功率、正文长度、token 分布、<200 字符页面、抽样)
+Read the raw HTML pointed to by fetched.jsonl, use trafilatura to extract the body (markdown output
+keeps h2/h3), split by headings, prefix each chunk with the breadcrumb "page title > h2 > h3", keep
+it 300-800 tokens, hard-split overlong ones with ~50 token overlap. Produces:
+  - data/kb/chunks.jsonl (for stage five embed loading)
+  - a quality report printed to the terminal (parse success rate, body length, token distribution,
+    <200-char pages, sampling)
 
-token 用字符近似(英文 ≈ 4 char/token),仅作切分与统计的粗筛,不求精确。
+Tokens are approximated by characters (English ≈ 4 char/token), only a rough filter for splitting and
+stats, not exact.
 
-用法(从 backend/ 跑):
+Usage (run from backend/):
     python -m app.pipelines.kb_parse
-    python -m app.pipelines.kb_parse --sample 8       # 多打印几个 chunk 供人工读
+    python -m app.pipelines.kb_parse --sample 8       # print a few more chunks for manual reading
 """
 from __future__ import annotations
 import re
@@ -30,8 +32,8 @@ from app.core.config import DATA_DIR
 logging.getLogger("trafilatura").setLevel(logging.CRITICAL)
 
 CHARS_PER_TOKEN = 4
-SHORT_BODY_CHARS = 200          # 正文短于此 -> 疑似 JS 渲染/解析失败,标出
-MIN_CHUNK_TOKENS = 30           # 小于此的 chunk 标记 short(过碎信号)
+SHORT_BODY_CHARS = 200          # body shorter than this -> likely JS-rendered / parse failure, flag it
+MIN_CHUNK_TOKENS = 30           # chunks below this are marked short (over-fragmentation signal)
 
 
 def _approx_tokens(text: str) -> int:
@@ -39,7 +41,7 @@ def _approx_tokens(text: str) -> int:
 
 
 def _split_long(text: str, max_tok: int, overlap_tok: int) -> list[str]:
-    """超长文本按字符窗口硬切,保留 overlap_tok 重叠。"""
+    """Hard-split overlong text by character window, keeping overlap_tok overlap."""
     if _approx_tokens(text) <= max_tok:
         return [text]
     win = max_tok * CHARS_PER_TOKEN
@@ -53,12 +55,13 @@ def _split_long(text: str, max_tok: int, overlap_tok: int) -> list[str]:
 
 
 def _linearize_tables(md: str) -> str:
-    """markdown 管道表格 -> 每行逗号连接的纯文本。
-    去掉 |---| 分隔行和 `|` 噪声,让表格行能被 embedding 正确召回(管道表格 embed 效果差)。"""
+    """markdown pipe table -> plain text with each row comma-joined.
+    Remove |---| separator rows and `|` noise so table rows can be recalled correctly by embedding
+    (pipe tables embed poorly)."""
     out: list[str] = []
     for line in md.split("\n"):
         s = line.strip()
-        if re.match(r"^\|[\s:|-]+\|$", s):          # |---|---| 分隔行
+        if re.match(r"^\|[\s:|-]+\|$", s):          # |---|---| separator row
             continue
         if s.startswith("|") and s.endswith("|"):
             cells = [c.strip() for c in s.strip("|").split("|")]
@@ -72,8 +75,8 @@ def _linearize_tables(md: str) -> str:
 
 def _pack(sections: list[tuple[str, str, str]],
           max_tok: int, overlap_tok: int) -> list[tuple[str, str, str]]:
-    """相邻小段贪心合并到接近 max_tok;单段超长则先 flush 再硬切。
-    面包屑取打包块起始段的 h2/h3(块内可能跨多个小标题,合并的代价)。"""
+    """Greedily merge adjacent small sections up to near max_tok; if a single section is overlong, flush first then hard-split.
+    The breadcrumb takes the h2/h3 of the packed block's starting section (the block may span several subheadings, the cost of merging)."""
     packed: list[tuple[str, str, str]] = []
     cur = ""
     cur_h2 = cur_h3 = ""
@@ -98,7 +101,7 @@ def _pack(sections: list[tuple[str, str, str]],
 
 
 def sections_from_markdown(md: str) -> list[tuple[str, str, str]]:
-    """markdown 正文 -> [(h2, h3, body), ...],按 ## / ### 标题切段。"""
+    """markdown body -> [(h2, h3, body), ...], split into sections by ## / ### headings."""
     h2 = h3 = ""
     buf: list[str] = []
     out: list[tuple[str, str, str]] = []
@@ -128,7 +131,7 @@ def sections_from_markdown(md: str) -> list[tuple[str, str, str]]:
 
 def parse_page(rec: dict, max_tok: int, overlap_tok: int,
                doc_type: str = "article") -> tuple[list[dict], int]:
-    """单页 raw HTML -> (chunks, body_chars)。body_chars=0 表示抽取失败。"""
+    """Single page raw HTML -> (chunks, body_chars). body_chars=0 means extraction failed."""
     html_path = DATA_DIR.parent / rec["html_path"]
     html = html_path.read_text(encoding="utf-8", errors="ignore")
     md = extract(html, output_format="markdown",
@@ -141,12 +144,12 @@ def parse_page(rec: dict, max_tok: int, overlap_tok: int,
 
     md = _linearize_tables(md)
     secs = sections_from_markdown(md)
-    if not secs:                      # 无标题:整页正文当一段
+    if not secs:                      # no headings: treat the whole page body as one section
         secs = [("", "", md)]
 
     chunks: list[dict] = []
     for h2, h3, piece in _pack(secs, max_tok, overlap_tok):
-        if _approx_tokens(piece) < 10:        # 纯符号/空行噪声,丢弃
+        if _approx_tokens(piece) < 10:        # pure symbol / blank-line noise, drop it
             continue
         crumb_parts: list[str] = []
         for x in (title, h2, h3):
@@ -194,10 +197,10 @@ def main():
     recs = [json.loads(ln) for ln in manifest.read_text(encoding="utf-8").splitlines() if ln.strip()]
     all_chunks: list[dict] = []
     body_lens: list[int] = []
-    failed: list[str] = []       # 抽取空正文
-    short_pages: list[tuple[str, int]] = []   # 正文 <200 字符
+    failed: list[str] = []       # extracted an empty body
+    short_pages: list[tuple[str, int]] = []   # body <200 chars
     per_page: list[int] = []
-    offline: list[str] = []      # 重定向首页/已下线,不入库(plan 第 2 节)
+    offline: list[str] = []      # redirected to home / already offline, not loaded (plan section 2)
 
     for rec in recs:
         if rec.get("redirected_home"):

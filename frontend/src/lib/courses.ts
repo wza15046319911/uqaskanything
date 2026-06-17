@@ -27,8 +27,8 @@ export function levelZh(level: string | null | undefined): string {
   return level ?? ''
 }
 
-// 把 equivalence(二选一)组按 (course_list, equiv_group) 折成 1 个槽位;
-// standalone 课各自成槽。filter/semantic 的课无 equiv_group,等价于逐条返回。
+// Collapse an equivalence (pick-one-of-two) group into one slot by (course_list, equiv_group);
+// standalone courses each get their own slot. filter/semantic courses have no equiv_group, so they are returned one by one.
 export function collapseSlots(rows: Course[]): Slot[] {
   const slots: Slot[] = []
   const groups: Record<string, Slot> = {}

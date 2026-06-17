@@ -1,7 +1,7 @@
-// 选课模拟器配色:把已排课程按培养方案需求组映射到固定颜色。
-// 确定性逻辑、无 LLM;屏幕卡片与导出图共用这一份调色板。
-// 链路:课程码 -> selected_by_rule 找归属 rule -> child_of 上溯顶层组 -> 调色板。
-// 既不在任何 rule 也不在 unattributed 的边界码,显式归「未计入」,不静默。
+// Course planning simulator colors: map placed courses to fixed colors by the program requirement group.
+// Deterministic logic, no LLM; screen cards and the export image share this one palette.
+// Chain: course code -> find the owning rule in selected_by_rule -> walk up child_of to the top group -> palette.
+// A boundary code that is in no rule and not in unattributed is explicitly put under "not counted", never silently.
 
 import type { SimStateResponse } from '../api/sim'
 

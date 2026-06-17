@@ -1,16 +1,16 @@
 """
-collect_ids.py — 阶段二:某学期全部课程的 offering id 清单采集
-(对应 plan.md 第 6 节 / Roadmap 阶段二)
+collect_ids.py — phase two: collect the offering id list of all courses in a semester
+(matches plan.md section 6 / Roadmap phase two)
 
-流程:
-  1. programs-courses 搜索页 -> 该学期所有课程码(静态 HTML)
-  2. 逐门 course.html -> 解析 "Course offerings" 表,挑出目标学期的行,
-     取 course-profiles 的 offering id(形如 CSSE1001-21206-7620)
-  3. 输出 offering id 清单,直接喂给 scraper.py --file
+Flow:
+  1. programs-courses search page -> all course codes in this semester (static HTML)
+  2. each course.html -> parse the "Course offerings" table, pick the rows of the target semester,
+     take the course-profiles offering id (like CSSE1001-21206-7620)
+  3. output the offering id list, feed it straight to scraper.py --file
 
-用法:
+Usage:
     python collect_ids.py --semester 2026:1 --out course_ids.txt
-    python collect_ids.py --semester 2026:1 --limit 12        # 抽样测试
+    python collect_ids.py --semester 2026:1 --limit 12        # sample test
 """
 from __future__ import annotations
 import re
@@ -40,7 +40,7 @@ def _get(url: str, retries: int = 3) -> str:
 
 
 def _target_period(semester: str) -> tuple[str, re.Pattern]:
-    """'2026:1' -> ('Semester 1, 2026', 匹配开课表 col0 的正则)"""
+    """'2026:1' -> ('Semester 1, 2026', regex that matches col0 of the offering table)"""
     year, sem = semester.split(":")
     if sem == "3":
         return f"Summer Semester, {year}", re.compile(rf"Summer\s+Semester,\s*{year}", re.I)
@@ -48,7 +48,7 @@ def _target_period(semester: str) -> tuple[str, re.Pattern]:
 
 
 def list_course_codes(semester: str) -> list[str]:
-    """搜索页 -> 该学期去重后的课程码列表"""
+    """search page -> deduplicated list of course codes for this semester"""
     year = semester.split(":")[0]
     soup = BeautifulSoup(_get(SEARCH.format(sem=semester, year=year)), "html.parser")
     codes = set()
@@ -60,7 +60,7 @@ def list_course_codes(semester: str) -> list[str]:
 
 
 def offerings_for(code: str, pat: re.Pattern, location: str, mode: str) -> list[dict]:
-    """该课匹配 目标学期 + 校区 + 授课模式 的开课列表(排除 archive 旧页)"""
+    """offerings of this course matching target semester + campus + mode (exclude archive old pages)"""
     soup = BeautifulSoup(_get(COURSE.format(code=code)), "html.parser")
     out = []
     for a in soup.find_all("a", href=True):
@@ -105,8 +105,8 @@ def main():
     print(f"课程码: {len(codes)} 门,开始抓 course.html 取 offering id ...")
 
     results: dict[str, list[dict]] = {}
-    no_offering: list[str] = []      # 搜到课但目标学期没有已发布的 course-profiles
-    failures: list[tuple[str, str]] = []   # 请求/解析异常
+    no_offering: list[str] = []      # found the course but no published course-profiles in target semester
+    failures: list[tuple[str, str]] = []   # request/parse error
     done = 0
     with ThreadPoolExecutor(max_workers=args.workers) as ex:
         futs = {ex.submit(offerings_for, c, pat, args.location, args.mode): c for c in codes}
@@ -123,7 +123,7 @@ def main():
             if done % 50 == 0 or done == len(codes):
                 print(f"  {done}/{len(codes)}")
 
-    # 去重(按 offering_id),并统计多开课的课程
+    # deduplicate (by offering_id), and count courses with multiple offerings
     all_ids: list[str] = []
     seen: set[str] = set()
     multi = 0

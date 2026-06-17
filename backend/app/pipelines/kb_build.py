@@ -1,12 +1,12 @@
 """
-kb_build.py — 阶段五:知识库 chunk 建表 + 灌库(pgvector)
-(对应 plan.md 第 5 节)
+kb_build.py — stage five: knowledge base chunk create tables + load (pgvector)
+(matches section 5 of plan.md)
 
-读 chunks_all.jsonl(article+faq)与 chunk_vecs.jsonl(id->bge-m3 向量,kb_eval 算好),
-join 后写入 kb_chunks 表。向量复用缓存,不重算。按 id upsert,可重复运行。
-无向量的 chunk 跳过并报告(红线:不静默丢)。
+Read chunks_all.jsonl (article+faq) and chunk_vecs.jsonl (id->bge-m3 vectors, computed by kb_eval),
+join them and write into the kb_chunks table. Vectors reuse the cache, not recomputed. Upsert by id, safe to re-run.
+Chunks without a vector are skipped and reported (red line: not silently dropped).
 
-用法(从 backend/ 跑,需 :5433 pgvector + chunk_vecs.jsonl 已算好):
+Usage (run from backend/, needs :5433 pgvector + chunk_vecs.jsonl already computed):
     python -m app.pipelines.kb_build
     python -m app.pipelines.kb_build --chunks data/kb/chunks_all.jsonl
 """

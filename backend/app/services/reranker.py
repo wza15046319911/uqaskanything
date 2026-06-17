@@ -1,46 +1,46 @@
 """
-reranker.py — 可选 cross-encoder 重排(默认关,仅留架构位)
-(对应 .claude/plans/kb-answerability.md P1)
+reranker.py — optional cross-encoder rerank (off by default, kept only as an architecture slot)
+(maps to .claude/plans/kb-answerability.md P1)
 
-懒加载 + 进程内单例 + 失败降级:`KB_RERANK` 未设则永不 import torch,行为与无重排完全一致;
-设了但导入失败 / OOM / 打分异常,则降级回 bi-encoder 原序(只 print 原因,绝不抛错拖垮问答)。
+Lazy load + in-process singleton + graceful fallback: if `KB_RERANK` is not set, torch is never imported, so behavior is the same as no rerank;
+if it is set but import fails / OOM / scoring errors, fall back to the bi-encoder original order (only print the reason, never raise and break QA).
 
-边界(student-facing 红线 + findings 结论):reranker **只改 chunk 的顺序/取舍**,
-**绝不参与拒答判定**——拒答归 P0(answerability 门 + kb_search 的 bi-encoder min_sim)。
-findings 实测:reranker 治召回不治拒答(火星 0.951 仍高于真问题),故默认关、16GB 本机不开,
-不进 student-facing 主链路;详见 docs/rerank_answerability_findings.md。
+Boundary (student-facing red lines + findings conclusion): the reranker **only changes chunk order/selection**,
+it **never takes part in refuse decisions** — refusal belongs to P0 (answerability gate + kb_search's bi-encoder min_sim).
+Findings show: the reranker fixes recall, not refusal (Mars 0.951 still scores higher than real questions), so it is off by default, not enabled on a 16GB local machine,
+and not in the student-facing main path; see docs/rerank_answerability_findings.md.
 
-安全提示:默认模型 jina-reranker-v2 自带 modeling 代码,加载用 trust_remote_code=True
-(即执行 HuggingFace 远程代码)。开启 KB_RERANK 前请确认信任该来源,或换不需远程代码的模型
-(如 BAAI/bge-reranker-v2-m3)。默认关时此风险不存在。
+Security note: the default model jina-reranker-v2 ships its own modeling code, loaded with trust_remote_code=True
+(i.e. it runs HuggingFace remote code). Before enabling KB_RERANK, confirm you trust the source, or switch to a model that needs no remote code
+(such as BAAI/bge-reranker-v2-m3). This risk does not exist when it is off by default.
 
-用法(默认关;要试时设环境变量):
+Usage (off by default; set the env var to try it):
     KB_RERANK=1 [KB_RERANK_MODEL=jinaai/jina-reranker-v2-base-multilingual] uvicorn ...
     from app.services import reranker
-    chunks = reranker.rerank(query, chunks)   # 关/降级时原样返回
+    chunks = reranker.rerank(query, chunks)   # returned unchanged when off / on fallback
 """
 from __future__ import annotations
 import os
 
-DEFAULT_MODEL = "jinaai/jina-reranker-v2-base-multilingual"  # ~1.1GB,CPU 快、多语言(findings 推荐先试)
+DEFAULT_MODEL = "jinaai/jina-reranker-v2-base-multilingual"  # ~1.1GB, fast on CPU, multilingual (findings suggest trying it first)
 
-_MODEL = None          # 进程内单例
-_LOAD_FAILED = False   # 加载失败过就不再重试(避免每次请求都炸一遍)
+_MODEL = None          # in-process singleton
+_LOAD_FAILED = False   # once load has failed, do not retry (avoid blowing up on every request)
 
 
 def enabled() -> bool:
-    """是否开启重排(运行时读 env,默认关——保证不设时连 torch 都不会被 import)。"""
+    """Whether rerank is on (read env at runtime, off by default — so when not set, even torch is never imported)."""
     return bool(os.environ.get("KB_RERANK"))
 
 
 def _load():
-    """懒加载 cross-encoder 单例;import/加载失败返回 None(降级信号),不抛错。"""
+    """Lazy-load the cross-encoder singleton; on import/load failure return None (fallback signal), do not raise."""
     global _MODEL, _LOAD_FAILED
     if _MODEL is not None or _LOAD_FAILED:
         return _MODEL
     model_name = os.environ.get("KB_RERANK_MODEL", DEFAULT_MODEL)
     try:
-        from sentence_transformers import CrossEncoder  # 仅此处碰 torch
+        from sentence_transformers import CrossEncoder  # only place that touches torch
         _MODEL = CrossEncoder(model_name, trust_remote_code=True)
         print(f"[reranker] 已加载:{model_name}")
     except Exception as e:
@@ -51,10 +51,10 @@ def _load():
 
 
 def rerank(query: str, candidates: list[dict]) -> list[dict]:
-    """按 cross-encoder (query, chunk.text) 分降序重排候选;关闭/无候选/加载/打分失败时原样返回。
+    """Rerank candidates by descending cross-encoder (query, chunk.text) score; return unchanged when off / no candidates / load or scoring fails.
 
-    candidates 是已过 bi-encoder min_sim 的 chunk(每个含 text);此函数不增删、不改拒答,
-    只换顺序——返回的仍是同一批 dict。
+    candidates are chunks that already passed the bi-encoder min_sim (each has text); this function does not add/remove and does not change refusal,
+    it only reorders — the returned dicts are the same batch.
     """
     if not enabled() or len(candidates) < 2:
         return candidates

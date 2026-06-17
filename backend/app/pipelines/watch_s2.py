@@ -1,20 +1,20 @@
-"""watch_s2.py — 监听某学期 course profile 上线并增量入库(默认 S2 2026 / 2026:2)
+"""watch_s2.py — watch a semester's course profiles going live and load them incrementally (default S2 2026 / 2026:2)
 
-每次运行(幂等,只处理新冒出来的课):
-  1. collect_ids 采当前已发布的 offering id 全集
-  2. 与 DB 已有 offering_id(全表)求差集 -> 本轮新增
-  3. 对新 id:scraper 抓详情 -> build_db upsert -> embed 补 NULL
-  4. 每次运行结束(含无新增/出错)给 WATCH_MAIL_TO 发一封汇总邮件
+Each run (idempotent, only handles newly appearing courses):
+  1. collect_ids gathers the full set of currently published offering ids
+  2. diff against the offering_id already in the DB (whole table) -> new this round
+  3. for new ids: scraper fetches details -> build_db upsert -> embed fills NULL
+  4. at the end of each run (including no-new / error) send one summary email to WATCH_MAIL_TO
 
-任一子步失败:邮件报错 + 非零退出,交给 launchd 日志,不吞错。
-profile 分批上线,每天调一次即可,出一批入一批,直到全出齐。
+If any sub-step fails: email the error + non-zero exit, leave it to the launchd log, do not swallow the error.
+Profiles go live in batches; call once a day is enough, load each batch as it appears, until all are out.
 
-邮件凭据走环境变量(或 backend/.env,复用 llm 的 .env 加载器):
+Email credentials come from environment variables (or backend/.env, reusing llm's .env loader):
   WATCH_SMTP_USER / WATCH_SMTP_PASS / WATCH_MAIL_TO
-  可选 WATCH_SMTP_HOST(默认 smtp.gmail.com) / WATCH_SMTP_PORT(默认 465)
-未配置则跳过发送并打印提示,不影响入库。
+  optional WATCH_SMTP_HOST (default smtp.gmail.com) / WATCH_SMTP_PORT (default 465)
+If not configured, skip sending and print a note, without affecting the loading.
 
-用法:
+Usage:
     python -m app.pipelines.watch_s2
     python -m app.pipelines.watch_s2 --semester 2026:2 --dry-run
 """

@@ -1,7 +1,9 @@
-"""选课模拟器 API（/api/sim/*）。
+"""Course planner simulator API (/api/sim/*).
 
-确定性,无 LLM 参与状态计算;客户端持 state,服务端无状态重放。
-（/api/sim/advise 例外:确定性定池 + LLM 仅排序解释 + 双护栏。）
+Deterministic, no LLM in state computation; the client holds the state and the
+server replays it statelessly.
+(/api/sim/advise is the exception: deterministic candidate pool + LLM only ranks
+and explains + dual guardrails.)
 """
 from __future__ import annotations
 
@@ -20,15 +22,15 @@ class SimState(BaseModel):
     program_id: str = "2559"
     selected: list[str] = []
     chosen_plans: list[str] = []
-    branch: list[str] = []             # OR 组选定分支 ref(如 ["C"]=No-Major;缺省各组第一个)
-    placement: dict[str, int] = {}     # code -> 学期格索引(0=Y1S1, 1=Y1S2, ...);时间表用
+    branch: list[str] = []             # chosen branch ref for an OR group (e.g. ["C"]=No-Major; default is the first of each group)
+    placement: dict[str, int] = {}     # code -> semester slot index (0=Y1S1, 1=Y1S2, ...); used by the timetable
     units_cap: float = 8.0
     n_semesters: int = 6
-    start_sem: str = "S1"              # 入学学期:"S1" 或 "S2"(决定格 0 是 S1 还是 S2)
+    start_sem: str = "S1"              # entry semester: "S1" or "S2" (decides whether slot 0 is S1 or S2)
 
 
 def _offerings(conn, codes) -> dict:
-    """code -> 开课学期列表(S1 来自 courses.semester,S2 来自 2026:2 搜索页清单)。"""
+    """code -> list of offering semesters (S1 from courses.semester, S2 from the 2026:2 search page list)."""
     codes = list(codes)
     off: dict[str, set] = {}
     if codes:
@@ -45,7 +47,7 @@ def _offerings(conn, codes) -> dict:
 
 def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1",
               year_long=None) -> dict:
-    """时间表落位校验(确定性):开课学期 / 先修按更早学期 / 学分上限 / 互斥 / 年课跨两学期。"""
+    """Timetable placement check (deterministic): offering semester / prereqs in earlier semesters / units cap / incompatibility / year-long courses spanning two semesters."""
     um = sim.units_map()
     year_long = set(year_long or ())
     start_sem = "S2" if start_sem == "S2" else "S1"
@@ -55,19 +57,19 @@ def _validate(sim, placement, offerings, inc_map, n_sem, cap, start_sem="S1",
     placed = {c: i for c, i in placement.items() if isinstance(i, int) and 0 <= i < n_sem}
     by_course: dict[str, list] = {}
     for c, i in placed.items():
-        # 树外课(E/F 搜索来的)学分查全库,树内查规则树,都缺才用默认
+        # out-of-tree courses (from E/F search) look up units in the whole DB, in-tree ones use the rule tree; default only when both are missing
         u = float(um.get(c) or sim._course_units.get(c) or simulator.DEFAULT_UNITS)
         yl = c in year_long
-        per = u / 2 if yl else u                        # 年课学分平摊到连续两学期
+        per = u / 2 if yl else u                        # year-long course units split evenly across two consecutive semesters
         reasons = []
         sem_units[i] += per
-        if yl:                                          # 年课占 [i, i+1];末格无承接则报错
+        if yl:                                          # year-long course occupies [i, i+1]; error if the last slot has no following slot
             if i + 1 < n_sem:
                 sem_units[i + 1] += per
             else:
                 reasons.append({"type": "year_long", "msg": "年课需占后续学期,当前已是最后一格"})
         off = offerings.get(c)
-        if yl and not off:                              # 年课锁 S1 起(无 offering 数据也照锁)
+        if yl and not off:                              # year-long course is locked to start in S1 (locked even without offering data)
             off = ["S1"]
         if off and kind(i) not in off:
             reasons.append({"type": "offering", "msg": f"{kind(i)} 不开课(开课:{'/'.join(off)})"})
@@ -150,15 +152,15 @@ def sim_state(body: SimState):
                 for c in body.selected:
                     sim.select(c)
                 for p in body.chosen_plans:
-                    sim.choose_plan(p)          # 未知/自引用 plan 码抛 ValueError
+                    sim.choose_plan(p)          # unknown / self-referencing plan code raises ValueError
                 for ref in body.branch:
-                    sim.choose_branch(ref)      # 未知分支 ref 抛 ValueError
+                    sim.choose_branch(ref)      # unknown branch ref raises ValueError
             except ValueError as e:
                 return JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=400)
             by_rule = sim.available_by_rule()
             codes = _slot_codes(by_rule) | set(body.selected)
             locks = {d["code"]: d for d in sim.available_detailed()
-                     if d["state"] != "unlocked"}   # 只透出 locked/unknown
+                     if d["state"] != "unlocked"}   # only expose locked/unknown
             offerings = _offerings(conn, codes)
             inc_map: dict[str, set] = {}
             placed = [c for c in body.placement if isinstance(body.placement[c], int)]
@@ -198,7 +200,7 @@ def sim_state(body: SimState):
 
 @router.get("/courses")
 def sim_courses(q: str = "", in_program: str = ""):
-    """课程搜索(E/F 区选课用):码/课名 ILIKE;in_program=<pid> 时限定该程序课表内的码。"""
+    """Course search (for E/F section selection): code/title ILIKE; when in_program=<pid>, limit to codes within that program's course list."""
     q = q.strip()
     if len(q) < 2:
         return JSONResponse({"error": "搜索词至少 2 个字符"}, status_code=400)
@@ -266,17 +268,17 @@ def sim_schedule(body: SimSchedule):
                 ).fetchall():
                     if inc:
                         inc_map.setdefault(code, set()).update(inc)
-                    if sem:                                  # courses 里的开课学期(S1)
+                    if sem:                                  # offering semester from the courses table (S1)
                         offering_map.setdefault(code, set()).add(sem)
-                    if yl:                                   # 年课:横跨连续两学期
+                    if yl:                                   # year-long course: spans two consecutive semesters
                         year_long.add(code)
-                for c in body.selected:                      # S2 开课:出现在 S2 清单即开
+                for c in body.selected:                      # S2 offering: runs in S2 if it appears in the S2 list
                     if c in S2_CODES:
                         offering_map.setdefault(c, set()).add("S2")
             prereq_map = {c: _prereq_codes(sim._prereq.get(c))
                           for c in body.selected if sim._prereq.get(c)}
             units = {c: sim._course_units.get(c, simulator.DEFAULT_UNITS)
-                     for c in body.selected}       # 树外课(E/F)兜底全库学分
+                     for c in body.selected}       # out-of-tree courses (E/F) fall back to whole-DB units
             units.update(sim.units_map())
             result = scheduler.schedule(
                 body.selected, prereq_map=prereq_map, units_map=units,
@@ -300,7 +302,7 @@ class SimAdvise(BaseModel):
 
 @router.post("/advise")
 def sim_advise_ep(body: SimAdvise):
-    """AI 选课建议:确定性定池(枚举可选 ∪ E/F 可计入),LLM 只排序解释 + 双护栏。"""
+    """AI course advice: deterministic candidate pool (enumerated available ∪ countable E/F), LLM only ranks and explains + dual guardrails."""
     try:
         with psycopg.connect(DSN) as conn:
             conn.read_only = True

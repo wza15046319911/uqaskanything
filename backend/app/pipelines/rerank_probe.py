@@ -1,15 +1,19 @@
 """
-rerank_probe.py — cross-encoder rerank 能否分开 bi-encoder 分不开的「该答 / 该拒」
-(承接 threshold_scan:bge-m3 cosine 对虚构实体有不可约重叠,验证 cross-encoder 是否打破天花板)
+rerank_probe.py — can a cross-encoder rerank split the "should answer / should refuse" that the
+bi-encoder cannot
+(follows threshold_scan: bge-m3 cosine has an irreducible overlap on made-up entities; check
+whether the cross-encoder breaks the ceiling)
 
-对 kb_refuse.jsonl 每题:bge-m3 取 top-N 候选 chunk,cross-encoder 对 (query, chunk.text)
-重排打分;取最高 cross-encoder 分(ce_top)与最高 bi-encoder cosine(bi_top)。对比两个
-信号对 answer / refuse 的可分性(各自的重叠区与不可约误差数)。
+For each question in kb_refuse.jsonl: bge-m3 takes the top-N candidate chunks, the cross-encoder
+reranks and scores (query, chunk.text); take the highest cross-encoder score (ce_top) and the
+highest bi-encoder cosine (bi_top). Compare how well the two signals separate answer / refuse
+(each one's overlap region and number of irreducible errors).
 
-结论用途:若 ce_top 能把虚构问题压到真问题之下(重叠消失或缩小),说明 cross-encoder
-是当前拒答天花板的对症解,值得接进 kb_search;否则不接(省依赖与延迟)。
+Use of the conclusion: if ce_top can push the made-up questions below the real ones (overlap
+disappears or shrinks), the cross-encoder is the targeted fix for the current refuse ceiling and
+worth wiring into kb_search; otherwise do not wire it (save the dependency and latency).
 
-用法(需 torch + sentence-transformers + Postgres:5433 kb_chunks + Ollama bge-m3):
+Usage (needs torch + sentence-transformers + Postgres:5433 kb_chunks + Ollama bge-m3):
     python -m app.pipelines.rerank_probe
     python -m app.pipelines.rerank_probe --cand 20 --model cross-encoder/ms-marco-MiniLM-L-6-v2
 """
@@ -27,7 +31,7 @@ DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 
 def _candidates(conn, query: str, cand: int) -> list[tuple[str, float]]:
-    """bge-m3 取 top-cand:返回 [(chunk_text, bi_sim), ...]。"""
+    """bge-m3 takes the top-cand: return [(chunk_text, bi_sim), ...]."""
     vec = retrieval._embed(query)
     rows = conn.execute(
         "SELECT text, 1-(embedding<=>%s::vector) AS sim FROM kb_chunks "
@@ -36,15 +40,15 @@ def _candidates(conn, query: str, cand: int) -> list[tuple[str, float]]:
 
 
 def _separability(rows: list[dict], key: str) -> dict:
-    """对某信号(key=bi/ce)做可分性分析:返回 answer 最低分、refuse 最高分、
-    重叠区里的不可约误差(高分 refuse / 低分 answer)。"""
+    """Separability analysis for a signal (key=bi/ce): return the lowest answer score, the highest
+    refuse score, and the irreducible errors in the overlap region (high-score refuse / low-score answer)."""
     ans = sorted((r for r in rows if r["label"] == "answer"), key=lambda r: r[key])
     ref = sorted((r for r in rows if r["label"] == "refuse"), key=lambda r: -r[key])
     ans_min = ans[0][key] if ans else 0.0
     ref_max = ref[0][key] if ref else 0.0
-    overlap_ref = [r for r in ref if r[key] >= ans_min]   # refuse 但分高于某 answer
-    overlap_ans = [r for r in ans if r[key] <= ref_max]   # answer 但分低于某 refuse
-    # 最优单阈值准确率(在所有分值上找最佳切点)
+    overlap_ref = [r for r in ref if r[key] >= ans_min]   # refuse but scoring higher than some answer
+    overlap_ans = [r for r in ans if r[key] <= ref_max]   # answer but scoring lower than some refuse
+    # best single-threshold accuracy (find the best cut point over all score values)
     vals = sorted({r[key] for r in rows})
     best_acc, best_t = 0.0, None
     n = len(rows)
@@ -72,7 +76,7 @@ def main():
 
     from sentence_transformers import CrossEncoder
     print(f"加载 cross-encoder:{args.model} ...")
-    ce = CrossEncoder(args.model, trust_remote_code=True)  # jina-reranker-v2 自带 modeling 代码,需此项
+    ce = CrossEncoder(args.model, trust_remote_code=True)  # jina-reranker-v2 ships its own modeling code, this is needed
 
     rows: list[dict] = []
     print(f"评测集:{path.name} | {len(cases)} 题 | 候选 top-{args.cand} | 计算 bi/ce ...")
@@ -102,7 +106,7 @@ def main():
         else:
             print(f"  ✓ 无高分 refuse:任意切点 ∈ ({s['ref_max']:.3f}, {s['ans_min']:.3f}] 可 100% 分开")
 
-    # 逐题对照(看每个虚构问题在两个信号下的相对位置)
+    # per-question comparison (see where each made-up question sits under the two signals)
     print(f"\n=== 逐题(bi / ce,refuse 标 *)===")
     for r in sorted(rows, key=lambda r: -r["ce"]):
         tag = "*refuse" if r["label"] == "refuse" else " answer"

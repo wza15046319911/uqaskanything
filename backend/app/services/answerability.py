@@ -1,29 +1,29 @@
 """
-answerability.py — KB 答案可答性确定性门(student-facing 红线 3:refuse over wrong)。
+answerability.py — deterministic answerability gate for KB answers (student-facing red line 3: refuse over wrong).
 
-目的:KB 兜底层守住「虚构实体问题(火星交换生 / 哈利波特学院)不要拿通用官方页编一套」,
-同时**绝不误拒真学生的真问题**。判否信号纯代码、零 LLM、零 TTFT(规则 12):
+Purpose: the KB fallback layer must hold the line so that "fictional entity questions (Mars exchange student / Hogwarts college) do not get a story made up from a generic official page",
+while **never wrongly refusing a real student's real question**. The refuse signals are pure code, zero LLM, zero TTFT (rule 12):
 
-  1. 年份越界:问题里出现 [YEAR_LO, YEAR_HI] 之外的学年年份(如 2099)-> 拒。
-  2. 英文实体缺席:问题的英文内容词,在「召回 top-k chunk 文本 ∪ 全语料词集」里有任一
-     完全缺席(全语料 + 召回片段都查无此词)-> 该问指向库里没有记录的东西,拒。
+  1. Year out of range: a study-year year outside [YEAR_LO, YEAR_HI] (e.g. 2099) appears in the question -> refuse.
+  2. English entity absent: an English content word from the question that is fully absent from "recalled top-k chunk text ∪ whole-corpus word set"
+     (not found in either the whole corpus or the recalled snippets) -> the question points to something not recorded in the store, refuse.
 
-只对英文实体做缺席判定的原因(已用 data/eval/kb_refuse.jsonl 实测,见 docs/
-rerank_answerability_findings.md):KB 语料 2521 chunk 几乎全英文,中文词天然全部缺席——
-对中文词做缺席判定会把**所有**中文真问题(密码 / 学生证 / 图书馆)误拒,踩穿红线。
-中文「半相关虚构」(火星 / 太空站,bi-encoder sim 又高)无确定性信号可分:answerable() 只做
-能 100% 保证不误拒的确定性判定,放行后再由 P2 的 llm_answerable()(LLM 分类门)兜中文虚构实体。
+Why absence is only checked for English entities (measured with data/eval/kb_refuse.jsonl, see docs/
+rerank_answerability_findings.md): the KB corpus of 2521 chunks is almost all English, so Chinese words are naturally all absent —
+checking absence on Chinese words would wrongly refuse **all** real Chinese questions (password / student card / library), crossing the red line.
+Chinese "half-related fictional" cases (Mars / space station, with high bi-encoder sim) have no deterministic signal to split on: answerable() only does
+deterministic checks that can 100% guarantee no false refusal, and after passing, P2's llm_answerable() (LLM classifier gate) catches Chinese fictional entities.
 
-P2 门(llm_answerable):确定性门放行后再过一次 LLM 分类(只判可答/不可答,不决定高风险事实,
-规则 12)。LLM 抖动/解析失败一律 fail-open(放行)——「误拒真问题」比「漏拒虚构」更伤,红线 3 的
-「误拒=0」优先;漏拒由调用方日志可见(规则 19)。KB_LLM_GATE=0 可关(离线/省调用)。
+P2 gate (llm_answerable): after the deterministic gate passes, run one more LLM classification (only judges answerable/not, does not decide high-risk facts,
+rule 12). LLM jitter/parse failure always fails open (pass) — "wrongly refusing a real question" hurts more than "missing a fictional one", red line 3's
+"false refusal = 0" comes first; missed refusals are visible in caller logs (rule 19). KB_LLM_GATE=0 turns it off (offline / save calls).
 
-词表 data/kb/kb_vocab.txt 由 build_kb_vocab 随 KB 重建产出。缺失则**抛错**,不静默当空集
-(规则 19:配置缺失要 fail loud,否则缺席判定恒为真会批量误拒)。
+The word list data/kb/kb_vocab.txt is produced by build_kb_vocab when the KB is rebuilt. If missing, **raise** rather than silently treat as empty set
+(rule 19: config missing must fail loud, otherwise the absence check is always true and refuses in bulk).
 
-用法:
+Usage:
     from app.services import answerability
-    ok, reason = answerability.answerable(question, chunks)   # ok=False 表示应拒答
+    ok, reason = answerability.answerable(question, chunks)   # ok=False means should refuse
 """
 from __future__ import annotations
 import json
@@ -36,17 +36,17 @@ from app.services import llm
 
 VOCAB_PATH = DATA_DIR / "kb" / "kb_vocab.txt"
 
-# 学年年份收录区间(当前 2026;往回留转录/成绩、往后留选课规划的余量)。越界即拒。
+# Study-year range covered (currently 2026; keep room backward for transcript/grades, forward for enrolment planning). Out of range = refuse.
 YEAR_LO, YEAR_HI = 2020, 2028
 _YEAR_RE = re.compile(r"\b(?:19\d{2}|20\d{2})\b")
 
-# 英文词:字母开头,含字母数字(与 build_kb_vocab 一致,保证词表与查询同口径)
+# English word: starts with a letter, contains letters and digits (same as build_kb_vocab, so the word list and the query use one rule)
 EN_WORD = re.compile(r"[a-z][a-z0-9]+")
-# 问题里要做缺席判定的「实体词」最短长度:更短的(uq/gpa/vpn 等)不当实体,避免误拒
+# Minimum length for an "entity word" to be absence-checked in the question: shorter ones (uq/gpa/vpn etc.) are not treated as entities, to avoid false refusal
 _MIN_ENTITY_LEN = 4
 
-# 英文停用词:功能词 / 疑问词 / 情态词 / 高频泛用动词。实体名词不会落进这里,
-# 故停用词宁可多列也不削弱虚构实体的拦截力(只影响「要不要把某词当实体来查缺席」)。
+# English stopwords: function words / question words / modal words / high-frequency generic verbs. Entity nouns will not fall in here,
+# so it is fine to over-list stopwords without weakening the block on fictional entities (only affects "whether to absence-check a word as an entity").
 _STOPWORDS = {
     "the", "this", "that", "these", "those", "there", "here",
     "what", "when", "where", "which", "whom", "whose", "while",
@@ -65,7 +65,7 @@ _STOPWORDS = {
 
 
 def _out_of_range_year(question: str) -> int | None:
-    """问题里第一个越界的学年年份;无越界返回 None。"""
+    """First out-of-range study-year year in the question; return None if none are out of range."""
     for tok in _YEAR_RE.findall(question):
         y = int(tok)
         if not (YEAR_LO <= y <= YEAR_HI):
@@ -74,7 +74,7 @@ def _out_of_range_year(question: str) -> int | None:
 
 
 def _entity_tokens(question: str) -> list[str]:
-    """问题里要做缺席判定的英文实体词(小写、字母开头、长度达标、非停用词、去重保序)。"""
+    """English entity words in the question to absence-check (lowercase, letter-initial, long enough, not a stopword, deduped in order)."""
     seen: set[str] = set()
     out: list[str] = []
     for w in EN_WORD.findall(question.lower()):
@@ -86,7 +86,7 @@ def _entity_tokens(question: str) -> list[str]:
 
 
 def _chunk_words(chunks: list[dict]) -> set[str]:
-    """召回 top-k chunk 文本里的英文词集(用于「实体在召回片段里出现」的豁免)。"""
+    """English word set from the recalled top-k chunk text (used to exempt "the entity appears in a recalled snippet")."""
     words: set[str] = set()
     for c in chunks:
         words.update(EN_WORD.findall((c.get("text") or "").lower()))
@@ -94,8 +94,8 @@ def _chunk_words(chunks: list[dict]) -> set[str]:
 
 
 def load_vocab(path: Path | str = VOCAB_PATH) -> set[str]:
-    """读 build_kb_vocab 产出的词表(每行「词\\t词频」),返回词集。
-    文件缺失或为空一律抛错——绝不静默返回空集(空集会让每个实体都判缺席,批量误拒)。"""
+    """Read the word list produced by build_kb_vocab (each line is "word\\tfrequency"), return the word set.
+    If the file is missing or empty, always raise — never silently return an empty set (an empty set makes every entity judged absent, refusing in bulk)."""
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(
@@ -114,7 +114,7 @@ _VOCAB: set[str] | None = None
 
 
 def _vocab() -> set[str]:
-    """进程内缓存词表(首次访问加载;缺失抛错向上传播)。"""
+    """In-process cached word list (loaded on first access; if missing, the raise propagates up)."""
     global _VOCAB
     if _VOCAB is None:
         _VOCAB = load_vocab()
@@ -122,9 +122,9 @@ def _vocab() -> set[str]:
 
 
 def answerable(question: str, chunks: list[dict], vocab: set[str] | None = None) -> tuple[bool, str]:
-    """KB 召回结果可答性判定。返回 (ok, reason):ok=False 表示应拒答(上层 return [] 触发 KB_REFUSE)。
+    """Answerability check on KB recall results. Returns (ok, reason): ok=False means should refuse (the caller returns [] to trigger KB_REFUSE).
 
-    vocab 缺省取进程内词表(可注入做单测,免依赖磁盘/DB)。
+    vocab defaults to the in-process word list (can be injected for unit tests, to avoid depending on disk/DB).
     """
     bad_year = _out_of_range_year(question)
     if bad_year is not None:
@@ -139,7 +139,7 @@ def answerable(question: str, chunks: list[dict], vocab: set[str] | None = None)
     return True, "ok"
 
 
-# ---------- P2:LLM 可答性门(确定性门放行后再判,补中文虚构实体)----------
+# ---------- P2: LLM answerability gate (judged after the deterministic gate passes, to catch Chinese fictional entities) ----------
 
 _LLM_GATE_PROMPT = """你是 UQ 学生问答系统的「可答性判定器」。系统已用向量检索从 UQ 官方知识库取到若干页面,
 现在要你判断:这些官方页面是否真的覆盖了学生问题问的【那个具体事物】。
@@ -161,16 +161,16 @@ _LLM_GATE_PROMPT = """你是 UQ 学生问答系统的「可答性判定器」。
 
 
 def llm_gate_enabled() -> bool:
-    """P2 LLM 门开关(默认开;KB_LLM_GATE=0 关闭,用于离线/省调用场景)。"""
+    """P2 LLM gate switch (on by default; KB_LLM_GATE=0 turns it off, for offline / save-calls scenarios)."""
     return os.environ.get("KB_LLM_GATE", "1") != "0"
 
 
 def llm_answerable(question: str, chunks: list[dict]) -> tuple[bool, str]:
-    """P2:LLM 判定召回页面是否真覆盖问题(补确定性门兜不住的中文虚构实体)。
+    """P2: LLM judges whether the recalled pages really cover the question (catches Chinese fictional entities the deterministic gate cannot).
 
-    只做分类(规则 12:LLM 不决定高风险事实,只判可答/不可答)。门关或无 chunk 直接放行。
-    解析失败按放行处理(宁可漏拒也不误拒真问题,红线 3 的「误拒=0」优先;漏拒由调用方日志可见)。
-    LLM 调用本身的异常不在此吞——向上抛给调用方决定 fail-open。"""
+    Only does classification (rule 12: the LLM does not decide high-risk facts, only judges answerable/not). If the gate is off or there is no chunk, pass directly.
+    Parse failure is treated as pass (better to miss a refusal than wrongly refuse a real question, red line 3's "false refusal = 0" comes first; missed refusals are visible in caller logs).
+    The exception from the LLM call itself is not swallowed here — it propagates up for the caller to decide fail-open."""
     if not llm_gate_enabled() or not chunks:
         return True, "gate off / no chunk"
     titles = "\n".join(

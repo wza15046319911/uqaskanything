@@ -1,15 +1,15 @@
 """
-kb_eval.py — 知识库 M1.5 试点召回验证(验收点 2:问答能否命中正确页面)
-(对应 plan.md 第 1.5 / 第 4 节;红线第 7 条:评测要量化)
+kb_eval.py — knowledge base M1.5 pilot recall check (acceptance point 2: can QA hit the right page)
+(maps to plan.md sections 1.5 / 4; red line 7: evals must be quantified)
 
-用 bge-m3 给 chunks.jsonl 全部 chunk 算 embedding(缓存到 chunk_vecs.jsonl),
-对一组真实学生问题做向量召回,打印每题 top-k 命中,并按预期页面自动算
-hit@1 / hit@3。
+Use bge-m3 to compute embeddings for all chunks in chunks.jsonl (cached to chunk_vecs.jsonl),
+run vector recall on a set of real student questions, print the top-k hits per question, and
+automatically compute hit@1 / hit@3 against the expected page.
 
-注意:这是不依赖 Postgres 的快速验证。正式入库与检索走 pgvector +
-app/services/retrieval.py(阶段五),不是这里的内存余弦。
+Note: this is a fast check that does not depend on Postgres. The real loading and retrieval go
+through pgvector + app/services/retrieval.py (stage five), not the in-memory cosine here.
 
-用法(从 backend/ 跑,需 Ollama 在跑且已拉 bge-m3):
+Usage (run from backend/, needs Ollama running with bge-m3 pulled):
     python -m app.pipelines.kb_eval
     python -m app.pipelines.kb_eval --k 3 --recompute
 """
@@ -28,7 +28,7 @@ OLLAMA = "http://localhost:11434"
 EMBED_MODEL = "bge-m3"
 RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
-# (真实学生问题, 预期命中页面的 url 关键词)。问题对应试点抓的 40 页内容。
+# (real student question, url keyword of the expected hit page). Questions map to the 40 pages scraped in the pilot.
 QUERIES = [
     ("How do I query a final grade I think is wrong?", "querying-result"),
     ("What is the late enrolment fee?", "late-enrolment-fees"),
@@ -70,7 +70,7 @@ def _cos(a: list[float], b: list[float]) -> float:
 
 
 def load_vectors(chunks: list[dict], cache: Path, recompute: bool) -> dict[str, list[float]]:
-    """chunk id -> 向量;缓存到 cache,二次跑不重算。"""
+    """chunk id -> vector; cached to cache, not recomputed on a second run."""
     vecs: dict[str, list[float]] = {}
     if cache.exists() and not recompute:
         for ln in cache.read_text(encoding="utf-8").splitlines():

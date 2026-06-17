@@ -1,9 +1,10 @@
 """
-program_lookup.py — program 维度问答助手(纯 SQL)
-查 program_course / programs 两张表,回答「某课归属哪些 program」「某 program 有哪些课」「按名字找 program」。
-全部只读 SELECT,psycopg3 风格;可 import 的函数,文件末尾用真实 DB 自测。
+program_lookup.py — program-level question helper (pure SQL)
+Reads program_course / programs tables to answer "which programs use this course",
+"which courses a program has", and "find a program by name".
+All read-only SELECT, psycopg3 style; importable functions, with a real-DB self-test at the end of the file.
 
-公开函数:
+Public functions:
     programs_for_course(conn, code) -> list[dict]
     courses_for_program(conn, program_id, requirement_type=None, direct_only=True) -> list[dict]
     find_program(conn, name_substr) -> list[tuple[str, str]]
@@ -18,13 +19,13 @@ from app.core.config import DSN
 
 
 def programs_for_course(conn, code: str, collapse: bool = False) -> list[dict]:
-    """某课是哪些 program 的必修/选修。join programs 取 title。
+    """Which programs use this course as core/elective. Join programs to get title.
 
-    collapse=False(默认,旧行为):按 requirement_type, title 排序,每个 program 可能
-        因多个 via_plan/course_list 而出现多行(放大行)。
-    collapse=True:按 (program_id, requirement_type) 折叠去重,把 course_list/via_plan/
-        plan_subtype 聚合成列表(各自去重),并给出原始行数 row_count;排序以 program_id
-        优先,保证同一 program 的多个 requirement_type 连续相邻。
+    collapse=False (default, old behavior): order by requirement_type, title. Each program may
+        appear in many rows due to multiple via_plan/course_list (row blow-up).
+    collapse=True: fold and dedup by (program_id, requirement_type), aggregate course_list/via_plan/
+        plan_subtype into lists (each deduped), and give the original row count row_count. Sort puts
+        program_id first, so multiple requirement_type rows of the same program stay next to each other.
     """
     if not collapse:
         sql = """
@@ -43,8 +44,8 @@ def programs_for_course(conn, code: str, collapse: bool = False) -> list[dict]:
             for r in rows
         ]
 
-    # collapse=True:在 SQL 里按 (program_id, requirement_type) 聚合,
-    # 用 array_agg(DISTINCT ...) 把多行的 course_list/via_plan/plan_subtype 收成列表。
+    # collapse=True: aggregate by (program_id, requirement_type) in SQL,
+    # use array_agg(DISTINCT ...) to collect multi-row course_list/via_plan/plan_subtype into lists.
     sql = """
         SELECT pc.program_id, p.title, pc.requirement_type,
                array_agg(DISTINCT pc.course_list) AS course_lists,
@@ -68,15 +69,15 @@ def programs_for_course(conn, code: str, collapse: bool = False) -> list[dict]:
 
 def courses_for_program(conn, program_id: str, requirement_type: str | None = None,
                         direct_only: bool = True) -> list[dict]:
-    """某 program 的课;direct_only 时只取 via_plan='';left join courses 补 title;按 course_code 排序。
+    """Courses of a program; direct_only takes only via_plan=''; left join courses for title; order by course_code.
 
-    注意:courses.code 不是主键(一门课有多个 offering),join 可能放大行数,
-    取 DISTINCT 的 (program_id, course_code, requirement_type, course_list, via_plan, plan_subtype)
-    再补 title,避免重复行。
+    Note: courses.code is not a primary key (one course has multiple offerings), so the join may blow up
+    row count. Take DISTINCT on (program_id, course_code, requirement_type, course_list, via_plan, plan_subtype)
+    then add title, to avoid duplicate rows.
 
-    假设:DISTINCT ON 把同一 course_code 的多个 offering 折成一行,这隐含「同 code 同 title」。
-    当前库内每个 code 的 title 唯一,该假设成立。若将来同 code 出现多 title,
-    ORDER BY 末尾的 c.title 升序会保留字母序最小的那行(确定性,不会随机丢数据)。
+    Assumption: DISTINCT ON folds multiple offerings of the same course_code into one row, which implies "same code, same title".
+    Right now each code in the DB has a unique title, so this assumption holds. If later the same code has multiple titles,
+    the ascending c.title at the end of ORDER BY keeps the alphabetically smallest row (deterministic, never drops data at random).
     """
     conds = ["pc.program_id = %s"]
     params: list = [program_id]
@@ -107,7 +108,7 @@ def courses_for_program(conn, program_id: str, requirement_type: str | None = No
 
 
 def excluded_courses(conn, program_id: str) -> list[str]:
-    """该 program 无条件禁修的课码(program_exclude 表,如 BCompSc 禁 MATH1040)。"""
+    """Course codes the program bans without condition (program_exclude table, e.g. BCompSc bans MATH1040)."""
     rows = conn.execute(
         "SELECT course_code FROM program_exclude WHERE program_id = %s ORDER BY course_code",
         (program_id,)).fetchall()
@@ -115,14 +116,14 @@ def excluded_courses(conn, program_id: str) -> list[str]:
 
 
 def is_excluded(conn, program_id: str, course_code: str) -> bool:
-    """该 program 是否无条件禁修某课。"""
+    """Whether the program bans a given course without condition."""
     return conn.execute(
         "SELECT 1 FROM program_exclude WHERE program_id = %s AND course_code = %s LIMIT 1",
         (program_id, course_code.upper())).fetchone() is not None
 
 
 def programs_excluding(conn, course_code: str) -> list[tuple[str, str]]:
-    """禁修某课的所有 program,返回 [(program_id, title)]。"""
+    """All programs that ban a given course, returns [(program_id, title)]."""
     rows = conn.execute(
         "SELECT pe.program_id, p.title FROM program_exclude pe "
         "LEFT JOIN programs p ON p.program_id = pe.program_id "
@@ -131,14 +132,14 @@ def programs_excluding(conn, course_code: str) -> list[tuple[str, str]]:
 
 
 def aux_rules(conn, program_id: str) -> list[dict]:
-    """该 program 的全部附加规则(禁课/level 上限/plan 冲突…),供展示。"""
+    """All extra rules of the program (banned courses / level cap / plan conflicts ...), for display."""
     row = conn.execute("SELECT aux_rules FROM programs WHERE program_id = %s", (program_id,)).fetchone()
     return row[0] if row and row[0] else []
 
 
 def has_plan_level_core(conn, program_id: str) -> bool:
-    """该 program 是否有 plan 层(via_plan<>'')核心课。direct_only 的 p2c 查询不会展示这些
-    (major/方向的核心课),用于在答案里补一句提示。"""
+    """Whether the program has plan-level (via_plan<>'') core courses. The direct_only p2c query does not show these
+    (the core courses of a major/direction), used to add a hint line in the answer."""
     row = conn.execute(
         "SELECT 1 FROM program_course WHERE program_id = %s "
         "AND requirement_type = 'core' AND via_plan <> '' LIMIT 1", (program_id,)).fetchone()
@@ -146,18 +147,18 @@ def has_plan_level_core(conn, program_id: str) -> bool:
 
 
 def find_program(conn, name_substr: str) -> list[tuple[str, str]]:
-    """按 title ILIKE 模糊找 program,返回 [(program_id, title)]。
+    """Fuzzy-find a program by title ILIKE, returns [(program_id, title)].
 
-    排序确定性:精确同名 > 标题以该名开头 > 标题更短(更具体)> 字母序。
-    调用方取 progs[0],所以子串查询(如 'Master of Data Science')必须让独立专业
-    排在组合专业('Bachelor of X / Master of Data Science')之前,否则答非所问。
+    Sort is deterministic: exact same name > title starts with the name > shorter title (more specific) > alphabetical.
+    The caller takes progs[0], so a substring query (e.g. 'Master of Data Science') must put the standalone program
+    before the combined program ('Bachelor of X / Master of Data Science'), otherwise it answers the wrong thing.
 
-    空串/纯空白短路返回 []:否则 '%%' 会命中全部 program(无意义的全表返回)。
+    Empty/whitespace-only short-circuits to []: otherwise '%%' would match every program (a meaningless full-table return).
     """
     if name_substr is None or not name_substr.strip():
         return []
-    # 归一内部空白:用户/LLM 可能在词间多打空格(如 'Bachelor of  Information Technology'),
-    # 而库内 title 是单空格,ILIKE 对空格敏感会整串落空。折成单空格再匹配。
+    # Normalize inner whitespace: user/LLM may type extra spaces between words (e.g. 'Bachelor of  Information Technology'),
+    # while DB titles use single spaces, and ILIKE is space-sensitive so the whole string would miss. Collapse to single space before matching.
     name = re.sub(r"\s+", " ", name_substr.strip())
     sql = """
         SELECT program_id, title
@@ -197,12 +198,12 @@ if __name__ == "__main__":
             print(f"  {d['course_code']}  {d['title']}  "
                   f"(list={d['course_list']!r}, via_plan={d['via_plan']!r})")
 
-        # ---- 复现用例验证(断言失败即报错,不静默) ----
+        # ---- Reproduction-case checks (assert failure raises, never silent) ----
         print("\n=== 复现用例验证 ===")
         assert find_program(conn, "") == [], "find_program('') 应短路返回 []"
         assert find_program(conn, "  ") == [], "find_program('  ') 应短路返回 []"
         assert len(find_program(conn, "Computer Science")) > 0, "Computer Science 仍应命中"
-        # 子串查询命中多个时,独立专业(精确同名)必须排第一,否则 progs[0] 选到组合专业
+        # When a substring query matches several, the standalone program (exact same name) must rank first, else progs[0] picks the combined program
         mds = find_program(conn, "Master of Data Science")
         assert len(mds) > 1, "Master of Data Science 应命中独立 + 组合多个专业"
         assert mds[0][1].lower() == "master of data science", \
@@ -214,10 +215,10 @@ if __name__ == "__main__":
         collapsed = programs_for_course(conn, "CSSE1001", collapse=True)
         distinct_pids = len({d["program_id"] for d in raw})
         assert len(collapsed) >= distinct_pids, "折叠后行数不应少于 distinct program_id"
-        # 折叠行数 = distinct (program_id, requirement_type),且 distinct program_id 数一致
+        # Collapsed row count = distinct (program_id, requirement_type), and distinct program_id count matches
         assert len({d["program_id"] for d in collapsed}) == distinct_pids, \
             "折叠前后 distinct program_id 数应一致"
-        # 同一 program_id 的行必须连续(排序 program_id 优先)
+        # Rows of the same program_id must be contiguous (sort puts program_id first)
         seen: set[str] = set()
         prev = None
         for d in collapsed:

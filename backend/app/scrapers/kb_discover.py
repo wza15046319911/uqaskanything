@@ -1,17 +1,17 @@
 """
-kb_discover.py — 知识库爬取 阶段一:URL 发现(产出 urls.csv)
-(对应 plan.md 第 1 节 / 里程碑 M1)
+kb_discover.py — knowledge base crawl phase one: URL discovery (produces urls.csv)
+(matches plan.md section 1 / milestone M1)
 
-流程(每个域名依次):
-  1. robots.txt -> 取声明的 Sitemap 地址 + Disallow 规则
-  2. 无声明则退回 https://<domain>/sitemap.xml;sitemap index 递归展开成全量 URL
-  3. 路径黑名单 + robots Disallow 过滤
-  4. 无 sitemap 的子站降级:同域 BFS(深度/页数有上限)
-  5. 写 data/kb/urls.csv,字段:url, domain, path_pattern, guessed_type, lastmod, source
+Flow (one domain after another):
+  1. robots.txt -> take the declared Sitemap address + Disallow rules
+  2. if none declared, fall back to https://<domain>/sitemap.xml; expand sitemap index into all URLs
+  3. path blacklist + robots Disallow filter
+  4. fallback for subsites without sitemap: same-domain BFS (depth/page count capped)
+  5. write data/kb/urls.csv, fields: url, domain, path_pattern, guessed_type, lastmod, source
 
-验收(M1):人工扫一遍 urls.csv,确认各域名覆盖面与量级合理,再进入阶段二。
+Acceptance (M1): manually scan urls.csv, confirm each domain's coverage and scale are reasonable, then move to phase two.
 
-用法(从 backend/ 跑):
+Usage (run from backend/):
     python -m app.scrapers.kb_discover
     python -m app.scrapers.kb_discover --domains support.my.uq.edu.au
     python -m app.scrapers.kb_discover --no-bfs --out data/kb/urls.csv
@@ -32,44 +32,44 @@ from app.core.config import DATA_DIR
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (uq-kb-crawler; discovery)"}
 
-# 阶段一目标域名(plan 第 0 节)。优先级仅作记录,不影响发现逻辑。
-# 这三个站有 XML sitemap,requests+lxml 即可发现 URL。
+# phase one target domains (plan section 0). priority is record only, it does not affect discovery logic.
+# these three sites have an XML sitemap, requests+lxml can discover URLs.
 DOMAINS: list[tuple[str, str]] = [
     ("support.my.uq.edu.au", "P0"),
     ("my.uq.edu.au", "P0"),
     ("study.uq.edu.au", "P1"),
 ]
 
-# 推迟到阶段四(Playwright)处理,不在阶段一发现:
-#   - policies.uq.edu.au(P1,原 ppl.app.uq.edu.au 整域 301 迁来):JS 渲染 SPA,无 XML sitemap
-#   - library.uq.edu.au(P2):同为 JS SPA,首页仅 1 个 <a>,无 sitemap
-#   - graduate-school.uq.edu.au(P2):DNS 已不解析,域名下线
+# deferred to phase four (Playwright), not discovered in phase one:
+#   - policies.uq.edu.au (P1, the old ppl.app.uq.edu.au whole domain 301 moved here): JS-rendered SPA, no XML sitemap
+#   - library.uq.edu.au (P2): also a JS SPA, home page has only 1 <a>, no sitemap
+#   - graduate-school.uq.edu.au (P2): DNS no longer resolves, domain offline
 
-# robots Disallow 覆盖白名单:已获用户明确授权对其抓取的 UQ 站点。
-# support.my.uq.edu.au 的 robots 对非主流搜索引擎 UA 整站 Disallow(Oracle Service Cloud
-# 按浏览量计费所致),但它是 P0 核心 FAQ/KB,经授权纳入。
+# robots Disallow override whitelist: UQ sites with explicit user authorization to crawl.
+# support.my.uq.edu.au robots Disallow the whole site for non-major search engine UA (Oracle Service Cloud
+# charges by page views), but it is the P0 core FAQ/KB, included with authorization.
 ROBOTS_OVERRIDE = {"support.my.uq.edu.au"}
 
-# 路径段黑名单(所有域名通用,plan 第 0 节):任一路径段命中即排除。
-# 按段精确匹配,不会误伤 /about-us、/news-feed 这类(段名是 about-us / news-feed)。
+# path-segment blacklist (shared by all domains, plan section 0): exclude if any path segment hits.
+# exact match by segment, will not wrongly hit /about-us, /news-feed (segment names are about-us / news-feed).
 EXCLUDE_SEG = (
     "news", "events", "event", "contact", "about",
     "staff", "people", "profile", "media", "login", "search",
 )
 
-# 域名专属排除(同样按段匹配):study 的 study-options 是 program/course 详情页
-# (DB 已有,plan 命令排除),stories 是营销文。
+# per-domain exclude (also matched by segment): study's study-options are program/course detail pages
+# (already in DB, plan tells to exclude), stories are marketing text.
 PER_DOMAIN_EXCLUDE: dict[str, tuple[str, ...]] = {
     "study.uq.edu.au": ("study-options", "stories"),
 }
 
-# guessed_type 按域名归类
+# guessed_type grouped by domain
 FAQ_DOMAINS = {"support.my.uq.edu.au"}
 POLICY_DOMAINS = {"policies.uq.edu.au"}
 
 
 def _get(url: str, retries: int = 3, timeout: int = 30) -> requests.Response | None:
-    """带重试的 GET;最终失败返回 None(由调用方计入跳过/失败,不静默吞)。"""
+    """GET with retry; returns None on final failure (caller counts it as skip/fail, not silently swallowed)."""
     last = None
     for i in range(retries):
         try:
@@ -96,7 +96,7 @@ def _guessed_type(domain: str) -> str:
 
 
 def _path_pattern(url: str) -> str:
-    """取路径首段做粗分组,如 /managing-my-program/...-> '/managing-my-program/'。"""
+    """take the first path segment as a rough group, like /managing-my-program/... -> '/managing-my-program/'."""
     segs = [s for s in urlparse(url).path.split("/") if s]
     return f"/{segs[0]}/" if segs else "/"
 
@@ -108,7 +108,7 @@ def _excluded(url: str, domain: str) -> bool:
 
 
 def load_robots(domain: str) -> RobotFileParser | None:
-    """读 robots.txt 解析成 RobotFileParser;取不到返回 None。"""
+    """read robots.txt and parse into RobotFileParser; return None if not available."""
     resp = _get(f"https://{domain}/robots.txt")
     if resp is None or resp.status_code == 404:
         return None
@@ -118,7 +118,7 @@ def load_robots(domain: str) -> RobotFileParser | None:
 
 
 def _xml_root(resp: requests.Response):
-    """sitemap 响应 -> lxml root;支持 .gz。解析失败返回 None。"""
+    """sitemap response -> lxml root; supports .gz. return None on parse failure."""
     content = resp.content
     if resp.url.endswith(".gz") or content[:2] == b"\x1f\x8b":
         try:
@@ -134,7 +134,7 @@ def _xml_root(resp: requests.Response):
 
 
 def collect_from_sitemaps(seeds: list[str], delay: float) -> list[tuple[str, str]]:
-    """递归展开 sitemap / sitemapindex,返回 [(url, lastmod), ...]。"""
+    """recursively expand sitemap / sitemapindex, return [(url, lastmod), ...]."""
     out: list[tuple[str, str]] = []
     seen: set[str] = set()
     queue = deque(seeds)
@@ -167,7 +167,7 @@ def collect_from_sitemaps(seeds: list[str], delay: float) -> list[tuple[str, str
 
 def bfs(domain: str, rp: RobotFileParser | None,
         max_depth: int, max_pages: int, delay: float) -> list[tuple[str, str]]:
-    """同域 BFS 降级:无 sitemap 时用。lastmod 留空。"""
+    """same-domain BFS fallback: used when there is no sitemap. lastmod left empty."""
     start = f"https://{domain}/"
     seen: set[str] = {start}
     queue: deque[tuple[str, int]] = deque([(start, 0)])
@@ -202,7 +202,7 @@ def bfs(domain: str, rp: RobotFileParser | None,
 
 def discover_domain(domain: str, use_bfs: bool, max_depth: int,
                     max_pages: int, delay: float) -> tuple[list[dict], dict]:
-    """单域发现。返回 (records, stats)。records 已过滤。"""
+    """single-domain discovery. return (records, stats). records already filtered."""
     rp = load_robots(domain)
     seeds = list(rp.site_maps() or []) if rp else []
     source = "sitemap"

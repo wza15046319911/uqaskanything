@@ -1,30 +1,30 @@
 """
-program_scraper.py — 阶段六:抓 UQ program 的【完整规则树】+ 递归展开 plan 分支
-(对应 plan.md 第 6 节 program 维度,支持选课模拟)
+program_scraper.py — phase six: fetch a UQ program's [full rule tree] + recursively expand plan branches
+(matches plan.md section 6 program dimension, supports course planning simulation)
 
-两层 + 递归:
-  1. program 搜索页 -> 各 program 的 acad_prog id + 名称
-  2. program_list.html?acad_prog=X -> window.AppData(JSON)规则树
-  3. 规则里的 plan item(major/minor/...)递归抓 plan_display.html?acad_plan=CODE
-     (plan 页同款 AppData 结构,解析逻辑复用)。带缓存 + 防环 + 深度限制。
+Two layers + recursion:
+  1. program search page -> each program's acad_prog id + name
+  2. program_list.html?acad_prog=X -> window.AppData (JSON) rule tree
+  3. plan items in the rules (major/minor/...) recursively fetch plan_display.html?acad_plan=CODE
+     (plan page has the same AppData structure, parse logic reused). with cache + cycle guard + depth limit.
 
-每个课程组 = {header, body} 节点:
-  - header.selectionRule.text/params -> 规则句 + min/max 学分(N=min, M=max)
-  - header.partReference (A / C.1) -> 层级路径
-  - body: CurriculumReference(课程或 plan 引用) / EquivalenceGroup / WildCardItem
+Each course group = {header, body} node:
+  - header.selectionRule.text/params -> rule sentence + min/max units (N=min, M=max)
+  - header.partReference (A / C.1) -> hierarchy path
+  - body: CurriculumReference (course or plan reference) / EquivalenceGroup / WildCardItem
 
-输出 programs.jsonl,每行一个 program:
+Output programs.jsonl, one program per line:
   {program_id, title, total_units, rules:[
      {ref, title, part_type, rule_text, units_min, units_max, select_type,
       items:[ {kind:course,code,name,units}
             | {kind:equivalence,options:[...]}
             | {kind:wildcard,org_code,...}
-            | {kind:plan,code,name,subtype,units_min,units_max, rules:[...递归展开...]} ]} ]}
+            | {kind:plan,code,name,subtype,units_min,units_max, rules:[...recursively expanded...]} ]} ]}
 
-用法:
-    python program_scraper.py --acad-prog 2559           # 单个测试(含 plan 展开)
-    python program_scraper.py --faculty eait --limit 10  # 10 个 EAIT program
-    python program_scraper.py --acad-prog 2559 --no-expand   # 不展开 plan
+Usage:
+    python program_scraper.py --acad-prog 2559           # single test (with plan expand)
+    python program_scraper.py --faculty eait --limit 10  # 10 EAIT programs
+    python program_scraper.py --acad-prog 2559 --no-expand   # do not expand plan
 """
 from __future__ import annotations
 import re
@@ -40,9 +40,9 @@ SEARCH = ("https://programs-courses.uq.edu.au/search.html?keywords=&searchType=p
 LIST = "https://programs-courses.uq.edu.au/program_list.html?acad_prog={pid}&year={year}"
 PLAN = "https://programs-courses.uq.edu.au/plan_display.html?acad_plan={code}&year={year}"
 HEADERS = {"User-Agent": "Mozilla/5.0 (course-kb-scraper)"}
-CODE = re.compile(r"^[A-Z]{4}\d{4}$")          # 真课程码(排除 6 字母的 plan 引用)
-DELAY = 1.0                                     # plan 抓取前的礼貌间隔(main 按 --delay 覆盖)
-_plan_cache: dict[str, list] = {}              # plan code -> 已展开规则(整轮共享,避免重复抓)
+CODE = re.compile(r"^[A-Z]{4}\d{4}$")          # real course code (exclude 6-letter plan references)
+DELAY = 1.0                                     # polite interval before fetching a plan (main overrides via --delay)
+_plan_cache: dict[str, list] = {}              # plan code -> expanded rules (shared across the whole run, avoid refetch)
 
 
 def _get(url: str, retries: int = 3) -> str:
@@ -96,7 +96,7 @@ def _items(body: list) -> list[dict]:
             code = cr.get("code") or ""
             if CODE.match(code):
                 out.append(_course(cr))
-            elif code:                          # plan 引用(major/minor/...);rules 由展开阶段补
+            elif code:                          # plan reference (major/minor/...); rules filled by the expand stage
                 out.append({"kind": "plan", "code": code, "name": _txt(cr.get("name")),
                             "subtype": cr.get("subtype"), "units_min": cr.get("unitsMinimum"),
                             "units_max": cr.get("unitsMaximum"), "rules": None})
@@ -114,9 +114,9 @@ def _items(body: list) -> list[dict]:
 
 
 def _level_aux(aux_list) -> list[dict]:
-    """auxiliaryRules 里的 level 约束 -> [{kind:level_min|level_max, units, level, or_higher, text}]。
-    只取「at least / at most [N] units at level [LEVEL]」这类(供模拟器按 level 校验下限/上限);
-    其余(无条件 exclude 等)跳过——那些走 parse_aux_rules 入 programs.aux_rules。"""
+    """level constraints inside auxiliaryRules -> [{kind:level_min|level_max, units, level, or_higher, text}].
+    Take only "at least / at most [N] units at level [LEVEL]" types (so the simulator can check the lower/upper bound by level);
+    skip the rest (unconditional exclude, etc.) -- those go through parse_aux_rules into programs.aux_rules."""
     out = []
     for a in aux_list or []:
         if not isinstance(a, dict):
@@ -148,9 +148,9 @@ def _level_aux(aux_list) -> list[dict]:
 
 
 def plan_container_aux(data) -> list[dict]:
-    """plan 页里 plan 级 level 约束:挂在无 partReference 的容器 header 上(如 SOFTWX5528 的
-    「at least 8 units at level 7」)。group 级约束(挂带 partReference 的 group header,如 D 的
-    「at most 4 units at level 4」)由 _rule() 收到对应规则,不在此重复。"""
+    """plan-level level constraints on a plan page: attached to the container header with no partReference (like SOFTWX5528's
+    "at least 8 units at level 7"). group-level constraints (attached to a group header with partReference, like D's
+    "at most 4 units at level 4") are picked up by _rule() with their rule, not repeated here."""
     raw: list = []
 
     def walk(o):
@@ -174,10 +174,10 @@ def _rule(header: dict, body: list) -> dict:
     params = sr.get("params") or header.get("params") or []
     pmap = {p.get("name"): p.get("value") for p in params if isinstance(p, dict)}
     rule_text = text
-    for k, v in pmap.items():                   # 填 [N]/[M]/[PLANTYPE] 占位符
+    for k, v in pmap.items():                   # fill the [N]/[M]/[PLANTYPE] placeholders
         rule_text = rule_text.replace(f"[{k}]", str(v))
     select_type = "all" if "ALL of the following" in (text or "") else "select"
-    # SubRule 父节点(如 2559 的 C)的 min/max 不在 selectionRule 里,而在 header.unitsMin/Max
+    # the SubRule parent node (like 2559's C) min/max is not in selectionRule, but in header.unitsMin/Max
     r = {"ref": header.get("partReference"), "title": _txt(header.get("title")),
          "part_type": header.get("partType"), "rule_text": rule_text,
          "units_min": pmap["N"] if "N" in pmap else header.get("unitsMin", header.get("unitsMinimum")),
@@ -195,14 +195,14 @@ def _rule(header: dict, body: list) -> dict:
         nt = _txt(BeautifulSoup(notes, "html.parser").get_text(" "))
         if nt:
             r["notes"] = nt
-    aux = _level_aux(header.get("auxiliaryRules"))   # group 级 level 约束(如 D 的 ≤4@L4)
+    aux = _level_aux(header.get("auxiliaryRules"))   # group-level level constraints (like D's ≤4@L4)
     if aux:
         r["aux_rules"] = aux
     return r
 
 
 def parse_rules(data) -> list[dict]:
-    """从 AppData 抽规则树(program 与 plan 同款结构)"""
+    """extract the rule tree from AppData (program and plan share the same structure)"""
     rules: list[dict] = []
 
     def walk(node):
@@ -210,8 +210,8 @@ def parse_rules(data) -> list[dict]:
             header, body = node.get("header"), node.get("body")
             if isinstance(header, dict) and isinstance(body, list):
                 r = _rule(header, body)
-                # ref 部件 items 空也保留:SubRule 父(带 rule_logic/children_refs,
-                # 如 2559 的 C「No Major Option」)和空表选择组(如 E,语义=程序课表内任选)
+                # keep a ref part even when items is empty: SubRule parent (with rule_logic/children_refs,
+                # like 2559's C "No Major Option") and empty-list select groups (like E, meaning = pick any in the program list)
                 if r["items"] or (r.get("ref") and (r.get("rule_logic")
                                                     or header.get("selectionRule"))):
                     rules.append(r)
@@ -226,7 +226,7 @@ def parse_rules(data) -> list[dict]:
 
 
 def expand_plans(rules: list, year: str, seen: set, depth: int):
-    """就地把每个 plan item 的 rules 填上(递归展开 major/minor/...);plan 级 level 约束挂 aux_rules。"""
+    """fill each plan item's rules in place (recursively expand major/minor/...); plan-level level constraints attach to aux_rules."""
     for r in rules:
         for it in r["items"]:
             if it.get("kind") == "plan" and it.get("code"):
@@ -237,10 +237,10 @@ def expand_plans(rules: list, year: str, seen: set, depth: int):
 
 
 def fetch_plan_rules(code: str, year: str, seen: set, depth: int) -> tuple[list, list]:
-    """返回 (plan 子规则, plan 级 level 约束)。"""
+    """return (plan sub-rules, plan-level level constraints)."""
     if code in _plan_cache:
         return _plan_cache[code]
-    if depth <= 0 or code in seen:              # 深度耗尽或成环 -> 不再展开
+    if depth <= 0 or code in seen:              # depth exhausted or cycle -> stop expanding
         return [], []
     time.sleep(DELAY)
     try:
@@ -255,7 +255,7 @@ def fetch_plan_rules(code: str, year: str, seen: set, depth: int) -> tuple[list,
 
 
 def _collect_aux(o, out: list):
-    """递归收集 AppData 里所有 auxiliaryRules 节点。"""
+    """recursively collect all auxiliaryRules nodes in AppData."""
     if isinstance(o, dict):
         if isinstance(o.get("auxiliaryRules"), list):
             out.extend(o["auxiliaryRules"])
@@ -267,8 +267,8 @@ def _collect_aux(o, out: list):
 
 
 def _render_param(val) -> tuple[str, list]:
-    """param.value -> (显示串, 课码list)。课用 code,plan 用 名+subtype,其余尽量取 name;
-    无法渲染的 dict 返回空串,避免把原始 JSON 塞进文本。"""
+    """param.value -> (display string, course code list). course uses code, plan uses name+subtype, otherwise take name if possible;
+    a dict that cannot be rendered returns empty string, to avoid putting raw JSON into the text."""
     codes: list = []
 
     def one(v):
@@ -290,9 +290,9 @@ def _render_param(val) -> tuple[str, list]:
 
 
 def parse_aux_rules(data: dict) -> list[dict]:
-    """从 AppData 抽程序级附加规则(auxiliaryRules)。返回 [{type, text, exclude_codes}]。
-    type='exclude' = 无条件"No credit will be given for [课]",其 exclude_codes 即程序级禁课
-    (如 BCompSc 禁 MATH1040);其余类型(条件禁课/level 上限/plan 冲突…)只存文本备查。"""
+    """extract program-level additional rules (auxiliaryRules) from AppData. return [{type, text, exclude_codes}].
+    type='exclude' = an unconditional "No credit will be given for [course]", its exclude_codes are the program-level banned courses
+    (like BCompSc bans MATH1040); other types (conditional ban / level cap / plan conflict ...) only keep the text for reference."""
     raw: list = []
     _collect_aux((data or {}).get("programRequirements") or {}, raw)
     out = []
@@ -327,9 +327,9 @@ def parse_aux_rules(data: dict) -> list[dict]:
 
 
 def program_rule_logic(data) -> str | None:
-    """程序级布尔公式(如 "Part A AND ( Part B OR Part C ) AND ...")。
-    取无 partReference 节点上的 ruleLogic(有 partReference 的是 SubRule 内部公式);
-    多 component 时各自括号后 AND 连接。"""
+    """program-level boolean formula (like "Part A AND ( Part B OR Part C ) AND ...").
+    take ruleLogic on nodes with no partReference (those with partReference are SubRule internal formulas);
+    with multiple components, wrap each in brackets and join with AND."""
     found: list[str] = []
 
     def walk(o):
@@ -364,7 +364,7 @@ def parse_program(pid: str, year: str = "2026", expand: bool = True, max_depth: 
 
 
 def _count(rules: list) -> tuple[int, int]:
-    """递归统计 (课程数, plan数)"""
+    """recursively count (course count, plan count)"""
     nc = npl = 0
     for r in rules:
         for it in r["items"]:
@@ -409,7 +409,7 @@ def main():
         pids = pids[:args.limit]
     print(f"program 数: {len(pids)} | 展开 plan: {not args.no_expand} (深度 {args.max_depth})")
 
-    no_rules: list[str] = []        # 无课表(研究型学位 / 已归档旧版,非错误)
+    no_rules: list[str] = []        # no course list (research degree / archived old version, not an error)
     fails: list[tuple[str, str]] = []
     with open(args.out, "w", encoding="utf-8") as f:
         for pid in pids:

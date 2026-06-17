@@ -83,7 +83,7 @@ export default function SimPage() {
     void refresh(next)
   }
 
-  // 学期数自动跟随学位总学分(总学分 / 8),已排课作为下限。
+  // The number of semesters follows the degree's total units automatically (total units / 8), with already-placed courses as a lower bound.
   useEffect(() => {
     if (!data) return
     const n = computeSemesters(data.total_units, state.placement)
@@ -106,7 +106,7 @@ export default function SimPage() {
     })
   }
 
-  // 从问答页跳转而来:?program=<id> 预选该专业(切到新专业即清空已选,符合「换专业重开」语义)。
+  // Coming from the QA page: ?program=<id> pre-selects that program (switching to a new program clears the selection, matching the "change program, start over" semantics).
   useEffect(() => {
     const pid = searchParams.get('program')
     if (pid && pid !== state.program_id) pickProgram(pid)

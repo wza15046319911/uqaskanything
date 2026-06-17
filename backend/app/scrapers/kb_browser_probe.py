@@ -1,11 +1,11 @@
 """
-kb_browser_probe.py — Playwright 可行性验证(spike):support 反爬能否用真实浏览器绕过
-(对应 plan.md 阶段四 / docs/kb_progress.md「Playwright 批次」)
+kb_browser_probe.py — Playwright feasibility check (spike): can the support anti-bot be bypassed with a real browser
+(matches plan.md phase four / docs/kb_progress.md "Playwright batch")
 
-support detail 页对普通 HTTP(任意 UA)硬 403。本脚本用真实 chromium 先访首页拿
-session,再抓几篇 detail,看能否拿到 200 + FAQ 正文。仅验证可行性,不入库。
+The support detail pages hard-403 plain HTTP (any UA). This script uses real chromium to visit the home page first to
+get a session, then fetch a few detail pages, to see if it can get 200 + FAQ body. Only checks feasibility, no DB load.
 
-用法(从 backend/ 跑;需 playwright + chromium):
+Usage (run from backend/; needs playwright + chromium):
     python -m app.scrapers.kb_browser_probe
 """
 from __future__ import annotations

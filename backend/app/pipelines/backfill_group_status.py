@@ -1,11 +1,11 @@
 """
-backfill_group_status.py — 给已灌库的 courses 回填 group_status 派生列。
+backfill_group_status.py — backfill the derived group_status column for courses already loaded.
 
-build_db 灌库时会算 group_status;但线上库是早先灌的、没有该列(或全是默认 unknown)。
-本脚本幂等补列 + 按 classify_group 逐 offering 回填,复用同一套判定逻辑(规则 15)。
-不重灌、不动 embedding,只读 assessments 改 group_status。
+build_db computes group_status at load time; but the live DB was loaded earlier without this column (or it is all the default unknown).
+This script idempotently adds the column + backfills each offering by classify_group, reusing the same decision logic (rule 15).
+It does not reload or touch embedding, it only reads assessments and updates group_status.
 
-用法:
+Usage:
     python -m app.pipelines.backfill_group_status
 """
 from __future__ import annotations

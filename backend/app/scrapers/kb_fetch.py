@@ -1,21 +1,22 @@
 """
-kb_fetch.py — 知识库 阶段二抓取(M1.5 先导试点小批量版)
-(对应 plan.md 第 2 节 / 第 1.5 节)
+kb_fetch.py — knowledge base phase two fetch (M1.5 pilot small-batch version)
+(matches plan.md section 2 / section 1.5)
 
-从 urls.csv 选一批 URL,抓原始 HTML 落盘到 data/kb/raw/<domain>/<sha1>.html,
-并写 data/kb/fetched.jsonl 记录映射:
+Select a batch of URLs from urls.csv, fetch raw HTML to data/kb/raw/<domain>/<sha1>.html,
+and write data/kb/fetched.jsonl recording the mapping:
   url, url_hash, domain, http_status, content_hash, final_url, html_path,
   fetched_at, lastmod, redirected_home
 
-试点权宜:同步 requests + 礼貌间隔,够抓几十篇即可;全量阶段二再按 plan 上
-httpx+asyncio + SQLite pages 表。先存 HTML 不解析——改切分策略只重跑本地解析,不重爬。
+Pilot shortcut: sync requests + polite interval, enough to fetch a few dozen pages; the full phase two
+moves to httpx+asyncio + SQLite pages table per plan. Store HTML first without parsing -- changing the
+chunking strategy only reruns local parse, no re-crawl.
 
-选样:按 path_pattern 做 round-robin 分层,保证覆盖多个栏目(测解析器鲁棒性)。
+Sampling: round-robin stratify by path_pattern, to cover several sections (test parser robustness).
 
-用法(从 backend/ 跑):
+Usage (run from backend/):
     python -m app.scrapers.kb_fetch --type article --per-pattern 4 --max 40
     python -m app.scrapers.kb_fetch --urls "https://a,https://b" \
-        --manifest data/kb/fetched_article.jsonl   # 直接补抓零散页(追加去重写入 manifest)
+        --manifest data/kb/fetched_article.jsonl   # directly fetch a few extra pages (append+dedup into manifest)
 """
 from __future__ import annotations
 import csv
@@ -44,7 +45,7 @@ def _now() -> str:
 
 
 def select_urls(csv_path: Path, gtype: str, per_pattern: int, max_n: int) -> list[dict]:
-    """读 urls.csv,按 guessed_type 过滤,再按 path_pattern round-robin 取样。"""
+    """read urls.csv, filter by guessed_type, then sample round-robin by path_pattern."""
     by_pat: "OrderedDict[str, list[dict]]" = OrderedDict()
     with open(csv_path, newline="", encoding="utf-8") as f:
         for r in csv.DictReader(f):
@@ -68,7 +69,7 @@ def select_urls(csv_path: Path, gtype: str, per_pattern: int, max_n: int) -> lis
 
 
 def fetch_one(url: str, out_dir: Path, retries: int = 3) -> dict:
-    """抓单页落盘,返回记录。失败抛异常由调用方计入 failures。"""
+    """fetch a single page to disk, return the record. on failure raise, caller counts it in failures."""
     last = None
     for i in range(retries):
         try:
@@ -98,7 +99,7 @@ def fetch_one(url: str, out_dir: Path, retries: int = 3) -> dict:
             if i == retries - 1:
                 raise
             time.sleep(1.5 * (i + 1))
-    raise last  # 不会到这,保险
+    raise last  # never reached, just a safeguard
 
 
 def main():

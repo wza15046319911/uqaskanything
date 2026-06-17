@@ -335,7 +335,7 @@ export default function Results({
   const kbSources = isKb ? dedupeSources(res.chunks ?? []) : []
   const progFacts = isProgList ? (res.program_facts as ProgramFact[]) : []
   const slots = hasCourses ? collapseSlots(res.courses!) : []
-  // program_to_courses / permit:program_facts 是单对象且带 program_id -> 给一键跳模拟器的入口
+  // program_to_courses / permit: program_facts is a single object with program_id -> gives the one-click jump to the simulator
   const progAnswer =
     res.mode === 'program' && res.program_facts && !Array.isArray(res.program_facts)
       ? (res.program_facts as ProgramAnswer)

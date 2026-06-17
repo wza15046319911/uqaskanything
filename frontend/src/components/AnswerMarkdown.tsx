@@ -15,7 +15,7 @@ interface HastNode {
 
 const COURSE_CODE = /\b([A-Z]{4}\d{4})\b/
 
-// 把文本节点里的课程码(CSSE1001)拆成 <code>,其余原样保留
+// Split course codes (like CSSE1001) in a text node into <code>, keep the rest as is
 function splitCourseCodes(value: string): HastNode[] {
   const parts = value.split(COURSE_CODE)
   if (parts.length === 1) return [{ type: 'text', value }]

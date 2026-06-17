@@ -1,16 +1,16 @@
 """
 UQ Course Profile Scraper
 ==========================
-把 UQ course-profiles 页面解析成统一 schema 的 JSON。
+Parse a UQ course-profiles page into JSON with one shared schema.
 
-设计目标:
-  1. 结构化字段 -> 给 SQL / LLM-to-SQL 用(精确过滤,如 semester=S2、has_exam=false)
-  2. 派生字段     -> 高频问题直接命中,不用 LLM 也能答
-  3. 文本聚合字段 -> 给向量库做 embedding(语义模糊检索)
+Design goals:
+  1. Structured fields -> for SQL / LLM-to-SQL use (exact filter, like semester=S2, has_exam=false)
+  2. Derived fields     -> answer common questions directly, no LLM needed
+  3. Aggregated text    -> for vector store embedding (fuzzy semantic search)
 
-用法:
+Usage:
     python uq_scraper.py CSSE1001-21206-7620
-    python uq_scraper.py --file course_ids.txt        # 批量
+    python uq_scraper.py --file course_ids.txt        # batch
 """
 from __future__ import annotations
 import re
@@ -34,19 +34,19 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (course-kb-scraper)"}
 class Assessment:
     task: str
     category: str            # e.g. "Examination", "Computer Code"
-    weight: float | None     # 百分比数值,可能为 None
+    weight: float | None     # percent value, may be None
     hurdle: bool = False
 
 
 @dataclass
 class Course:
-    # --- 身份 ---
+    # --- identity ---
     code: str                       # CSSE1001
-    offering_id: str                # 完整 url slug,做主键
+    offering_id: str                # full url slug, used as primary key
     title: str
-    # --- 开课信息(SQL 过滤核心) ---
+    # --- offering info (core for SQL filter) ---
     study_period: str               # "Semester 1, 2026"
-    semester: str | None            # 派生: S1 / S2 / Summer ...
+    semester: str | None            # derived: S1 / S2 / Summer ...
     year: int | None
     location: str | None
     attendance_mode: str | None     # In Person / External / ...
@@ -55,18 +55,18 @@ class Course:
     coordinating_unit: str | None
     coordinator: str | None
     incompatible: list[str] = field(default_factory=list)
-    prerequisite_raw: str = ""            # 先修原文(AND/OR/括号有意义,作权威源)
-    prerequisite_parsed: dict | None = None   # 解析树;无字段=None;不可解析={op:raw}
-    # --- 评估 ---
+    prerequisite_raw: str = ""            # raw prereq text (AND/OR/brackets matter, the source of truth)
+    prerequisite_parsed: dict | None = None   # parse tree; no field=None; not parsable={op:raw}
+    # --- assessment ---
     assessments: list[Assessment] = field(default_factory=list)
-    has_exam: bool = False          # 派生: 是否含 Examination
-    has_hurdle: bool = False        # 派生: 是否含 hurdle
-    # --- 文本(给向量库) ---
+    has_exam: bool = False          # derived: has an Examination
+    has_hurdle: bool = False        # derived: has a hurdle
+    # --- text (for vector store) ---
     description: str = ""
     learning_outcomes: list[str] = field(default_factory=list)
     topics: list[str] = field(default_factory=list)
     learning_activities: list[dict] = field(default_factory=list)
-    # --- embedding 用的聚合文本 ---
+    # --- aggregated text for embedding ---
     search_blob: str = ""
 
     def to_dict(self):
@@ -75,7 +75,7 @@ class Course:
 
 
 # --------------------------------------------------------------------------- #
-# 解析辅助
+# parse helpers
 # --------------------------------------------------------------------------- #
 def _text(node) -> str:
     return re.sub(r"\s+", " ", node.get_text(" ", strip=True)).strip() if node else ""
@@ -83,13 +83,13 @@ def _text(node) -> str:
 
 def _field_after_label(soup, label: str) -> str | None:
     """
-    UQ 页面里很多信息是 '标签\n值' 的结构(dt/dd 或相邻文本)。
-    用文本搜索定位标签,取其后紧邻的值。
+    On UQ pages much info is a 'label\nvalue' structure (dt/dd or adjacent text).
+    Find the label by text search, then take the value right after it.
     """
     el = soup.find(string=re.compile(rf"^\s*{re.escape(label)}\s*$", re.I))
     if not el:
         return None
-    # 标签的下一个有内容的兄弟/父级下一个元素
+    # the next non-empty sibling of the label / next element of the parent
     nxt = el.find_parent()
     if nxt:
         sib = nxt.find_next_sibling()
@@ -116,13 +116,14 @@ def _normalise_semester(study_period: str) -> tuple[str | None, int | None]:
 
 
 # --------------------------------------------------------------------------- #
-# 先修解析(纯函数,确定性;无法干净解析就退回 {op:raw},绝不臆造结构)
+# prereq parse (pure function, deterministic; if it can't parse cleanly fall back
+# to {op:raw}, never invent structure)
 # --------------------------------------------------------------------------- #
 _CODE_RE = re.compile(r"^[A-Z]{2,4}\d{4}$")
 
 
 def _expand_abbrev_codes(raw: str) -> str:
-    """UQ 缩写码展开:'ACCT1110 or 1111 or 2112' -> 补全裸 4 位数为最近前缀的码。"""
+    """Expand UQ short codes: 'ACCT1110 or 1111 or 2112' -> fill bare 4 digits with the nearest prefix code."""
     last_prefix = [None]
 
     def repl(m):
@@ -131,17 +132,17 @@ def _expand_abbrev_codes(raw: str) -> str:
         if cm:
             last_prefix[0] = cm.group(1)
             return tok
-        return (last_prefix[0] + tok) if last_prefix[0] else tok   # 裸 4 位数
+        return (last_prefix[0] + tok) if last_prefix[0] else tok   # bare 4 digits
 
     return re.sub(r"[A-Z]{2,4}\d{4}|\b\d{4}\b", repl, raw)
 
 
 def parse_prereq(raw: str) -> dict | None:
-    """先修原文 -> AND/OR 树。
+    """Raw prereq text -> AND/OR tree.
 
-    语法:expr = code | '(' expr ')' | expr (and|or) expr;'+'/'&'/','=and(逗号保守按与)。
-    含任何非课程码/连接词的未知词(如 'units of'/'Permission')或括号不配 -> {op:raw}。
-    空 -> None(无先修)。'or' 比 'and' 松,括号优先。
+    Grammar: expr = code | '(' expr ')' | expr (and|or) expr; '+'/'&'/','=and (comma treated as and, conservative).
+    Any unknown word that is not a course code/connector (like 'units of'/'Permission') or mismatched brackets -> {op:raw}.
+    Empty -> None (no prereq). 'or' binds looser than 'and', brackets win.
     """
     original = (raw or "").strip()
     if not original:
@@ -158,7 +159,7 @@ def parse_prereq(raw: str) -> dict | None:
             norm.append(("and", t))
         elif t.lower() == "or":
             norm.append(("or", t))
-        else:                               # 未知词/数字 -> 无法安全解析
+        else:                               # unknown word/number -> cannot parse safely
             return {"op": "raw", "unparsed": original}
     if not any(k == "code" for k, _ in norm):
         return {"op": "raw", "unparsed": original}
@@ -204,21 +205,21 @@ def _parse_atom(toks, i):
 
 
 # --------------------------------------------------------------------------- #
-# 主解析
+# main parse
 # --------------------------------------------------------------------------- #
 def parse(html: str, offering_id: str) -> Course:
     soup = BeautifulSoup(html, "html.parser")
 
-    # --- 标题 & code:形如 "Introduction to Software Engineering (CSSE1001)" ---
+    # --- title & code: like "Introduction to Software Engineering (CSSE1001)" ---
     h1 = soup.find("h1")
     title_raw = _text(h1)
     code_m = re.search(r"\(([A-Z]{2,4}\d{4})\)", title_raw)
     code = code_m.group(1) if code_m else offering_id.split("-")[0]
     title = re.sub(r"\s*\([A-Z]{2,4}\d{4}\)\s*$", "", title_raw).strip()
 
-    # --- 概览字段 ---
+    # --- overview fields ---
     study_period = _field_after_label(soup, "Study period") or ""
-    # study period 在概览区可能是简写,优先用正文 "Semester 1, 2026 (...)"
+    # study period in the overview may be short; prefer the body text "Semester 1, 2026 (...)"
     sp_full = soup.find(string=re.compile(r"Semester\s*[12].*20\d{2}"))
     if sp_full:
         study_period = _text(sp_full.find_parent() or sp_full).strip() or study_period
@@ -246,15 +247,15 @@ def parse(html: str, offering_id: str) -> Course:
     if inc:
         scope = inc.find_parent()
         if scope:
-            # 课程码可能在标签后的第一或第二个 <p>,逐个扫描直到命中
+            # the course code may be in the first or second <p> after the label; scan until hit
             for p in scope.find_all_next("p", limit=4):
                 codes = re.findall(r"[A-Z]{2,4}\d{4}", _text(p))
                 if codes:
                     incompatible = codes
                     break
 
-    # --- prerequisite(与 Incompatible 同结构;锚定 ^Prerequisite(s)$,不误命中
-    #     'Recommended prerequisite' / 'Companion';保留全文,AND/OR 有意义) ---
+    # --- prerequisite (same structure as Incompatible; anchor ^Prerequisite(s)$, do not
+    #     wrongly match 'Recommended prerequisite' / 'Companion'; keep full text, AND/OR matters) ---
     prerequisite_raw = ""
     pre = soup.find(string=re.compile(r"^\s*Prerequisite[s]?\s*$", re.I))
     if pre:
@@ -267,13 +268,13 @@ def parse(html: str, offering_id: str) -> Course:
                     continue
                 if not first_nonempty:
                     first_nonempty = t
-                if re.search(r"[A-Z]{2,4}\d{4}", t):  # 优先取含课程码的那段
+                if re.search(r"[A-Z]{2,4}\d{4}", t):  # prefer the part that has a course code
                     first_nonempty = t
                     break
             prerequisite_raw = first_nonempty
     prerequisite_parsed = parse_prereq(prerequisite_raw)
 
-    # --- description(概览正文) ---
+    # --- description (overview body text) ---
     description = ""
     ov = soup.find(string=re.compile(r"Course overview", re.I))
     if ov:
@@ -292,7 +293,7 @@ def parse(html: str, offering_id: str) -> Course:
         if nxt:
             los.append(_text(nxt))
 
-    # --- assessments(解析评估表)---
+    # --- assessments (parse the assessment table) ---
     assessments: list[Assessment] = []
     has_exam = has_hurdle = False
     for table in soup.find_all("table"):
@@ -316,9 +317,9 @@ def parse(html: str, offering_id: str) -> Course:
                     category=category, weight=weight, hurdle=is_hurdle))
             break
 
-    # --- learning activities(结构化保留全部活动:period/type/topic/LO)---
+    # --- learning activities (keep all activities structured: period/type/topic/LO) ---
     learning_activities: list[dict] = []
-    topics: list[str] = []          # lecture 周次主题摘要,给向量检索用
+    topics: list[str] = []          # lecture weekly topic summary, for vector search
     for table in soup.find_all("table"):
         head = _text(table.find("tr"))
         if "Topic" in head and "Activity type" in head:
@@ -326,7 +327,7 @@ def parse(html: str, offering_id: str) -> Course:
                 cells = [_text(td) for td in tr.find_all(["td", "th"])]
                 if not cells:
                     continue
-                # 列数可能是 3(period/type/topic)或 2(period 为空)
+                # column count may be 3 (period/type/topic) or 2 (period empty)
                 if len(cells) >= 3:
                     period, activity, topic_cell = cells[0], cells[1], cells[2]
                 elif len(cells) == 2:
@@ -334,13 +335,13 @@ def parse(html: str, offering_id: str) -> Course:
                 else:
                     period, activity, topic_cell = "", "", cells[0]
 
-                # 拆出关联的 learning outcomes(如 "Learning outcomes: L01, L02")
+                # split out the linked learning outcomes (like "Learning outcomes: L01, L02")
                 lo_codes: list[str] = []
                 lo_split = re.split(r"Learning outcomes\s*:?", topic_cell, flags=re.I)
                 topic_text = lo_split[0]
                 if len(lo_split) > 1:
                     lo_codes = re.findall(r"L0?\d+", lo_split[1])
-                # 去掉前缀的 "Week N" / activity 名重复(兼容复数,如 Practical/Practicals)
+                # drop the leading "Week N" / repeated activity name (handle plural, like Practical/Practicals)
                 topic_text = re.sub(r"^\s*Week\s*\d+\s*", "", topic_text)
                 if activity:
                     topic_text = re.sub(rf"^\s*{re.escape(activity)}s?\b\s*", "",
@@ -353,12 +354,12 @@ def parse(html: str, offering_id: str) -> Course:
                     "topic": topic_text,
                     "learning_outcomes": lo_codes,
                 })
-                # lecture 类的主题进 topics 摘要
+                # lecture-type topics go into the topics summary
                 if activity and re.search(r"lecture", activity, re.I) and topic_text:
                     topics.append(topic_text)
             break
 
-    # --- embedding 聚合文本 ---
+    # --- aggregated text for embedding ---
     search_blob = " | ".join(filter(None, [
         f"{code} {title}", description,
         " ".join(a["topic"] for a in learning_activities if a["topic"]),

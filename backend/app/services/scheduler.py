@@ -1,16 +1,16 @@
 """
-scheduler.py — 阶段三a:按学期排课(确定性状态无关函数,不调 LLM)
+scheduler.py — stage 3a: place courses into semesters (deterministic state-free function, no LLM)
 
-把一组已选课贪心拓扑装箱到 n 个学期:
-  - 先修 DAG 决定先后(prereq_map;缺则不约束)
-  - 每学期学分上限 units_cap(默认 8)
-  - 开课学期 offering_map(缺则任意学期,标 verified_offering=False)
-  - 年课 year_long 锁 S1 起,占连续两学期 [s, s+1],学分平摊两格各半(units/2)
-  - incompatible 软检查(同计划内互斥课只给 warning,不阻止放置)
+Greedy topological bin-packing of a set of selected courses into n semesters:
+  - prerequisite DAG decides order (prereq_map; no constraint if missing)
+  - per-semester units cap units_cap (default 8)
+  - offering semester offering_map (any semester if missing, mark verified_offering=False)
+  - year-long courses year_long lock to S1 start, take two consecutive semesters [s, s+1], units split half each (units/2)
+  - incompatible soft check (mutually exclusive courses in the same plan only give a warning, do not block placement)
 
-数据现状:courses 仅有 S1 开课、无先修字段,故 offering_map / prereq_map 默认空,
-排课先退化为「按学分装箱」,顺序与开课学期未核实(写进 warnings,不假装已核实)。
-放不下的课进 unplaced(带原因);恒满足 placed + unplaced == 去重后的输入(零静默丢)。
+Current data: courses only has S1 offering and no prerequisite field, so offering_map / prereq_map default to empty,
+scheduling first degrades to "pack by units", order and offering semester are not verified (written into warnings, not pretending to be verified).
+Courses that do not fit go into unplaced (with reason); always holds placed + unplaced == deduplicated input (zero silent drop).
 """
 from __future__ import annotations
 import re
@@ -19,7 +19,7 @@ from app.services.simulator import DEFAULT_UNITS
 
 
 def _level(code: str) -> int:
-    """课程级别 = 码里第一个数字(CSSE1001 -> 1),用于让低年级课优先排前。"""
+    """Course level = first digit in the code (CSSE1001 -> 1), used to place lower-year courses earlier."""
     m = re.search(r"\d", code)
     return int(m.group()) if m else 9
 
@@ -27,13 +27,13 @@ def _level(code: str) -> int:
 def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
              incompatible_map=None, units_cap=8.0, n_semesters=6,
              semester_labels=None, start_sem="S1", year_long=None):
-    selected = list(dict.fromkeys(c for c in selected if c))   # 去重保序
+    selected = list(dict.fromkeys(c for c in selected if c))   # dedup, keep order
     prereq_map = prereq_map or {}
     offering_map = offering_map or {}
     units_map = units_map or {}
     incompatible_map = incompatible_map or {}
     year_long = set(year_long or ())
-    # 入学学期决定 S1/S2 交替起点:S1 入学 -> 格 0=S1;S2 入学 -> 格 0=S2
+    # entry semester decides the S1/S2 alternation start: S1 entry -> slot 0=S1; S2 entry -> slot 0=S2
     start_sem = "S2" if start_sem == "S2" else "S1"
     _other = "S2" if start_sem == "S1" else "S1"
     sem_kind = [start_sem if i % 2 == 0 else _other for i in range(n_semesters)]
@@ -48,13 +48,13 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
         u = units_map.get(c)
         return float(u) if u is not None else DEFAULT_UNITS
 
-    # incompatible 软检查(数据今天就有):同计划内互斥课只警告
+    # incompatible soft check (data exists today): mutually exclusive courses in the same plan only warn
     for c in selected:
-        for other in incompatible_map.get(c, ()):  # other 可能是 set/list
+        for other in incompatible_map.get(c, ()):  # other may be set/list
             if other in sel_set and c < other:
                 warnings.append(f"{c} 与 {other} 互斥(incompatible),不应同时计入同一计划")
 
-    # 先修边只保留指向「计划内」课程的;计划外先修记 warning(不静默忽略)
+    # only keep prerequisite edges pointing to "in-plan" courses; out-of-plan prerequisites get a warning (not silently ignored)
     deps: dict[str, set] = {}
     for c in selected:
         reqs = set(prereq_map.get(c, ()))
@@ -64,46 +64,46 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
                 f"{c} 的先修 {sorted(out_of_plan)} 不在所选课程内,排课忽略其顺序约束")
         deps[c] = reqs & sel_set
 
-    # Kahn 拓扑排序;稳定 tie-break:(units 降序, code 升序)
+    # Kahn topological sort; stable tie-break: (units desc, code asc)
     order: list[str] = []
     pending = {c: set(deps[c]) for c in selected}
     remaining = set(selected)
     while remaining:
         ready = [c for c in remaining if not pending[c]]
-        if not ready:                                  # 有环:剩下的全进 unplaced
+        if not ready:                                  # cycle: all remaining go to unplaced
             for c in sorted(remaining):
                 unplaced.append({"code": c, "reason": "prereq_cycle"})
             remaining.clear()
             break
-        ready.sort(key=lambda c: (_level(c), -units_of(c), c))  # 低年级优先,再学分降序,再码升序
+        ready.sort(key=lambda c: (_level(c), -units_of(c), c))  # lower year first, then units desc, then code asc
         nxt = ready[0]
         order.append(nxt)
         remaining.discard(nxt)
         for c in remaining:
             pending[c].discard(nxt)
 
-    # 装箱
+    # bin-packing
     sems = [{"label": semester_labels[i] if i < len(semester_labels) else f"Sem {i + 1}",
              "courses": [], "units": 0.0} for i in range(n_semesters)]
     sem_index: dict[str, int] = {}
 
-    def end_sem(p):                                    # 年课跨两格,完成于 continuation 格
+    def end_sem(p):                                    # year-long course spans two slots, finishes in the continuation slot
         return sem_index[p] + (1 if p in year_long else 0)
 
     for c in order:
         u = units_of(c)
         yl = c in year_long
-        per = u / 2 if yl else u                        # 年课学分平摊到连续两学期
+        per = u / 2 if yl else u                        # year-long units split across two consecutive semesters
         min_sem = 0
         for p in deps[c]:
             if p in sem_index:
                 min_sem = max(min_sem, end_sem(p) + 1)
-        offered = offering_map.get(c)                  # set('S1'/'S2') 或 None=未知
+        offered = offering_map.get(c)                  # set('S1'/'S2') or None=unknown
         placed = False
         for s in range(min_sem, n_semesters):
             if offered is not None and sem_kind[s] not in offered:
                 continue
-            if yl:                                     # 年课:锁 S1 起,占 [s, s+1] 各半
+            if yl:                                     # year-long: lock to S1 start, take [s, s+1] half each
                 if sem_kind[s] != "S1" or s + 1 >= n_semesters:
                     continue
                 if (sems[s]["units"] + per > units_cap
@@ -135,7 +135,7 @@ def schedule(selected, prereq_map=None, offering_map=None, units_map=None,
         warnings.append(
             f"{unverified} 门课开课学期未知(courses 仅 S1 数据),已任意放置并标未核实")
 
-    # 零静默丢:任何未进学期也未进 unplaced 的码,补记 unaccounted
+    # zero silent drop: any code not placed in a semester and not in unplaced, record as unaccounted
     accounted = {x["code"] for s in sems for x in s["courses"]} | {u["code"] for u in unplaced}
     for c in sorted(sel_set - accounted):
         unplaced.append({"code": c, "reason": "unaccounted"})

@@ -1,34 +1,34 @@
 """
-simulator.py — 阶段七:选课模拟器(确定性状态机)
+simulator.py — stage 7: course-planning simulator (deterministic state machine)
 
-从 programs.rules 规则树驱动:用户增删已选课、选定某 major/minor 分支后,
-每条顶层规则的进度(status)与「还能选什么」(available)随之实时变化。
-先修课暂不考虑;所有进度判断都是纯确定性代码,不调用 LLM。
+Driven by the programs.rules rule tree: after the user adds/removes selected courses or picks a major/minor branch,
+each top-level rule's progress (status) and "what can still be picked" (available) change in real time.
+Prerequisites are not considered for now; all progress judgments are pure deterministic code, no LLM call.
 
-规则树节点(见库内 programs.rules):
-  顶层规则 {ref,title,select_type:'all'|'select',units_min,units_max,items:[...]}
+Rule-tree nodes (see programs.rules in the DB):
+  top-level rule {ref,title,select_type:'all'|'select',units_min,units_max,items:[...]}
   item.kind:
     - course      {code,name,units}
-    - equivalence {options:[{code,name,units},...]}   选其中任一即满足该「项」学分
-    - plan        {code,name,subtype,units_min,units_max,rules:[...递归...]}  major/minor 分支
-    - wildcard    任意课(不绑定具体码,available 不枚举它)
+    - equivalence {options:[{code,name,units},...]}   picking any one satisfies this "item" units
+    - plan        {code,name,subtype,units_min,units_max,rules:[...recursive...]}  major/minor branch
+    - wildcard    any course (not bound to a specific code, available does not enumerate it)
 
-进度口径:
-  - select_type='all' :必修组,units_required = units_min,凑够即 done。
-  - select_type='select':选修组,units_required = units_min(可为 0/None=0),凑够即 done。
-  - units_max(若有):选修组学分上限。超出 units_max 的学分不算有效进度,
-    计入进度按 min(done_units, units_max) 封顶;done_units 原值仍透出,且打 over_max 标记。
-  - equivalence 组算「一个可填项」:选了其中任一选项,只按那一门的 units 计一次(不重复累加)。
-  - plan 规则:status 里列出可选 plan 分支。本模块按 **select-one(择一)** 语义实现:
-    同一条 plan 规则内的多个分支互斥,再 choose_plan 会替换同规则内的旧选;
-    规则必需学分 = 「修满 1 个分支」(已选分支的 units_min,未选则取各分支最小 units_min)。
-    注:若某 program 的 plan 规则实为 select-many(可同时修多个 major),需另行确认后调整。
-  - units 默认每门取 item.units,缺失则取 2。
-  - 自引用:rules 树里偶尔嵌入「整学位」节点(code == program_id 或 subtype 含 'Program'),
-    它不是可选 major/minor 分支,索引与递归一律跳过,避免无限递归与误把整学位当分支选。
+Progress conventions:
+  - select_type='all' : required group, units_required = units_min, done once met.
+  - select_type='select': elective group, units_required = units_min (may be 0/None=0), done once met.
+  - units_max (if any): elective group units cap. Units over units_max do not count as effective progress,
+    counted progress is capped at min(done_units, units_max); the raw done_units is still exposed, with an over_max flag.
+  - an equivalence group counts as "one fillable item": picking any one option counts only that one's units once (no repeat accumulation).
+  - plan rule: status lists the selectable plan branches. This module implements **select-one** semantics:
+    multiple branches under one plan rule are mutually exclusive, calling choose_plan again replaces the old pick in the same rule;
+    rule required units = "complete 1 branch" (the chosen branch's units_min, or the smallest units_min among branches if none chosen).
+    Note: if a program's plan rule is really select-many (multiple majors at once), confirm and adjust separately.
+  - units default to item.units per course, falling back to 2 if missing.
+  - self-reference: the rules tree occasionally embeds a "whole degree" node (code == program_id or subtype contains 'Program'),
+    which is not a selectable major/minor branch; indexing and recursion always skip it, to avoid infinite recursion and mistaking the whole degree for a branch.
 
-用法:
-    python simulator.py            # 用真实 DB 跑 program_id=2559 自测
+Usage:
+    python simulator.py            # run program_id=2559 self-test against the real DB
 """
 from __future__ import annotations
 import os
@@ -42,15 +42,15 @@ DEFAULT_UNITS = 2.0
 
 
 def _units(item: dict) -> float:
-    """取某 item(course 或 equivalence option)的学分,缺失给默认值。"""
+    """Get the units of an item (course or equivalence option), use the default if missing."""
     u = item.get("units")
     return float(u) if u is not None else DEFAULT_UNITS
 
 
 def satisfied(tree: dict | None, selected: set) -> tuple[bool, str | None]:
-    """先修树是否被 selected 满足。返回 (ok, reason);reason 非空表示锁定或警告。
+    """Whether the prerequisite tree is satisfied by selected. Returns (ok, reason); a non-empty reason means locked or warning.
 
-    软门口径:tree=None(无先修)-> 满足;op=raw(无法解析)-> 满足但带警告(绝不硬挡)。
+    Soft-gate convention: tree=None (no prerequisite) -> satisfied; op=raw (unparseable) -> satisfied but with a warning (never hard-block).
     """
     if tree is None:
         return True, None
@@ -72,20 +72,20 @@ def satisfied(tree: dict | None, selected: set) -> tuple[bool, str | None]:
 
 
 def parse_rule_logic(s: str | None) -> dict | None:
-    """程序级布尔公式 -> 树。"Part A AND ( Part B OR Part C )" ->
-    {"op":"and"|"or","children":[...]} | {"op":"part","ref":"A"}。
-    任何无法识别的残留字符或归约失败 -> None(调用方回退 AND-all,绝不臆造结构)。
-    优先级:AND 比 OR 紧,括号最高(UQ 公式实际都带括号)。"""
+    """Program-level boolean formula -> tree. "Part A AND ( Part B OR Part C )" ->
+    {"op":"and"|"or","children":[...]} | {"op":"part","ref":"A"}.
+    Any unrecognized leftover character or reduction failure -> None (caller falls back to AND-all, never invents structure).
+    Precedence: AND binds tighter than OR, parentheses highest (UQ formulas always have parentheses in practice)."""
     if not s:
         return None
-    s = re.sub(r"^\s*(AND|OR)\s+", "", s, flags=re.I)   # 容错:官方数据偶见开头多挂连接词
+    s = re.sub(r"^\s*(AND|OR)\s+", "", s, flags=re.I)   # tolerance: official data sometimes has a stray connective at the start
     toks = re.findall(r"\(|\)|\bAND\b|\bOR\b|Part\s+[\w.\-]+", s, re.I)
     toks = [t.upper() if t.upper() in ("AND", "OR") else t for t in toks]
     if re.sub(r"\(|\)|\bAND\b|\bOR\b|Part\s+[\w.\-]+|\s+", "", s, flags=re.I):
-        return None                                  # 有 token 之外的残留,拒绝解析
+        return None                                  # leftover beyond tokens, refuse to parse
     pos = 0
 
-    def expr():                                      # OR 层
+    def expr():                                      # OR layer
         nonlocal pos
         node = term()
         if node is None:
@@ -99,7 +99,7 @@ def parse_rule_logic(s: str | None) -> dict | None:
             children.append(nxt)
         return children[0] if len(children) == 1 else {"op": "or", "children": children}
 
-    def term():                                      # AND 层
+    def term():                                      # AND layer
         nonlocal pos
         node = atom()
         if node is None:
@@ -135,7 +135,7 @@ def parse_rule_logic(s: str | None) -> dict | None:
 
 
 def _logic_refs(tree: dict | None) -> set:
-    """公式树引用的全部 part ref。"""
+    """All part refs referenced by the formula tree."""
     out: set = set()
     stack = [tree] if tree else []
     while stack:
@@ -148,13 +148,13 @@ def _logic_refs(tree: dict | None) -> set:
 
 
 class PlanSimulator:
-    """单个 program 的选课进度状态机。
+    """Course-planning progress state machine for a single program.
 
-    公开方法:
-      select(code) / deselect(code)  —— 增删已选课
-      choose_plan(plan_code)         —— 选定某 major/minor 分支
-      status() -> list               —— 每条顶层规则的进度
-      available() -> list            —— 未选且属于未完成规则的课程码
+    Public methods:
+      select(code) / deselect(code)  —— add/remove a selected course
+      choose_plan(plan_code)         —— pick a major/minor branch
+      status() -> list               —— progress of each top-level rule
+      available() -> list            —— course codes not yet picked and belonging to an unfinished rule
     """
 
     def __init__(self, conn, program_id: str):
@@ -167,12 +167,12 @@ class PlanSimulator:
         self.program_id = program_id
         self.title = row[0]
         self.total_units = row[1]
-        self.rules = row[2] or []          # 顶层规则列表(JSONB 已反序列化为 list[dict])
-        self.selected: set[str] = set()     # 已选课程码
-        self.chosen_plans: set[str] = set()  # 已选定的 plan 分支码
-        self._bin_of: dict[str, int] = {}    # code -> 认领归属叶子规则 id(status() 时由 _assign 填)
+        self.rules = row[2] or []          # top-level rule list (JSONB already deserialized to list[dict])
+        self.selected: set[str] = set()     # selected course codes
+        self.chosen_plans: set[str] = set()  # chosen plan branch codes
+        self._bin_of: dict[str, int] = {}    # code -> claimed leaf-rule id (filled by _assign during status())
 
-        # 程序级禁课(No credit will be given for…):从可选列表剔除。表未建时为空集(不报错)。
+        # program-level banned courses (No credit will be given for…): removed from the available list. Empty set if table not built (no error).
         self.excluded: set[str] = set()
         if conn.execute("SELECT to_regclass('program_exclude')").fetchone()[0]:
             self.excluded = {
@@ -181,8 +181,8 @@ class PlanSimulator:
                     (program_id,)).fetchall()
             }
 
-        # 先修(阶段三b):code -> 解析树(只装真树/raw)。列未迁移/未回填时为空(软门退化全解锁)。
-        # 排除 jsonb 'null'(确无先修)与 SQL NULL(未回填):两者都「不在 _prereq」即按解锁处理。
+        # prerequisites (stage 3b): code -> parsed tree (only real tree/raw loaded). Empty if column not migrated/backfilled (soft gate degrades to all-unlocked).
+        # exclude jsonb 'null' (truly no prerequisite) and SQL NULL (not backfilled): both "not in _prereq" are treated as unlocked.
         self._prereq: dict[str, dict] = {}
         if conn.execute(
             "SELECT 1 FROM information_schema.columns "
@@ -196,8 +196,8 @@ class PlanSimulator:
                 ).fetchall()
             }
 
-        # 程序级 level 学分上限(aux_rules 的 level_cap,如「at most 24 units at level 1」)。
-        # 数据驱动:从 programs.aux_rules 解析;列/数据缺则为空(不报错)。
+        # program-level units cap per level (level_cap in aux_rules, e.g. "at most 24 units at level 1").
+        # data-driven: parsed from programs.aux_rules; empty if column/data missing (no error).
         self.level_caps: list[dict] = []
         if conn.execute(
             "SELECT 1 FROM information_schema.columns "
@@ -215,9 +215,9 @@ class PlanSimulator:
                             {"level": int(m.group(2)), "max_units": int(m.group(1)),
                              "text": a["text"]})
 
-        # 程序级布尔公式(如 "Part A AND ( Part B OR Part C ) AND ...")。
-        # 列缺/值空 -> 无公式(维持 AND-all 原语义);有公式但解析失败或引用了
-        # 不存在的 ref -> 同样回退 AND-all,但 logic_fallback=True 显式透出(不静默)。
+        # program-level boolean formula (e.g. "Part A AND ( Part B OR Part C ) AND ...").
+        # column missing/value empty -> no formula (keep the AND-all original semantics); if the formula parses but
+        # references a non-existent ref -> also fall back to AND-all, but expose logic_fallback=True explicitly (not silent).
         self.rule_logic: str | None = None
         self.logic_tree: dict | None = None
         self.logic_fallback = False
@@ -234,15 +234,15 @@ class PlanSimulator:
                 self.logic_fallback = True
             else:
                 self.logic_tree = tree
-        # OR 组分支选择:group_key("B|C") -> 选定 ref;未选默认组内第一个(如 B=Major)
+        # OR-group branch choice: group_key("B|C") -> chosen ref; default to the first in the group if none chosen (e.g. B=Major)
         self.branch: dict[str, str] = {}
-        # SubRule 父子索引(如 C -> [C.1, C.2])
+        # SubRule parent-child index (e.g. C -> [C.1, C.2])
         self._child_of: dict[str, str] = {
             ch: r["ref"] for r in self.rules
             for ch in (r.get("children_refs") or []) if r.get("ref")
         }
 
-        # 全库课程学分:开放规则(E/F)可计入树外码,归属与校验都要查它
+        # whole-DB course units: open rules (E/F) can count out-of-tree codes, attribution and validation both query this
         self._course_units: dict[str, float] = {
             r[0]: (float(r[1]) if r[1] is not None else DEFAULT_UNITS)
             for r in conn.execute(
@@ -251,12 +251,12 @@ class PlanSimulator:
         }
         self._all_codes = set(self._course_units)
 
-        # 跨程序「Program 型引用」展开:把指向整 program 的空 plan 引用(如 5257 A.4
-        # 「2u from MCyberSec program electives」、2560 B.3 引用 5257)就地替换成被引
-        # program 的课程池。必须在 _index_plans 前做(展开后这些引用不再作为可选 major)。
+        # cross-program "Program-type reference" expansion: replace an empty plan reference pointing to a whole program (e.g. 5257 A.4
+        # "2u from MCyberSec program electives", 2560 B.3 referencing 5257) in place with the referenced
+        # program's course pool. Must run before _index_plans (after expansion these references are no longer selectable majors).
         self._expand_program_refs(conn)
 
-        # 选修范围 level cap(规则 notes:"no more than N units at level L",如 2559 选修 L1≤14)
+        # elective-scope level cap (rule notes: "no more than N units at level L", e.g. 2559 elective L1<=14)
         self.elective_caps: list[dict] = []
         _seen_caps: set = set()
         for r in self.rules:
@@ -268,38 +268,38 @@ class PlanSimulator:
                     {"level": int(m.group(2)), "max_units": int(m.group(1)),
                      "scope": "electives", "text": r["notes"]})
 
-        # 预建索引:plan_code -> plan 节点,方便 choose_plan 后展开
+        # prebuilt index: plan_code -> plan node, for easy expansion after choose_plan
         self._plans: dict[str, dict] = {}
-        # plan_code -> group key:同一条 plan 规则下的分支共享同一 key,用于「择一」互斥
+        # plan_code -> group key: branches under the same plan rule share one key, used for "select-one" exclusivity
         self._plan_group: dict[str, int] = {}
         self._index_plans(self.rules)
 
-    # ---------- 内部:自引用判断 ----------
+    # ---------- internal: self-reference check ----------
     def _is_self_program(self, node: dict) -> bool:
-        """判断某 plan 节点是不是「整学位」自引用节点(非可选分支)。
+        """Decide whether a plan node is a "whole degree" self-reference node (not a selectable branch).
 
-        命中条件(任一):code 等于本 program_id;或 subtype 文本含 'Program'。
-        这类节点(如 2559 的 {code='2559', subtype='Undergraduate Program'})只是把
-        整学位再嵌一层,既非可选 major/minor,也会让递归自引用,统一跳过。
+        Match condition (any): code equals this program_id; or the subtype text contains 'Program'.
+        Such a node (e.g. 2559's {code='2559', subtype='Undergraduate Program'}) just nests the
+        whole degree one more layer; it is neither a selectable major/minor nor valid, and causes recursive self-reference, so skip it uniformly.
         """
         if node.get("code") == self.program_id:
             return True
         subtype = node.get("subtype") or ""
         return "Program" in subtype
 
-    # ---------- 内部:跨程序 Program 引用展开 ----------
+    # ---------- internal: cross-program Program reference expansion ----------
     @staticmethod
     def _is_program_ref(it: dict) -> bool:
-        """是否「Program 型」plan 引用(指向整 program,非 major/minor 分支):
-        code 是纯数字 program_id,或 subtype 文本含 'Program',且 rules 未展开(空)。"""
+        """Whether this is a "Program-type" plan reference (pointing to a whole program, not a major/minor branch):
+        code is a pure-digit program_id, or the subtype text contains 'Program', and rules are not expanded (empty)."""
         if it.get("kind") != "plan" or it.get("rules"):
             return False
         code = str(it.get("code") or "")
         return code.isdigit() or "Program" in (it.get("subtype") or "")
 
     def _program_pools(self, conn, codes: set) -> dict:
-        """被引 program 的课程池:{program_code: set(course_codes)}。只收直接 course/equiv
-        码并下钻普通 major/minor plan,遇 Program 型引用即停(防自引用/互引成环)。"""
+        """Course pool of the referenced program: {program_code: set(course_codes)}. Only collect direct course/equiv
+        codes and drill into normal major/minor plans, stop at a Program-type reference (prevent self-reference / mutual-reference cycles)."""
         rows = conn.execute(
             "SELECT program_id, rules FROM programs WHERE program_id = ANY(%s)",
             (list(codes),)).fetchall()
@@ -324,11 +324,11 @@ class PlanSimulator:
         return pools
 
     def _expand_program_refs(self, conn) -> None:
-        """就地把 Program 型引用替换成被引 program 的课程池(course items)。
+        """Replace Program-type references in place with the referenced program's course pool (course items).
 
-        self-ref(code==program_id)= 本 program 自己的课池;cross-ref 同理引用别的 program。
-        被引 program 不在库或课池为空 -> 该引用保持原样(下游仍按自引用跳过),
-        并记入 self.unresolved_program_refs(不静默)。需在 _course_units 后、_index_plans 前调用。"""
+        self-ref (code==program_id) = this program's own course pool; cross-ref likewise references another program.
+        If the referenced program is not in the DB or its pool is empty -> the reference stays as-is (downstream still skips it as self-reference),
+        and is recorded in self.unresolved_program_refs (not silent). Must be called after _course_units and before _index_plans."""
         self.unresolved_program_refs: list = []
         refs: set = set()
 
@@ -345,7 +345,7 @@ class PlanSimulator:
         pools = self._program_pools(conn, refs)
 
         def plan_codes(rules) -> set:
-            """一组规则(某 plan 的全部子规则)里显式列出的 course/equiv 码。"""
+            """The course/equiv codes explicitly listed in a set of rules (all sub-rules of a plan)."""
             acc: set = set()
             for r in rules or []:
                 for it in r.get("items", []):
@@ -355,10 +355,10 @@ class PlanSimulator:
             return acc
 
         def walk_replace(rules, exclude: set):
-            """exclude:同一 plan 内已显式列出/已展开过的课码。顶层调用 exclude 为空
-            (顶层电选规则保持全池,跨规则去重交给 _claims);进入某 plan 时 exclude 取该
-            plan 的显式课码,避免「专业内 program 电选」重复列出专业必修课导致 _plan_units_done
-            重复计数。展开一处引用后,把已用课码并入 exclude,防同 plan 内多处引用再次重列。"""
+            """exclude: course codes already explicitly listed/expanded within the same plan. The top-level call passes empty exclude
+            (top-level elective rules keep the full pool, cross-rule dedup is left to _claims); when entering a plan, exclude takes that
+            plan's explicit course codes, to avoid "in-major program electives" re-listing the major's required courses and causing _plan_units_done
+            to double-count. After expanding one reference, merge the used codes into exclude, to prevent multiple references within the same plan re-listing them."""
             for r in rules or []:
                 new_items: list = []
                 for it in r.get("items", []):
@@ -381,29 +381,29 @@ class PlanSimulator:
                 r["items"] = new_items
         walk_replace(self.rules, set())
 
-    # ---------- 内部:索引 ----------
+    # ---------- internal: indexing ----------
     def _index_plans(self, rules: list, visited: set | None = None) -> None:
-        """递归收集所有可选 plan 分支(含嵌套子 plan);跳过自引用整学位节点。"""
+        """Recursively collect all selectable plan branches (including nested sub-plans); skip self-reference whole-degree nodes."""
         if visited is None:
             visited = set()
         for r in rules:
-            # 同一条规则 r 下的所有 plan 分支共享一个 group key(用规则对象 id 标识)
+            # all plan branches under the same rule r share one group key (identified by the rule object's id)
             group = id(r)
             for it in r.get("items", []):
                 if it.get("kind") != "plan":
                     continue
-                if self._is_self_program(it):  # 自引用整学位节点不收进可选分支
+                if self._is_self_program(it):  # self-reference whole-degree node is not collected as a selectable branch
                     continue
                 code = it.get("code")
                 if code:
-                    if code in visited:  # 防同码节点重复展开导致的自引用递归
+                    if code in visited:  # prevent recursive self-reference from re-expanding same-code nodes
                         continue
                     visited.add(code)
                     self._plans[code] = it
                     self._plan_group[code] = group
                 self._index_plans(it.get("rules", []), visited)
 
-    # ---------- 增删选择 ----------
+    # ---------- add/remove selection ----------
     def select(self, code: str) -> None:
         self.selected.add(code)
 
@@ -411,20 +411,20 @@ class PlanSimulator:
         self.selected.discard(code)
 
     def choose_plan(self, plan_code: str) -> None:
-        # 自引用整学位节点(如 program_id 本身)不是可选分支,直接拒绝
+        # a self-reference whole-degree node (e.g. program_id itself) is not a selectable branch, reject directly
         if plan_code == self.program_id or plan_code not in self._plans:
             raise ValueError(f"plan 分支不存在: {plan_code!r}(可选: {sorted(self._plans)})")
-        # 择一语义:同一条 plan 规则内互斥,先清掉同 group 已选分支,再选新的
+        # select-one semantics: mutually exclusive within the same plan rule, first clear the chosen branch in the same group, then pick the new one
         group = self._plan_group.get(plan_code)
         if group is not None:
             same_group = {c for c in self.chosen_plans if self._plan_group.get(c) == group}
             self.chosen_plans -= same_group
         self.chosen_plans.add(plan_code)
 
-    # ---------- OR 分支(程序级公式,如 2559 的 Major(B) / No-Major(C) 二选一) ----------
+    # ---------- OR branch (program-level formula, e.g. 2559's Major(B) / No-Major(C) pick-one) ----------
     def branch_groups(self) -> list[list[str]]:
-        """公式里可切换的 OR 组(子节点全是 part 的 or 节点)。
-        混有复合子式的 OR 不提供切换(全部视为活跃,sweep 另行报告)。"""
+        """Switchable OR groups in the formula (or nodes whose children are all part).
+        An OR mixed with compound sub-expressions is not switchable (all treated as active, reported separately by sweep)."""
         groups: list[list[str]] = []
 
         def walk(n):
@@ -448,17 +448,17 @@ class PlanSimulator:
         raise ValueError(f"分支不存在: {ref!r}(可选 OR 组: {self.branch_groups()})")
 
     def branch_state(self) -> dict:
-        """各 OR 组当前选定分支(未显式选则默认组内第一个,2559 即 B=Major)。"""
+        """The currently chosen branch of each OR group (default to the first in the group if not explicitly chosen, i.e. B=Major for 2559)."""
         return {"|".join(g): self.branch.get("|".join(g), g[0])
                 for g in self.branch_groups()}
 
     def _inactive_refs(self) -> set:
-        """未选中的 OR 分支及其全部子规则(失活:不计进度、不供选,课程流入开放规则)。"""
+        """Unchosen OR branches and all their sub-rules (inactive: no progress counted, not offered, courses flow into open rules)."""
         out: set = set()
         for key, sel in self.branch_state().items():
             out |= {ref for ref in key.split("|") if ref != sel}
         grew = True
-        while grew:                                  # 级联子规则(C 失活则 C.1/C.2 失活)
+        while grew:                                  # cascade sub-rules (C inactive -> C.1/C.2 inactive)
             grew = False
             for r in self.rules:
                 if r.get("ref") in out:
@@ -468,13 +468,13 @@ class PlanSimulator:
                             grew = True
         return out
 
-    # ---------- 开放规则与计划外课归属 ----------
+    # ---------- open rules and attribution of out-of-plan courses ----------
     def _open_rule(self, rule: dict) -> bool:
-        """开放规则:select 型、无可枚举项(空 items=程序课表内任选,如 E;仅 wildcard=任意课,
-        如 F / 2557 A.6;仅自引用整学位 plan=程序内任选,如 2455 J 'BE(Hons) Program
-        Elective Courses')。进度来自 attribution(),不来自 items。
-        units_max 为 None 时:仅放开「纯 wildcard」自由选修(任意课,如 A.6 'General Elective');
-        空表规则(E)或自引用规则无上限会成无限吸口,不放开。"""
+        """Open rule: select type, no enumerable items (empty items = pick any within the program course list, e.g. E; only wildcard = any course,
+        e.g. F / 2557 A.6; only a self-reference whole-degree plan = pick any within the program, e.g. 2455 J 'BE(Hons) Program
+        Elective Courses'). Progress comes from attribution(), not from items.
+        When units_max is None: only open up "pure wildcard" free electives (any course, e.g. A.6 'General Elective');
+        an empty-list rule (E) or self-reference rule with no cap would become an infinite sink, so do not open it."""
         if rule.get("select_type") != "select" or rule.get("children_refs"):
             return False
         items = rule.get("items", [])
@@ -489,7 +489,7 @@ class PlanSimulator:
         return True
 
     def _enum_codes(self, rule: dict) -> set:
-        """规则枚举到的全部课程码(course+equivalence 全选项;含已选定 plan 分支递归)。"""
+        """All course codes enumerated by the rule (course + all equivalence options; recurses into chosen plan branches)."""
         out: set = set()
         for it in rule.get("items", []):
             out |= set(self._item_codes(it))
@@ -500,16 +500,16 @@ class PlanSimulator:
         return out
 
     def _open_level_cap(self, rule: dict) -> int | None:
-        """开放规则的课程级别上限:notes 写明 undergraduate 课表的(如 F),限 level<=6。"""
+        """Course-level cap of an open rule: if notes state the undergraduate course list (e.g. F), limit to level<=6."""
         return 6 if "undergraduate" in (rule.get("notes") or "").lower() else None
 
     def attribution(self) -> dict:
-        """计划外已选码的确定性归属:{"assigned": {code: ref}, "unattributed": [code,...]}。
+        """Deterministic attribution of out-of-plan selected codes: {"assigned": {code: ref}, "unattributed": [code,...]}.
 
-        活跃枚举规则吃掉的码不参与;剩余码(排序后,确定性)按规则树顺序试开放规则:
-        空表规则(E)限「程序课表内」(树内全部枚举码),wildcard 规则(F)任意有效码
-        (notes 标 undergraduate 的限 level<=6);单规则填到 units_max 即止。
-        被程序禁修 / 不在 courses 库 / 无处可归 -> unattributed。"""
+        Codes consumed by active enumerated rules do not take part; remaining codes (sorted, deterministic) try open rules in rule-tree order:
+        an empty-list rule (E) is limited to "within the program course list" (all enumerated codes in the tree), a wildcard rule (F) takes any valid code
+        (limited to level<=6 if notes mark undergraduate); a single rule stops once filled to units_max.
+        Banned by the program / not in the courses DB / nowhere to go -> unattributed."""
         inactive = self._inactive_refs()
         enum_codes: set = set()
         for rule in self.rules:
@@ -537,7 +537,7 @@ class PlanSimulator:
                 cap_lv = self._open_level_cap(r)
                 if cap_lv is not None and lvl is not None and lvl > cap_lv:
                     continue
-                mx = self._units_max(r)            # None = 无上限(纯 wildcard 自由选修)
+                mx = self._units_max(r)            # None = no cap (pure wildcard free elective)
                 if mx is not None and fill[ref] + u > mx:
                     continue
                 assigned[code] = ref
@@ -547,9 +547,9 @@ class PlanSimulator:
                 unattributed.append(code)
         return {"assigned": assigned, "unattributed": unattributed}
 
-    # ---------- 进度计算 ----------
+    # ---------- progress calculation ----------
     def _item_codes(self, item: dict) -> list[str]:
-        """某 item 涉及的全部课程码(course=自身;equivalence=所有选项;plan/wildcard=空)。"""
+        """All course codes involved in an item (course=itself; equivalence=all options; plan/wildcard=empty)."""
         k = item.get("kind")
         if k == "course":
             return [item["code"]] if item.get("code") else []
@@ -558,8 +558,8 @@ class PlanSimulator:
         return []
 
     def _claimable_codes(self, rule: dict) -> list:
-        """一条规则可认领的全部课程码(course + equivalence 各选项 + 已选定 plan 分支的课),
-        与计数口径对齐(对照 _claims/_rule_units_done)。不按是否已选过滤。"""
+        """All course codes a rule can claim (course + each equivalence option + courses of chosen plan branches),
+        aligned with the counting convention (compare _claims/_rule_units_done). Not filtered by whether selected."""
         out: list = []
         for it in rule.get("items", []):
             k = it.get("kind")
@@ -572,8 +572,8 @@ class PlanSimulator:
         return out
 
     def _claim_slack(self, rule: dict) -> float:
-        """规则的松弛度 = 可选学分 - 必需学分(父规则/无可枚举课不参与认领,记 +inf)。
-        松弛度越小越「紧」(必修,或备选恰好够),越该优先认领共享课。"""
+        """A rule's slack = available units - required units (parent rules / rules with no enumerable course do not claim, recorded as +inf).
+        The smaller the slack the "tighter" (required, or options just barely enough), the higher the priority to claim shared courses."""
         if rule.get("children_refs"):
             return float("inf")
         codes = set(self._claimable_codes(rule))
@@ -581,13 +581,13 @@ class PlanSimulator:
         return max(0.0, avail - self._effective_required(rule))
 
     def _ordered_rules(self) -> list:
-        """认领顺序:按松弛度升序(紧/必修规则先认领共享课),同松弛度保持原树序。
-        仅用于共享课去重分配;各调用方输出按 ref 映射,与 UI 展示顺序无关。"""
+        """Claim order: by ascending slack (tight/required rules claim shared courses first), keep original tree order for equal slack.
+        Only used for dedup allocation of shared courses; each caller's output is mapped by ref, unrelated to UI display order."""
         return [r for _, r in sorted(enumerate(self.rules),
                                      key=lambda ir: (self._claim_slack(ir[1]), ir[0]))]
 
     def _direct_codes(self, rule: dict) -> list:
-        """规则自身直接列出的 course/equivalence 课码(不下钻 plan;plan 另成 bin)。"""
+        """The course/equivalence codes the rule directly lists (does not drill into plan; plan forms its own bin)."""
         out: list = []
         for it in rule.get("items", []):
             if it.get("kind") in ("course", "equivalence"):
@@ -595,15 +595,15 @@ class PlanSimulator:
         return out
 
     def _assign(self) -> dict:
-        """全局叶子级认领:把每门已选课唯一归属到一个「叶子 bin」,各 bin 不超自身 units_max,
-        按顶层规则紧度做增广匹配,让尽量多顶层规则达到 _effective_required。返回 code -> bin_id
-        (bin_id = id(叶子规则 dict))。计数层据此判每门课算在哪条规则——取代旧「顶层只认领、
-        plan 内部子规则再各自封顶求和」的两层割裂(后者既会跨子规则重复计数,又会把课堆进有上限
-        子规则被截掉、其它子规则空着导致 major 计不满)。
+        """Global leaf-level claiming: assign each selected course uniquely to one "leaf bin", each bin not exceeding its own units_max,
+        do augmenting matching by top-level rule tightness, so as many top-level rules as possible reach _effective_required. Returns code -> bin_id
+        (bin_id = id(leaf rule dict)). The counting layer uses this to decide which rule each course counts in — replacing the old two-layer split of
+        "top-level only claims, plan-internal sub-rules each cap and sum" (the latter both double-counts across sub-rules and piles courses into a capped
+        sub-rule that truncates them while other sub-rules sit empty, leaving the major undercounted).
 
-        叶子 bin = 顶层非父、非失活、非开放规则自身(计其直接 course/equiv);该规则下已选定 plan
-        分支递归展开的每条子规则(top 仍记为该顶层规则,用于上卷)。开放规则(E/F/A.6)走
-        attribution 不进认领;父规则只聚合不直接认领。"""
+        Leaf bin = a top-level non-parent, non-inactive, non-open rule itself (counts its direct course/equiv); each sub-rule recursively expanded from a chosen plan
+        branch under that rule (top is still recorded as that top-level rule, for roll-up). Open rules (E/F/A.6) go through
+        attribution and do not claim; parent rules only aggregate and do not claim directly."""
         inactive = self._inactive_refs()
         bins: dict[int, dict] = {}        # bin_id -> {top, cap, codes}
         top_bins: dict[str, list] = {}    # top_ref -> [bin_id,...]
@@ -613,7 +613,7 @@ class PlanSimulator:
         def add_bin(rule: dict, top: str):
             bid = id(rule)
             codes: list = []
-            for it in rule.get("items", []):           # equiv 组折叠成一个代表,口径同 _item_done_units
+            for it in rule.get("items", []):           # equiv group folds into one representative, same convention as _item_done_units
                 k = it.get("kind")
                 if k == "course" and it.get("code") in self.selected:
                     codes.append(it["code"])
@@ -622,7 +622,7 @@ class PlanSimulator:
                               if o.get("code") in self.selected]
                     if picked:
                         codes.append(max(picked, key=lambda c: self._course_units.get(c, DEFAULT_UNITS)))
-            # 按 units 降序:大学分课先填,避免小课占满有上限 bin 后大课进不来(装箱次优)
+            # by descending units: fill high-units courses first, to avoid small courses filling a capped bin and blocking big ones (suboptimal packing)
             codes = sorted(dict.fromkeys(codes),
                            key=lambda c: self._course_units.get(c, DEFAULT_UNITS), reverse=True)
             bins[bid] = {"top": top, "cap": self._units_max(rule), "codes": codes}
@@ -671,8 +671,8 @@ class PlanSimulator:
             top_load[bins[bid]["top"]] -= units(c)
 
         def augment(top, visited):
-            """给 top 增加一门已选课(进它某条未满 cap 的 bin),必要时从别的 top 腾挪
-            (腾走方掉到 req 以下时先递归补回)。"""
+            """Add one selected course to top (into one of its bins not yet at cap), moving from another top if needed
+            (if the donor drops below req, recursively refill it first)."""
             for bid in top_bins[top]:
                 for c in bins[bid]["codes"]:
                     if c in visited:
@@ -701,10 +701,10 @@ class PlanSimulator:
                 codes |= set(bins[bid]["codes"])
             return sum(units(c) for c in codes) - top_req[top]
 
-        for top in sorted(top_bins, key=top_slack):    # 紧的顶层规则先达标
+        for top in sorted(top_bins, key=top_slack):    # tight top-level rules reach target first
             while top_load[top] < top_req[top] and augment(top, set()):
                 pass
-        for c, locs in code_bins.items():              # 剩余已选课归并(供 over_max/总分)
+        for c, locs in code_bins.items():              # merge remaining selected courses (for over_max / total)
             if c in assign:
                 continue
             for bid in locs:
@@ -716,9 +716,9 @@ class PlanSimulator:
         return assign
 
     def _item_done_units(self, item: dict, rule_id: int | None = None) -> float:
-        """某 item 已贡献的学分。course:选了即计;equivalence:选了任一选项只按一门计(取已选
-        选项里 units 最大的)。传 rule_id 时只计经 _assign 归属本规则(id)的码(防跨规则重复计数);
-        rule_id=None 时只看是否已选(供 equivalence 是否已满足的判断)。"""
+        """Units already contributed by an item. course: counted once selected; equivalence: if any option is selected counts only one (the selected
+        option with the largest units). When rule_id is passed, only count codes assigned to this rule (id) by _assign (prevents cross-rule double-counting);
+        when rule_id=None, only check whether selected (for judging whether an equivalence is satisfied)."""
         def mine(code):
             return code in self.selected and (
                 rule_id is None or self._bin_of.get(code) == rule_id)
@@ -732,12 +732,12 @@ class PlanSimulator:
         return 0.0
 
     def _rule_units_done(self, rule: dict) -> float:
-        """一条规则内,认领归属本规则(id)的 course/equivalence 项已贡献学分之和。"""
+        """Within a rule, the sum of units contributed by course/equivalence items claimed to this rule (id)."""
         return sum(self._item_done_units(it, id(rule)) for it in rule.get("items", []))
 
     def _plan_units_done(self, plan: dict) -> float:
-        """一个已选定 plan 分支:其各子规则(按 id 认领)已贡献学分之和,逐子规则按 units_max
-        封顶;子规则里再嵌的已选 plan 递归计入。每门课经 _assign 唯一归属,不重复不浪费。"""
+        """A chosen plan branch: the sum of units contributed by its sub-rules (claimed by id), each sub-rule capped by units_max;
+        a chosen plan nested inside a sub-rule is counted recursively. Each course is uniquely assigned by _assign, no repeat, no waste."""
         total = 0.0
         for sr in plan.get("rules", []):
             sr_done, _ = self._capped(self._rule_units_done(sr), self._units_max(sr))
@@ -749,18 +749,18 @@ class PlanSimulator:
         return total
 
     def _required(self, rule_or_plan: dict) -> float:
-        """规则/分支的必需学分 = units_min(None 视为 0)。"""
+        """Required units of a rule/branch = units_min (None treated as 0)."""
         m = rule_or_plan.get("units_min")
         return float(m) if m is not None else 0.0
 
     def _effective_required(self, rule: dict) -> float:
-        """规则在「认领/松弛度」口径下的真实必需学分,与 _base_entry 的 required 保持一致。
+        """The rule's true required units under the "claim/slack" convention, consistent with _base_entry's required.
 
-        含 plan 项的规则:规则自身 units_min 为 None 时,其真实需求来自所选 major/minor 分支
-        (from-plans 选修,如 2460 的 A.2.1:自身 None,选了 major 后需修满该 major 的 16u);
-        已选分支取各分支 min 的最大,未选分支取各分支 min 的最小。规则自身有 units_min 则用它。
-        无 plan 项的规则退回 _required。用于 _claim_slack / _claims 给共享课定优先级,
-        否则 None 的规则会被当成「松」(slack 偏大),被同码的低 min 规则抢走应得的课。"""
+        Rule with plan items: when the rule's own units_min is None, its true requirement comes from the chosen major/minor branch
+        (from-plans elective, e.g. 2460's A.2.1: itself None, after choosing a major must complete that major's 16u);
+        chosen branch takes the max of branch mins, unchosen takes the min of branch mins. If the rule has its own units_min, use it.
+        A rule with no plan items falls back to _required. Used by _claim_slack / _claims to prioritize shared courses,
+        otherwise a None rule would be treated as "loose" (larger slack) and lose its due courses to a same-code lower-min rule."""
         plan_items = [
             it for it in rule.get("items", [])
             if it.get("kind") == "plan" and not self._is_self_program(it)
@@ -773,21 +773,21 @@ class PlanSimulator:
         return min((self._required(p) for p in plan_items), default=0.0)
 
     def _units_max(self, rule_or_plan: dict) -> float | None:
-        """规则/分支的学分上限 = units_max(None 表示不封顶)。"""
+        """Units cap of a rule/branch = units_max (None means no cap)."""
         m = rule_or_plan.get("units_max")
         return float(m) if m is not None else None
 
     def _capped(self, done: float, cap: float | None) -> tuple[float, bool]:
-        """按上限封顶:返回 (计入进度的学分, 是否超额)。cap=None 不封顶。"""
+        """Cap by limit: returns (units counted toward progress, whether over). cap=None means no cap."""
         if cap is not None and done > cap:
             return cap, True
         return done, False
 
     def _eval_logic(self, tree: dict | None, done_map: dict, branchable: bool = True) -> bool:
-        """公式求值:leaf=该规则 done;and=全真;or=任一真。tree=None -> 全部非子规则 done。
-        branchable=True(程序级公式)时,全 part 的 OR 组按 branch_state 选定分支求值
-        (UI 二选一,如 B OR C);branchable=False(子规则内部公式,如 B.1 OR B.2)时,
-        OR 一律取 any-of —— 子规则内部 OR 不暴露为可切换分支组,不应依赖 branch_state。"""
+        """Formula evaluation: leaf=that rule's done; and=all true; or=any true. tree=None -> all non-sub-rules done.
+        When branchable=True (program-level formula), an all-part OR group is evaluated by branch_state's chosen branch
+        (UI pick-one, e.g. B OR C); when branchable=False (sub-rule internal formula, e.g. B.1 OR B.2),
+        OR is always any-of — an internal sub-rule OR is not exposed as a switchable branch group and should not depend on branch_state."""
         if tree is None:
             return all(v for k, v in done_map.items() if k not in self._child_of)
         op = tree.get("op")
@@ -804,8 +804,8 @@ class PlanSimulator:
         return False
 
     def _logic_refs(self, tree: dict | None) -> set:
-        """取出已解析公式里引用的全部规则 ref。用于丢弃引用了非本规则子规则的畸形公式
-        (官方数据偶有笔误,如把 A.1.3 误写成 A.2.3),避免该规则永远判不出 done。"""
+        """Extract all rule refs referenced in a parsed formula. Used to discard a malformed formula referencing a non-sub-rule
+        (official data has occasional typos, e.g. writing A.1.3 as A.2.3), to avoid the rule never reaching done."""
         if not tree:
             return set()
         if tree.get("op") == "part":
@@ -816,14 +816,14 @@ class PlanSimulator:
         return out
 
     def status(self) -> list:
-        """每条顶层规则的进度。
+        """Progress of each top-level rule.
 
-        返回 list[dict]:
+        Returns list[dict]:
           {ref, title, select_type, units_required, units_done, units_counted, over_max,
-           done, remaining, plan_options/chosen_plans(仅含 plan 的规则有),
-           child_of(SubRule 子规则), inactive(未选中 OR 分支)}
-        语义:开放规则(E/F)的进度来自 attribution();SubRule 父规则(C)= 子规则
-        counted 之和按自身 min/max 判定;失活分支(未选中的 OR 支)counted 置 0。
+           done, remaining, plan_options/chosen_plans (only rules with plan have these),
+           child_of (SubRule sub-rule), inactive (unchosen OR branch)}
+        Semantics: an open rule (E/F) progress comes from attribution(); a SubRule parent rule (C) =
+        the sum of sub-rule counted judged by its own min/max; an inactive branch (unchosen OR branch) has counted set to 0.
         """
         att = self.attribution()
         inactive = self._inactive_refs()
@@ -831,7 +831,7 @@ class PlanSimulator:
         entries: dict[str, dict] = {}
         for rule in self.rules:
             if rule.get("children_refs"):
-                continue                              # 父规则后算(依赖子 entry)
+                continue                              # parent rules computed later (depend on child entry)
             entries[rule.get("ref")] = self._base_entry(rule, att, inactive)
         parents = [r for r in self.rules if r.get("children_refs")]
         parents.sort(key=lambda r: self._rule_depth(r.get("ref")), reverse=True)
@@ -844,9 +844,9 @@ class PlanSimulator:
         return out
 
     def _rule_depth(self, ref) -> int:
-        """规则在子规则树中的深度(顶层=0)。父规则按深度从深到浅计算,
-        确保算某父规则前其子规则(含本身也是父规则的中间节点)已先算好,
-        否则父规则会漏掉尚未计算的子父规则的 counted。"""
+        """A rule's depth in the sub-rule tree (top level=0). Parent rules are computed deepest-first,
+        to ensure that before computing a parent rule its sub-rules (including intermediate nodes that are themselves parent rules) are already done,
+        otherwise the parent rule would miss the counted of not-yet-computed sub-parent rules."""
         d, cur, seen = 0, ref, set()
         while self._child_of.get(cur) and cur not in seen:
             seen.add(cur)
@@ -855,8 +855,8 @@ class PlanSimulator:
         return d
 
     def _parent_entry(self, rule: dict, entries: dict, inactive: set) -> dict:
-        """SubRule 父规则(如 C「No Major Option」8–24):counted=子规则 counted 之和
-        按自身 max 封顶;done=达自身 min 且子公式(如 Part C.1 AND Part C.2)满足。"""
+        """SubRule parent rule (e.g. C "No Major Option" 8-24): counted = sum of sub-rule counted
+        capped by its own max; done = reaches its own min and the sub-formula (e.g. Part C.1 AND Part C.2) is satisfied."""
         ref = rule.get("ref")
         required = self._required(rule)
         units_max = self._units_max(rule)
@@ -888,7 +888,7 @@ class PlanSimulator:
         select_type = rule.get("select_type")
         required = self._required(rule)
         units_max = self._units_max(rule)
-        if self._open_rule(rule):                     # E/F:进度=归属到本规则的计划外课
+        if self._open_rule(rule):                     # E/F: progress = out-of-plan courses attributed to this rule
             done_units = sum(self._course_units.get(c, DEFAULT_UNITS)
                              for c, r2 in att["assigned"].items() if r2 == ref)
         else:
@@ -900,7 +900,7 @@ class PlanSimulator:
             "select_type": select_type,
         }
 
-        # 该规则若含 plan 项:列出可选分支(跳过自引用整学位节点),并按择一并入进度
+        # if the rule has plan items: list the selectable branches (skip self-reference whole-degree nodes), and merge into progress by select-one
         plan_items = [
             it
             for it in rule.get("items", [])
@@ -919,35 +919,35 @@ class PlanSimulator:
             ]
             chosen_here = [p for p in plan_items if p.get("code") in self.chosen_plans]
             entry["chosen_plans"] = [p.get("code") for p in chosen_here]
-            # 必需学分:规则自身有 units_min 就用它(如 from-plans 选修 A.3.2 自身=0,父规则
-            # 才是真实需求);仅当规则自身无 units_min 时才退回 plan 的 min(择一修满一个分支:
-            # 已选取该分支 min,未选取各分支最小 min)。
+            # required units: use the rule's own units_min if it has one (e.g. from-plans elective A.3.2 itself=0, the parent rule
+            # is the real requirement); only fall back to the plan's min when the rule has no units_min (select-one complete one branch:
+            # chosen takes that branch's min, unchosen takes the smallest branch min).
             if chosen_here:
                 if rule.get("units_min") is None:
                     required = max(self._required(p) for p in chosen_here)
                 done_units += sum(self._plan_units_done(p) for p in chosen_here)
             elif rule.get("units_min") is None:
                 required = min((self._required(p) for p in plan_items), default=0.0)
-            # plan 分支自身的封顶已在 _plan_units_done 内逐子规则处理,这里不再对整组封顶
+            # the plan branch's own cap is already handled sub-rule by sub-rule inside _plan_units_done, no cap on the whole group here
             effective_done = done_units
             over_max = False
         else:
-            # 普通规则:done 按 units_max 封顶,超额学分不算有效进度
+            # normal rule: done is capped by units_max, units over the cap do not count as effective progress
             effective_done, over_max = self._capped(done_units, units_max)
 
-        if ref in inactive:                       # 失活分支:不计进度(课程流入开放规则)
+        if ref in inactive:                       # inactive branch: no progress counted (courses flow into open rules)
             done_units = effective_done = 0.0
             over_max = False
         entry["units_required"] = required
         entry["units_max"] = units_max
-        entry["units_done"] = done_units          # 原始已修学分(可超 units_max)
-        entry["units_counted"] = effective_done   # 计入进度的学分(已按 units_max 封顶)
+        entry["units_done"] = done_units          # raw completed units (may exceed units_max)
+        entry["units_counted"] = effective_done   # units counted toward progress (already capped by units_max)
         entry["over_max"] = over_max
         entry["done"] = effective_done >= required and ref not in inactive
         entry["remaining"] = max(required - effective_done, 0.0)
         entry["inactive"] = ref in inactive
         entry["child_of"] = self._child_of.get(ref)
-        if self._open_rule(rule):                 # 开放规则:UI 据此挂课程搜索框
+        if self._open_rule(rule):                 # open rule: UI attaches a course search box based on this
             entry["open"] = True
             entry["open_scope"] = (
                 "any" if any(it.get("kind") == "wildcard" for it in rule.get("items", []))
@@ -956,12 +956,12 @@ class PlanSimulator:
             entry["open_max_level"] = self._open_level_cap(rule)
         return entry
 
-    # ---------- 单顶层 plan-picker:子规则上浮 ----------
+    # ---------- single top-level plan-picker: surface sub-rules ----------
     def _picker_rule(self) -> dict | None:
-        """「整学位=选一个 field/plan」程序的判定:顶层只有一条规则、它是带子规则 plan 的选择器
-        (如 5528 MEngSc、2031 BSc Honours)。这类程序选定 field 后,真正的课组(弹性必修 /
-        研究项目 / 各类选修)全在 plan 内部,需上浮成可见进度行,否则结构全塌进一条「0/16」。
-        多顶层规则的程序(如 2559,major 只是规则之一)不在此列,维持 major 卷入单条规则的旧语义。"""
+        """Detection of a "whole degree = pick one field/plan" program: only one top-level rule, and it is a picker of plans with sub-rules
+        (e.g. 5528 MEngSc, 2031 BSc Honours). For such a program, after choosing a field the real course groups (flexible required /
+        research project / various electives) are all inside the plan, and need surfacing as visible progress rows, otherwise the whole structure collapses into one "0/16".
+        A program with multiple top-level rules (e.g. 2559, where major is just one rule) is not in this case, keeping the old semantics where the major is rolled into a single rule."""
         if len(self.rules) != 1:
             return None
         rule = self.rules[0]
@@ -974,15 +974,15 @@ class PlanSimulator:
         return None
 
     def _chosen_field_plans(self, picker: dict) -> list:
-        """picker 规则下已选定、且带子规则的 field/plan 分支(择一,通常 0 或 1 个)。"""
+        """The chosen field/plan branches with sub-rules under the picker rule (select-one, usually 0 or 1)."""
         return [it for it in picker.get("items", [])
                 if it.get("kind") == "plan" and not self._is_self_program(it)
                 and it.get("code") in self.chosen_plans and it.get("rules")]
 
     def _surface_picker(self, picker: dict, out: list) -> list:
-        """把已选 field 的子规则上浮为顶层规则 picker 的子行(child_of=picker.ref)。
-        picker 自身改成 parent 口径:进度 = 顶层子规则计入之和(按 plan 学分上限封顶),
-        done 还要求各子规则 done 且 plan 级 level 下限满足(student-facing 安全)。未选 field 时原样返回。"""
+        """Surface the chosen field's sub-rules as child rows of the top-level picker rule (child_of=picker.ref).
+        The picker itself becomes a parent convention: progress = sum of top-level sub-rule counted (capped by the plan units cap),
+        done also requires each sub-rule done and the plan-level level floor satisfied (student-facing safety). Returns as-is when no field chosen."""
         parent_ref = picker.get("ref")
         chosen = self._chosen_field_plans(picker)
         if not chosen:
@@ -1015,8 +1015,8 @@ class PlanSimulator:
         return [parent_entry] + children
 
     def _subrule_entries(self, subs: list, parent_ref: str) -> tuple[list, list]:
-        """已选 field 的扁平子规则列表 -> (上浮 entry 列表, 顶层子规则的命名空间 ref 列表)。
-        ref 命名空间化为「父ref.子ref」(如 A.A / A.E.1),避免与顶层 ref 冲突、且沿用点号子规则约定。"""
+        """Flat sub-rule list of the chosen field -> (surfaced entry list, namespaced ref list of top-level sub-rules).
+        ref is namespaced as "parentref.childref" (e.g. A.A / A.E.1), to avoid clashing with top-level refs and follow the dotted sub-rule convention."""
         def ns(r: str) -> str:
             return f"{parent_ref}.{r}"
 
@@ -1061,7 +1061,7 @@ class PlanSimulator:
             "done": counted >= required, "remaining": max(required - counted, 0.0),
             "inactive": False, "child_of": ns(co) if co else parent_ref,
         }
-        if self._open_rule(sr):                   # 罕见(2052 BA Honours 1 条):标开放 + 兜底计数
+        if self._open_rule(sr):                   # rare (one in 2052 BA Honours): mark open + fallback count
             entry["open"] = True
             entry["open_scope"] = (
                 "any" if any(it.get("kind") == "wildcard" for it in sr.get("items", []))
@@ -1102,8 +1102,8 @@ class PlanSimulator:
         }
 
     def _subrule_leftover_units(self, sr: dict) -> float:
-        """开放子规则的兜底学分:已选课里未被任何具体子规则(_bin_of)认领、且符合开放范围的码之和。
-        范围:有 items(wildcard)=任意有效课;无 items(空表)=程序课表内;notes 标 undergraduate 的限 level<=6。"""
+        """Fallback units of an open sub-rule: sum of selected codes not claimed by any specific sub-rule (_bin_of) and within the open scope.
+        Scope: with items (wildcard) = any valid course; no items (empty list) = within the program course list; limited to level<=6 if notes mark undergraduate."""
         prog_list = self._all_referenced_codes()
         wild = bool(sr.get("items"))
         cap_lv = self._open_level_cap(sr)
@@ -1120,13 +1120,13 @@ class PlanSimulator:
             total += self._course_units.get(code, DEFAULT_UNITS)
         return total
 
-    # ---------- plan 级 level 约束(下限门控 / 子规则上限告警) ----------
+    # ---------- plan-level level constraints (floor gating / sub-rule cap warning) ----------
     def _plan_level_aux(self, chosen: list) -> tuple[bool, list]:
-        """已选 field 的 level 约束求值。返回 (下限是否全满足, [状态 dict ...])。
-        level_min(如「Selected courses must include at least 8 units at level 7」)= 整 field 范围,
-        门控 field done(student-facing 安全:漏修 level 7 会无法毕业);
-        level_max(如 group D「at most 4 units at level 4」)= 该子规则范围,仅告警不挡 done。
-        aux 数据由 scraper 抓 plan/group 的 auxiliaryRules、随 rules 树入库;缺则返回 (True, [])。"""
+        """Evaluate the level constraints of the chosen field. Returns (whether all floors satisfied, [status dict ...]).
+        level_min (e.g. "Selected courses must include at least 8 units at level 7") = whole field scope,
+        gates field done (student-facing safety: missing level 7 means cannot graduate);
+        level_max (e.g. group D "at most 4 units at level 4") = that sub-rule scope, warns only, does not block done.
+        aux data is scraped from the plan/group's auxiliaryRules and loaded with the rules tree; returns (True, []) if missing."""
         def units_at(codes, level, or_higher) -> float:
             tot = 0.0
             for c in codes:
@@ -1168,11 +1168,11 @@ class PlanSimulator:
                 "used": used, "over": used > units, "satisfied": used <= units,
                 "scope": scope, "text": a.get("text", "")}
 
-    # ---------- 可选列表 ----------
+    # ---------- available list ----------
     def _collect_codes(self, rule: dict, include_chosen_plans: bool) -> list[str]:
-        """一条规则下可枚举的课程码(course + equivalence;plan 视参数决定是否下钻)。
+        """Enumerable course codes under a rule (course + equivalence; whether to drill into plan depends on the parameter).
 
-        已满足的 equivalence 项(已选其中任一 / 已得该项学分)不再枚举其余 options。
+        A satisfied equivalence item (any one selected / its units obtained) no longer enumerates the rest of its options.
         """
         codes: list[str] = []
         for it in rule.get("items", []):
@@ -1180,7 +1180,7 @@ class PlanSimulator:
             if k == "course":
                 codes += self._item_codes(it)
             elif k == "equivalence":
-                if self._item_done_units(it) > 0:  # 该等价项已满足,不再列出其余备选
+                if self._item_done_units(it) > 0:  # this equivalence item is satisfied, no longer list the remaining options
                     continue
                 codes += self._item_codes(it)
             elif (
@@ -1194,17 +1194,17 @@ class PlanSimulator:
         return codes
 
     def _closed(self, entry: dict) -> bool:
-        """规则是否不再供选:有 units_max 的组到顶(counted>=max)才收敛;
-        无上限的组维持「满 min 即收敛」。done(满 min)≠ 不能继续选。"""
+        """Whether a rule is no longer offered: a group with units_max only converges when full (counted>=max);
+        a group with no cap keeps "converge once min is met". done (min met) != cannot keep selecting."""
         mx = entry.get("units_max")
         if mx is not None:
             return entry["units_counted"] >= mx
         return entry["done"]
 
     def available(self) -> list:
-        """当前未选、且属于「未收敛规则」的课程码(含已选定 plan 分支的课)。
+        """Course codes currently not selected and belonging to an "unconverged rule" (including courses of chosen plan branches).
 
-        去重并保持稳定顺序;wildcard 不枚举(它不绑定具体课程码)。
+        Deduplicated and stable order; wildcard is not enumerated (it does not bind a specific course code).
         """
         seen: set[str] = set()
         out: list[str] = []
@@ -1220,12 +1220,12 @@ class PlanSimulator:
                 out.append(code)
         return out
 
-    # ---------- 按规则分组(供 Web UI;available_by_rule 拍平去重 == available()) ----------
+    # ---------- group by rule (for the Web UI; available_by_rule flattened and deduped == available()) ----------
     def _slots_for_rule(self, rule: dict, seen: set) -> list:
-        """一条规则下可选的 slot 列表:course 各自成 slot,equivalence 聚成「二选一」slot。
+        """List of selectable slots under a rule: each course is its own slot, equivalence groups into a "pick-one" slot.
 
-        口径与 available() 一致:已满足的 equivalence 不出;已选/已出现/被禁的码扣掉;
-        seen 跨规则共享以全局去重(先出现的规则胜)。已选定 plan 分支的课递归并入本规则。
+        Convention matches available(): satisfied equivalence is not emitted; selected/seen/banned codes are removed;
+        seen is shared across rules for global dedup (the first rule wins). Courses of chosen plan branches are recursively merged into this rule.
         slot = {'kind':'course','code'} | {'kind':'equiv','options':[...]}
         """
         slots: list = []
@@ -1238,7 +1238,7 @@ class PlanSimulator:
                     seen.add(code)
                     slots.append({"kind": "course", "code": code})
             elif k == "equivalence":
-                if self._item_done_units(it) > 0:  # 该等价项已满足,不再列备选
+                if self._item_done_units(it) > 0:  # this equivalence item is satisfied, no longer list options
                     continue
                 opts = [
                     o["code"]
@@ -1259,9 +1259,9 @@ class PlanSimulator:
         return slots
 
     def available_by_rule(self) -> dict:
-        """每条「未收敛」顶层规则 -> 可选 slot 列表(course / equiv 二选一)。
-        单顶层 plan-picker 选定 field 后,改按上浮的命名空间子规则(如 A.A/A.B)分组,
-        不再把整 field 课程平铺到 picker 一个键下。"""
+        """Each "unconverged" top-level rule -> list of selectable slots (course / equiv pick-one).
+        After a single top-level plan-picker chooses a field, it groups by the surfaced namespaced sub-rules (e.g. A.A/A.B) instead,
+        no longer flattening the whole field's courses under the single picker key."""
         seen: set[str] = set()
         st = {e["ref"]: e for e in self.status()}
         out: dict[str, list] = {}
@@ -1290,10 +1290,10 @@ class PlanSimulator:
         return out
 
     def _selected_in_rule(self, rule: dict, seen: set) -> list:
-        """一条规则下「已选」的课程码(含 equivalence 备选与已选定 plan 分支的课)。
+        """The "selected" course codes under a rule (including equivalence options and courses of chosen plan branches).
 
-        与 available 不同:不跳过已满足的 equivalence、不跳过已 done 规则,
-        这样用户已选的课在对应规则段里始终可见(可点击退课)。先出现的规则胜。
+        Unlike available: does not skip satisfied equivalence, does not skip done rules,
+        so a user's selected courses are always visible in the matching rule section (clickable to deselect). The first rule wins.
         """
         picked: list = []
         for it in rule.get("items", []):
@@ -1319,9 +1319,9 @@ class PlanSimulator:
         return picked
 
     def selected_by_rule(self) -> dict:
-        """每条顶层规则 -> 已选课程码列表(供 UI 在规则段内显示已选,可退课)。
+        """Each top-level rule -> list of selected course codes (for the UI to show selected within the rule section, deselectable).
 
-        失活分支不列(其已选课经 attribution 流入 E/F);开放规则列归属到它的码。"""
+        Inactive branches are not listed (their selected courses flow into E/F via attribution); an open rule lists the codes attributed to it."""
         seen: set[str] = set()
         out: dict[str, list] = {}
         inactive = self._inactive_refs()
@@ -1351,7 +1351,7 @@ class PlanSimulator:
         return out
 
     def overall(self) -> dict:
-        """程序整体视图:总进度(子规则不重复计)、公式满足、分支组、未归属课。"""
+        """Whole-program view: total progress (sub-rules not double-counted), formula satisfaction, branch groups, unattributed courses."""
         st = self.status()
         att = self.attribution()
         total = sum(e["units_counted"] for e in st
@@ -1368,7 +1368,7 @@ class PlanSimulator:
             "unattributed": att["unattributed"],
         }
 
-    # ---------- 学分映射(供排课 scheduler) ----------
+    # ---------- units mapping (for the scheduler) ----------
     def _walk_units(self, rule: dict, acc: dict) -> None:
         for it in rule.get("items", []):
             k = it.get("kind")
@@ -1384,19 +1384,19 @@ class PlanSimulator:
                 self._walk_units(sr, acc)
 
     def units_map(self) -> dict:
-        """本 program 规则树里所有课程码 -> 学分(供排课;缺失由 scheduler 兜底 DEFAULT_UNITS)。"""
+        """All course codes in this program's rule tree -> units (for the scheduler; missing falls back to DEFAULT_UNITS in the scheduler)."""
         acc: dict[str, float] = {}
         for rule in self.rules:
             self._walk_units(rule, acc)
         return acc
 
     def level_cap_status(self) -> list:
-        """程序级 level 约束的实时状态。
+        """Real-time status of program-level level constraints.
 
-        每条:{level, max_units / min_units, used(已选该级别学分), over / under, scope, text}。
-        含三类:program(程序级 aux_rules level cap)、electives(选修范围 notes cap)、
-        以及单顶层 plan-picker 选定 field 后的 plan/group 级 level 约束(下限 level_min + 组内上限 level_max)。
-        级别 = 课码第一个数字(CSSE7100 -> 7)。无任何约束时返回 []。
+        Each: {level, max_units / min_units, used (selected units at this level), over / under, scope, text}.
+        Three kinds: program (program-level aux_rules level cap), electives (elective-scope notes cap),
+        and after a single top-level plan-picker chooses a field, the plan/group-level level constraints (floor level_min + in-group cap level_max).
+        Level = first digit of the course code (CSSE7100 -> 7). Returns [] when there is no constraint.
         """
         um = self.units_map()
 
@@ -1414,13 +1414,13 @@ class PlanSimulator:
 
         out = []
         all_used = used_map(self.selected)
-        for cap in self.level_caps:                   # 程序级:全部已选
+        for cap in self.level_caps:                   # program level: all selected
             used = all_used.get(cap["level"], 0.0)
             out.append({"kind": "level_max", "level": cap["level"],
                         "max_units": cap["max_units"], "used": used,
                         "over": used > cap["max_units"], "satisfied": used <= cap["max_units"],
                         "scope": "program", "text": cap["text"]})
-        if self.elective_caps:                        # 选修范围:扣掉核心组与已选 major 的课
+        if self.elective_caps:                        # elective scope: remove the core group and chosen major's courses
             elect_used = used_map(self._elective_selected())
             for cap in self.elective_caps:
                 used = elect_used.get(cap["level"], 0.0)
@@ -1428,7 +1428,7 @@ class PlanSimulator:
                             "max_units": cap["max_units"], "used": used,
                             "over": used > cap["max_units"], "satisfied": used <= cap["max_units"],
                             "scope": "electives", "text": cap["text"]})
-        picker = self._picker_rule()                  # plan-picker:field 的 level 下限 / 组内上限
+        picker = self._picker_rule()                  # plan-picker: field's level floor / in-group cap
         if picker is not None:
             chosen = self._chosen_field_plans(picker)
             if chosen:
@@ -1439,7 +1439,7 @@ class PlanSimulator:
         return out
 
     def _elective_selected(self) -> set:
-        """选修口径的已选码 = 已选 -('all' 型核心组枚举 ∪ 已选 plan 分支枚举)。"""
+        """Selected codes under the elective convention = selected - ('all'-type core group enumeration ∪ chosen plan branch enumeration)."""
         core: set = set()
         for r in self.rules:
             if r.get("select_type") == "all":
@@ -1451,7 +1451,7 @@ class PlanSimulator:
                     core |= self._enum_codes(sr)
         return {c for c in self.selected if c not in core}
 
-    # ---------- 先修软门(阶段三b) ----------
+    # ---------- prerequisite soft gate (stage 3b) ----------
     def _missing_codes(self, tree: dict) -> list:
         out: list[str] = []
         stack = [tree]
@@ -1465,9 +1465,9 @@ class PlanSimulator:
         return list(dict.fromkeys(out))
 
     def locked_status(self, code: str) -> dict:
-        """某课的先修锁态:unlocked / locked / unknown(无数据或无法解析)。"""
+        """A course's prerequisite lock state: unlocked / locked / unknown (no data or unparseable)."""
         tree = self._prereq.get(code)
-        if tree is None:                       # 无先修数据(确无 / 未爬到,都按解锁)
+        if tree is None:                       # no prerequisite data (truly none / not scraped, both treated as unlocked)
             return {"code": code, "state": "unlocked", "missing": [], "reason": None}
         if tree.get("op") == "raw":
             return {"code": code, "state": "unknown", "missing": [],
@@ -1479,7 +1479,7 @@ class PlanSimulator:
                 "missing": self._missing_codes(tree), "reason": reason}
 
     def available_detailed(self) -> list:
-        """available() 各码附先修锁态(不隐藏 locked,只打标)。"""
+        """Attach a prerequisite lock state to each code of available() (does not hide locked, only marks it)."""
         return [self.locked_status(c) for c in self.available()]
 
     def _all_referenced_codes(self) -> set:
@@ -1499,8 +1499,8 @@ class PlanSimulator:
         return codes
 
     def _subtree_codes(self, rule_or_plan: dict) -> list[str]:
-        """某规则/分支子树下全部 course+equivalence 课码,**无条件下钻所有 plan 分支**
-        (不依赖已选 plan;去重保序由调用方做)。供 structure_overview 枚举整结构用。"""
+        """All course+equivalence codes under a rule/branch subtree, **unconditionally drilling into all plan branches**
+        (does not depend on chosen plan; dedup and order are done by the caller). Used by structure_overview to enumerate the whole structure."""
         out: list[str] = []
         for it in rule_or_plan.get("items", []):
             k = it.get("kind")
@@ -1512,24 +1512,24 @@ class PlanSimulator:
         return out
 
     def structure_overview(self) -> dict:
-        """确定性枚举整个 program 结构(不依赖已选 plan、不调 LLM),按规则与方向(major/field)
-        分组列出课组。供问答「某专业有哪些选修/核心课」按方向完整列出——覆盖 major 门控的课
-        (扁平 program_course 的直属查询只含 via_plan='' 的课,会漏掉这些)。
+        """Deterministically enumerate the whole program structure (does not depend on chosen plan, no LLM), grouping course groups
+        by rule and direction (major/field). For QA "what electives/core courses does a major have" listing fully by direction — covers major-gated courses
+        (a direct query of flat program_course only includes courses with via_plan='', missing these).
 
-        返回 {program_id, title, groups:[...]},每组:
+        Returns {program_id, title, groups:[...]}, each group:
           {ref, title, kind('core'|'elective'|'open'), select_type, plan_code, plan_name,
-           subtype, courses:[code...], open_scope}。
-        kind:开放规则(E/F)-> 'open';否则按**官方区块标题**判(标题含 elective -> 'elective',
-        含 core/compulsory -> 'core';标题无明确词时退回 select_type:'all'->'core'、'select'->
-        'elective')。标题优先于 select_type——数据里偶有把 'X Elective Courses' 标成 select_type='all'
-        的(如 2559 Cyber),按学生在官方页看到的标题归类才不误导(规则14:两信号冲突时取更权威的)。
-        含子规则的父规则(如 2559 C、5522 A/B)只作占位,其子规则各自成组(已在 self.rules 内);
-        plan 分支(major/field)按其内部子规则逐组展开(每组带 plan_name 前缀),
-        kind 仍由各子规则的 select_type 决定(major 自身的必修/选修得以区分)。
+           subtype, courses:[code...], open_scope}.
+        kind: open rule (E/F) -> 'open'; otherwise judged by the **official section title** (title contains elective -> 'elective',
+        contains core/compulsory -> 'core'; with no clear word in the title, fall back to select_type: 'all'->'core', 'select'->
+        'elective'). Title takes priority over select_type — the data occasionally marks 'X Elective Courses' as select_type='all'
+        (e.g. 2559 Cyber), and classifying by the title the student sees on the official page avoids misleading (rule 14: when two signals conflict, take the more authoritative).
+        A parent rule with sub-rules (e.g. 2559 C, 5522 A/B) is only a placeholder, its sub-rules each form a group (already in self.rules);
+        a plan branch (major/field) is expanded group by group by its internal sub-rules (each group prefixed with plan_name),
+        kind is still decided by each sub-rule's select_type (so the major's own required/elective are distinguished).
 
-        去重约定:major 子规则里指向「程序通用选修池」的那条(标题与某顶层规则同名,如各 major 都
-        引用的 'BCompSc Program Elective Courses')跳过——它对所有方向相同,已由对应顶层规则(如
-        开放规则 E)覆盖,逐 major 重复列出只是噪音。"""
+        Dedup convention: the sub-rule in a major pointing to the "program common elective pool" (title matching a top-level rule, e.g. the
+        'BCompSc Program Elective Courses' referenced by every major) is skipped — it is the same for all directions, already covered by the matching top-level rule (e.g.
+        open rule E), and re-listing it per major is just noise."""
         def dedup(seq: list[str]) -> list[str]:
             seen: set[str] = set()
             out: list[str] = []
@@ -1552,7 +1552,7 @@ class PlanSimulator:
                 return "elective"
             if has_core and not has_elec:
                 return "core"
-            return "core" if st == "all" else "elective"   # 标题无明确词时退回 select_type
+            return "core" if st == "all" else "elective"   # fall back to select_type when the title has no clear word
 
         def emit(rule: dict, plan_code: str | None, plan_name: str | None,
                  subtype: str | None) -> None:
@@ -1575,22 +1575,22 @@ class PlanSimulator:
                 if (it.get("kind") == "plan" and not self._is_self_program(it)
                         and it.get("rules")):
                     for sr in it["rules"]:
-                        # major 子规则中复用顶层「程序通用选修池」标题的那条:跳过(去重,见 docstring)
+                        # the sub-rule in a major reusing the top-level "program common elective pool" title: skip (dedup, see docstring)
                         if sr.get("title") in toplevel_titles:
                             continue
                         emit(sr, it.get("code"), it.get("name"), it.get("subtype"))
 
         for rule in self.rules:
-            if rule.get("children_refs"):            # 父占位:子规则各自成组,跳过
+            if rule.get("children_refs"):            # parent placeholder: sub-rules each form a group, skip
                 continue
             emit(rule, None, None, None)
         return {"program_id": self.program_id, "title": self.title, "groups": groups}
 
     def prereq_report(self, conn) -> dict:
-        """先修覆盖缺口(显式报告,不静默):按 DB 真实状态分类每个引用码。
+        """Prerequisite coverage gap (explicitly reported, not silent): classify each referenced code by its real DB state.
 
-        区分 4 态:有先修树 / 无法解析(raw)/ 确无先修(jsonb null)/ 未回填(SQL null 或无行)。
-        一个码可能有多 offering 行,按「最强信号」归类:tree > raw > null > 未回填。
+        Distinguish 4 states: has prerequisite tree / unparseable (raw) / truly no prerequisite (jsonb null) / not backfilled (SQL null or no row).
+        One code may have multiple offering rows, classified by the "strongest signal": tree > raw > null > not backfilled.
         """
         refs = self._all_referenced_codes()
         rows = conn.execute(
@@ -1648,7 +1648,7 @@ if __name__ == "__main__":
         print(f"\n初始 available 课程数: {len(avail0)}")
         print(f"  样例: {avail0[:12]}")
 
-        # 选两门核心课
+        # select two core courses
         sim.select("CSSE1001")
         sim.select("CSSE2002")
         st1 = sim.status()
@@ -1660,7 +1660,7 @@ if __name__ == "__main__":
         removed = [c for c in avail0 if c not in avail1]
         print(f"   从可选列表移除: {removed}")
 
-        # 选第一个 major 分支
+        # select the first major branch
         first_plan = sim.status()[1]["plan_options"][0]["code"]
         sim.choose_plan(first_plan)
         st2 = sim.status()
@@ -1675,27 +1675,27 @@ if __name__ == "__main__":
         added = [c for c in avail2 if c not in avail1]
         print(f"   分支展开新增可选课: {added}")
 
-        # 反向验证 deselect 生效
+        # reverse-verify that deselect works
         sim.deselect("CSSE1001")
         ruleA2 = next(e for e in sim.status() if e["ref"] == "A")
         print(f"\n>> deselect CSSE1001 -> 规则A 进度回退: {ruleA['units_done']} -> {ruleA2['units_done']}")
 
-        # ---------------- 复现用例断言(修后应全部通过) ----------------
+        # ---------------- reproduction-case assertions (all should pass after the fix) ----------------
         print("\n===== 复现用例断言 =====")
         sim2 = PlanSimulator(conn, "2559")
 
-        # 1) 自引用 '2559' 不在可选 plan 分支
+        # 1) self-reference '2559' is not in the selectable plan branches
         assert "2559" not in sim2._plans, "2559 仍被收进可选分支"
         print("  [OK] '2559' 不在可选 plan 分支:", sorted(sim2._plans))
 
-        # 2) choose_plan('2559') 报错
+        # 2) choose_plan('2559') raises
         try:
             sim2.choose_plan("2559")
             raise AssertionError("choose_plan('2559') 未报错")
         except ValueError:
             print("  [OK] choose_plan('2559') 抛 ValueError")
 
-        # 3) status() 各选修组带 units_max
+        # 3) each elective group in status() carries units_max
         st = sim2.status()
         by_ref = {e["ref"]: e for e in st}
         for ref, exp in (("C.1", 16.0), ("C.2", 22.0), ("D", 16.0), ("F", 16.0)):
@@ -1703,7 +1703,7 @@ if __name__ == "__main__":
         print("  [OK] C.1/C.2/D/F units_max:",
               {r: by_ref[r]["units_max"] for r in ("C.1", "C.2", "D", "F")})
 
-        # 4) 择一:choose ARTINC2559 再 choose CYBERC2559 -> 只保留后者,required 不累加成 32
+        # 4) select-one: choose ARTINC2559 then choose CYBERC2559 -> keep only the latter, required does not add up to 32
         sim2.choose_plan("ARTINC2559")
         sim2.choose_plan("CYBERC2559")
         ruleB = next(e for e in sim2.status() if e["ref"] == "B")
@@ -1711,7 +1711,7 @@ if __name__ == "__main__":
         assert ruleB["units_required"] == 16.0, f"required={ruleB['units_required']}(择一应为 16)"
         print(f"  [OK] 择一互斥: chosen_plans={ruleB['chosen_plans']} required={ruleB['units_required']}")
 
-        # 5) 选 MATH1061 后 available 不再含同 equivalence 的 MATH1081
+        # 5) after selecting MATH1061, available no longer contains MATH1081 from the same equivalence
         sim3 = PlanSimulator(conn, "2559")
         av_before = sim3.available()
         assert "MATH1081" in av_before, "前提:初始 available 应含 MATH1081"
@@ -1720,9 +1720,9 @@ if __name__ == "__main__":
         assert "MATH1081" not in av_after, "MATH1081 仍在 available(equivalence 未收敛)"
         print("  [OK] 选 MATH1061 后 available 不含 MATH1081")
 
-        # 6) units_max 封顶在 status() 真实生效:C.2(min4/max22)选满全部 course
-        #    (27 门 * 2 = 54 学分)-> counted 封顶到 22、over_max=True、不算有效进度超额。
-        #    新语义:C.2 在 No-Major 分支下,须先 choose_branch('C') 激活(默认 B=Major)。
+        # 6) units_max cap really takes effect in status(): C.2 (min4/max22) selecting all courses
+        #    (27 * 2 = 54 units) -> counted capped at 22, over_max=True, the surplus does not count as effective progress.
+        #    new semantics: C.2 is under the No-Major branch, must first choose_branch('C') to activate (default B=Major).
         sim4 = PlanSimulator(conn, "2559")
         if sim4.branch_groups():
             sim4.choose_branch("C")

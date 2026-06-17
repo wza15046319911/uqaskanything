@@ -21,7 +21,7 @@ export interface ProgramFact {
   plan_subtype?: string | null
 }
 
-// program_to_courses / permit 时 program_facts 是单个对象(course_to_programs 是 ProgramFact[])
+// For program_to_courses / permit, program_facts is a single object (course_to_programs is ProgramFact[])
 export interface ProgramAnswer {
   program: string
   program_id?: string
@@ -66,7 +66,7 @@ export interface AskResult {
   mode?: AskMode
   answer?: string | null
   courses?: Course[]
-  // course_to_programs 时是数组;permit 等场景是对象;空时 null
+  // It is an array for course_to_programs; an object for permit and similar; null when empty
   program_facts?: ProgramFact[] | ProgramAnswer | null
   chunks?: KbChunk[]
   course?: CourseDetail | null
@@ -83,7 +83,7 @@ export async function fetchAsk(question: string): Promise<AskResult> {
   return r.json()
 }
 
-// 流式问答:meta(结构化课程,一次) -> token(答案增量,多次) -> done(护栏后全文)
+// Streaming Q&A: meta (structured courses, once) -> token (answer increments, many times) -> done (full text after guardrails)
 export interface AskMeta {
   mode?: AskMode
   meta?: string
@@ -125,7 +125,7 @@ export async function fetchAskStream(question: string, h: AskStreamHandlers): Pr
     if (done) break
     buf += decoder.decode(value, { stream: true })
     const chunks = buf.split('\n\n')
-    buf = chunks.pop() ?? '' // 末尾不完整事件留到下一轮
+    buf = chunks.pop() ?? '' // keep the incomplete trailing event for the next round
     for (const chunk of chunks) {
       const line = chunk.split('\n').find((l) => l.startsWith('data:'))
       if (!line) continue
@@ -135,7 +135,7 @@ export async function fetchAskStream(question: string, h: AskStreamHandlers): Pr
       try {
         msg = JSON.parse(payload)
       } catch {
-        continue // 半截 JSON(理论上被 \n\n 切分挡住,这里兜底)
+        continue // partial JSON (in theory the \n\n split blocks this; this is a fallback)
       }
       if (msg.type === 'meta') h.onMeta(msg.data as AskMeta)
       else if (msg.type === 'token') h.onToken(msg.data as string)

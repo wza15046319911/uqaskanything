@@ -1,17 +1,17 @@
 """
-backfill_plan_aux.py — 给「单顶层 plan-picker」程序回填 plan/group 级 level 约束(aux_rules)。
+backfill_plan_aux.py — backfill plan/group level constraints (aux_rules) for "single top-level plan-picker" programs.
 
-早先入库的 programs.rules 没抓 plan 容器 header 的 auxiliaryRules,例如 MEngSc Software 方向
-(SOFTWX5528)的「Selected courses must include at least 8 units at level 7」、group D 的
-「at most 4 units at level 4」。模拟器因此无法校验/展示这些 level 约束。本脚本只针对这类程序
-(顶层单条规则 + 带子规则的 field/plan 选择器,如 5528 家族、2031 BSc Honours)用修好的
-scraper 重抓,整体替换 rules JSONB(含新增 aux_rules)。其它程序不动。
+Programs loaded earlier had programs.rules that did not capture the auxiliaryRules on the plan container header, for example the MEngSc Software field
+(SOFTWX5528) "Selected courses must include at least 8 units at level 7", or group D's
+"at most 4 units at level 4". The simulator therefore could not validate/show these level constraints. This script only targets such programs
+(a single top-level rule + a field/plan picker that has sub-rules, such as the 5528 family and 2031 BSc Honours), re-scrapes with the fixed
+scraper, and replaces the whole rules JSONB (including the new aux_rules). Other programs are left untouched.
 
-幂等:重复运行结果一致。打印每个程序回填前后的 课数/plan数 与 level 约束数,数据漂移可见(规则 19)。
+Idempotent: repeated runs give the same result. It prints the course count/plan count and level-constraint count before and after backfill for each program, so data drift is visible (rule 19).
 
-用法:
-    python -m app.pipelines.backfill_plan_aux            # 自动识别受影响程序并回填
-    python -m app.pipelines.backfill_plan_aux 5528 5530  # 仅指定 program_id
+Usage:
+    python -m app.pipelines.backfill_plan_aux            # auto-detect affected programs and backfill
+    python -m app.pipelines.backfill_plan_aux 5528 5530  # only the given program_id
 """
 from __future__ import annotations
 import sys
@@ -24,7 +24,7 @@ from app.scrapers import program_scraper as ps
 
 
 def _is_picker(rules) -> bool:
-    """顶层只有一条规则、且它是带子规则 plan 的选择器(与 simulator._picker_rule 同口径)。"""
+    """There is only one top-level rule and it is a picker over plans that have sub-rules (same definition as simulator._picker_rule)."""
     if not rules or len(rules) != 1:
         return False
     rule = rules[0]

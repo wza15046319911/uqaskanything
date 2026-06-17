@@ -1,10 +1,10 @@
-"""scrape_aux_rules.py — 轻量重抓:只取各 program 的 auxiliaryRules(程序级附加规则,含禁课)。
-不展开 plan(比全量 program_scraper 轻得多,每程序 1 次请求),限速防把 UQ 抓崩。
-跳过的程序会计数并打印原因,不静默。
+"""scrape_aux_rules.py — lightweight re-fetch: take only each program's auxiliaryRules (program-level additional rules, includes banned courses).
+Do not expand plan (much lighter than the full program_scraper, 1 request per program), rate-limited to avoid overloading UQ.
+Skipped programs are counted and the reason printed, not silent.
 
-用法:
+Usage:
     python scrape_aux_rules.py --out aux_rules.jsonl --delay 1
-    python scrape_aux_rules.py --limit 3        # 抽样测试
+    python scrape_aux_rules.py --limit 3        # sample test
 """
 from __future__ import annotations
 import os

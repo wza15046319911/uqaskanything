@@ -1,18 +1,20 @@
 """
-answerability_eval.py — KB 拒答门评测(student-facing 红线 3 的确定性校验)
-(对应 .claude/plans/kb-answerability.md P0 第 4 步)
+answerability_eval.py — KB refuse gate eval (deterministic check of student-facing red line 3)
+(maps to .claude/plans/kb-answerability.md P0 step 4)
 
-复用 data/eval/kb_refuse.jsonl(16 answer / 8 refuse),跑生产 KB 兜底链路
-(retrieval.kb_search 阈值 -> answerability.answerable 门),逐题判 refuse / answer,并标出
-是哪一道挡的(低相似度阈值 / 年份越界 / 英文实体缺席),给两条硬判据:
+Reuse data/eval/kb_refuse.jsonl (16 answer / 8 refuse), run the production KB fallback chain
+(retrieval.kb_search threshold -> answerability.answerable gate), judge refuse / answer per question,
+and mark which one blocked it (low-similarity threshold / year out of bounds / English entity absent),
+giving two hard criteria:
 
-  - **误拒 = 0(红线)**:answer 题被拒一个都不行——过不了不 ship。
-  - **漏网**:refuse 题被放过的数量。尽量小;确定性门治不了的中文「半相关虚构」(火星 /
-    太空站)会漏,逐条列出,作为是否上 P2 LLM gate 的依据(plan 说明此为预期天花板)。
+  - **wrong refuse = 0 (red line)**: not a single answer question may be refused -- if it fails, do not ship.
+  - **leaked**: the number of refuse questions let through. Keep it as small as possible; the Chinese
+    "half-relevant made-up" cases the deterministic gate cannot handle (Mars / space station) will leak;
+    list them one by one as the basis for whether to add the P2 LLM gate (the plan says this is the expected ceiling).
 
-注意:纯向量相似度 + 词表查表,无 LLM,可重复(同库同 Ollama 下结果稳定)。
+Note: pure vector similarity + vocab lookup, no LLM, repeatable (results are stable under the same DB and Ollama).
 
-用法(从 backend/ 跑,需 Postgres:5433 kb_chunks 已灌 + Ollama bge-m3 + kb_vocab.txt 已建):
+Usage (run from backend/, needs Postgres:5433 with kb_chunks loaded + Ollama bge-m3 + kb_vocab.txt built):
     python -m app.pipelines.answerability_eval
     python -m app.pipelines.answerability_eval --golden data/eval/kb_refuse.jsonl
 """
@@ -28,7 +30,7 @@ from app.services import retrieval, answerability
 
 
 def _decide(conn, question: str) -> tuple[bool, str]:
-    """跑生产兜底链路,返回 (refused, 原因)。refused=True 表示该问会拒答。"""
+    """Run the production fallback chain, return (refused, reason). refused=True means this question will be refused."""
     chunks = retrieval.kb_search(conn, question)
     if not chunks:
         return True, "低相似度(min_sim 阈值)"
@@ -50,11 +52,11 @@ def main():
     if not cases:
         ap.error(f"评测集为空:{path}")
 
-    # 词表缺失要在跑评测前就 fail loud,而不是逐题抛(规则 19)
+    # a missing vocab must fail loud before the eval runs, not be raised per question (rule 19)
     answerability.load_vocab()
 
-    wrong_refuse: list[tuple[str, str]] = []   # answer 题被误拒(红线)
-    leaked: list[tuple[str, str]] = []         # refuse 题被放过(漏网)
+    wrong_refuse: list[tuple[str, str]] = []   # answer questions wrongly refused (red line)
+    leaked: list[tuple[str, str]] = []         # refuse questions let through (leaked)
     rows: list[tuple[str, str, bool, str]] = []  # (label, q, refused, reason)
 
     with psycopg.connect(DSN) as conn:

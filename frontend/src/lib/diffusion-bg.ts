@@ -1,8 +1,8 @@
-// OpenAI 风格「弥散」渐变背景生成器:完整移植本地工具 OpenAI Gradient Atelier 的 diffusion 预设。
-// 渲染管线与原版逐一对应、随机数消耗顺序一致:drawBase(线性底+径向柔光斑) → drawBrush(笔触)
-// → drawHorizon(地平线带,bands<4 直接跳过) → drawMaterial(材质光斑,强度×0.45)
-// → drawVignette(暗角) → drawTexture(颗粒噪点 + 高纹理时的斜向编织线)。输出 PNG dataURL。
-// 用途:垫在 sim/封面导出图底层。确定性(固定 seed)→ 预览与下载一致。
+// OpenAI-style "diffusion" gradient background generator: a full port of the diffusion preset from the local tool OpenAI Gradient Atelier.
+// The render pipeline maps one-to-one to the original, with the same random-number consumption order: drawBase (linear base + radial soft glow) -> drawBrush (brush strokes)
+// -> drawHorizon (horizon bands, skipped directly when bands<4) -> drawMaterial (material glow, intensity x0.45)
+// -> drawVignette (vignette) -> drawTexture (grain noise + diagonal weave lines at high texture). Outputs a PNG dataURL.
+// Use: laid under the sim/cover export image. Deterministic (fixed seed) -> preview and download match.
 
 const palettes: string[][] = [
   ['#166ed1', '#56d3df', '#4961dc', '#d2f5f2', '#203060'],
@@ -21,13 +21,13 @@ interface Rgb {
 }
 
 export interface DiffusionOptions {
-  colorMix?: number // 0-100,在调色板间插值取色
-  softness?: number // 光斑铺展度
-  texture?: number // 颗粒强度 0-100
-  materialDepth?: number // 材质光斑强度 0-100(渲染时再乘 0.45)
-  bands?: number // 地平线带强度 0-100(<4 不画)
-  brush?: number // 笔触强度 0-100
-  vignette?: number // 暗角 0-100
+  colorMix?: number // 0-100, interpolate the color between palettes
+  softness?: number // glow spread
+  texture?: number // grain intensity 0-100
+  materialDepth?: number // material glow intensity 0-100 (multiplied by 0.45 at render time)
+  bands?: number // horizon band intensity 0-100 (<4 not drawn)
+  brush?: number // brush intensity 0-100
+  vignette?: number // vignette 0-100
   seed?: number
 }
 
@@ -284,7 +284,7 @@ function drawTexture(
   }
 }
 
-// 把字符串(program_id)散列成稳定的 seed,让每个专业有固定但不同的弥散底。
+// Hash a string (program_id) into a stable seed, so each program gets a fixed but distinct diffusion base.
 export function seedFromString(s: string): number {
   let h = 2166136261
   for (let i = 0; i < s.length; i += 1) {

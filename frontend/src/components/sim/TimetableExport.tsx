@@ -1,6 +1,6 @@
-// 模拟器右侧的「导出版面」:既作屏幕预览,也供 modern-screenshot 导出图片。
-// 沿用十六进制颜色与内联样式,配色映射与屏幕卡片共用 sim-sections。
-// 底图为 OpenAI 风格弥散渐变(diffusion-bg),内容浮在白色面板上保证可读性。
+// The "export layout" on the right of the simulator: serves as both the on-screen preview and the image exported by modern-screenshot.
+// Reuses hex colors and inline styles; the color mapping shares sim-sections with the screen cards.
+// The background is an OpenAI-style diffusion gradient (diffusion-bg), with content floating on a white panel to keep it readable.
 
 import { semKind, semYear, type SimLocalState } from '../../lib/sim'
 import { sectionOf, type SectionMap } from '../../lib/sim-sections'
@@ -19,7 +19,7 @@ interface TimetableExportProps {
   data: SimStateResponse
   sectionMap: SectionMap
   diffusion: DiffusionParams
-  bg: string // 预算好的弥散底图 dataURL(父组件统一计算,两个节点共用)
+  bg: string // pre-computed diffusion background dataURL (the parent computes it once, both nodes share it)
   coreOnly: boolean
 }
 
@@ -47,7 +47,7 @@ export default function TimetableExport({
   const legend = coreOnly ? sectionMap.legend.filter((s) => s.isCore) : sectionMap.legend
   const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
   const cunits = (c: string) => data.courses[c]?.units
-  // 弥散开启时面板/格子半透明,让背景透上来;课卡更不透明保证文字可读。
+  // When diffusion is on, the panel/cells are semi-transparent so the background shows through; course cards stay more opaque to keep text readable.
   const panelBg = diffusion.enabled ? 'rgba(255, 255, 255, 0.5)' : '#ffffff'
   const cellBg = diffusion.enabled ? 'rgba(255, 255, 255, 0.5)' : '#fbfbfd'
 

@@ -1,17 +1,21 @@
 """
-route_eval.py — planner 路由准确率评测(对应「提高问答准确率」第一杠杆:路由)
+route_eval.py — planner routing accuracy eval (the first lever in "improve QA accuracy": routing)
 
-对一组标注了期望 mode/direction 的真实问题跑 planner.plan(),逐题比对路由是否正确,
-按期望 mode 分组打印准确率、mode 误判混淆(期望→实际),并列出每条错例便于补规则。
+Run planner.plan() for a set of real questions labelled with the expected mode/direction, compare
+routing correctness per question, print accuracy grouped by expected mode and the mode misjudgement
+confusion (expected -> actual), and list each error case to help add rules.
 
-评测对象只是 planner 的分类决策:mode、direction(program 类)、where 关键条件、
-semantic_query 是否给出。不含 qa 层基于相似度的 KB 兜底转移(那是阈值调参,另行评测)。
-只校验 golden 里给了的字段(meaningful 而非 brittle):where_has 查列名子串、where_equals
-查「列=值」子串(忽略空白),后者兜住值被语义反掉但列名还在的情况(如「线上」→ In Person)。
+The eval target is only the planner's classification decision: mode, direction (program type), where
+key conditions, and whether semantic_query is given. It does not include the qa-layer similarity-based
+KB fallback switch (that is threshold tuning, evaluated separately). Only the fields given in golden are
+checked (meaningful, not brittle): where_has checks a column-name substring, where_equals checks a
+"column=value" substring (whitespace ignored); the latter catches the case where the value is semantically
+flipped but the column name is still there (e.g. "online" -> In Person).
 
-注意:LLM 后端非确定性,准确率可能随运行小幅波动;用它看趋势与定位错例,不是逐位回归。
+Note: the LLM backend is non-deterministic, so accuracy may drift a little across runs; use it to see
+trends and locate error cases, not as a bit-exact regression.
 
-用法(从 backend/ 跑,需 Postgres:5433 + LLM 后端就绪):
+Usage (run from backend/, needs Postgres:5433 + an LLM backend ready):
     python -m app.pipelines.route_eval
     python -m app.pipelines.route_eval --golden data/eval/routing.jsonl --show-ok
 """
@@ -27,10 +31,11 @@ from app.services import planner, retrieval
 
 
 def _route_of(question: str, schema: str, conn) -> tuple[str, str, str, bool]:
-    """跑 planner.plan,返回 (mode, direction, where 描述, 是否给了 semantic);
-    plan 抛 ValueError(无法形成检索条件)记为 mode='empty'。
-    where 描述由 retrieval.describe_where 从 filters 槽位渲染(build_where 的可读对偶),
-    使 where_has/where_equals 的列名/值断言对槽位化后的计划仍逐字成立。"""
+    """Run planner.plan, return (mode, direction, where description, whether semantic was given);
+    if plan raises ValueError (cannot form a retrieval condition) record it as mode='empty'.
+    The where description is rendered by retrieval.describe_where from the filters slots (the readable
+    dual of build_where), so the column-name/value assertions of where_has/where_equals still hold
+    verbatim against the slot-based plan."""
     try:
         p = planner.plan(question, schema_doc=schema, conn=conn)
     except ValueError:
@@ -40,7 +45,7 @@ def _route_of(question: str, schema: str, conn) -> tuple[str, str, str, bool]:
 
 
 def _check(exp: dict, mode: str, direction: str, where: str, has_sem: bool) -> tuple[bool, list[str]]:
-    """逐字段比对,只校验 golden 给了的字段;返回 (全对?, [失败原因...])。"""
+    """Compare field by field, only check the fields given in golden; return (all correct?, [failure reasons...])."""
     fails: list[str] = []
     if mode != exp["mode"]:
         fails.append(f"mode {mode}≠{exp['mode']}")
@@ -49,8 +54,9 @@ def _check(exp: dict, mode: str, direction: str, where: str, has_sem: bool) -> t
     for sub in exp.get("where_has", []):
         if sub.lower() not in where.lower():
             fails.append(f"where 缺 '{sub}'(实际 {where or '∅'})")
-    # where_equals:校验「值」而非只校验列名出现(忽略空白)。where_has 只查列名会放过
-    # 语义反掉的值(如「线上」被写成 attendance_mode='In Person'),值敏感的用例用它兜住。
+    # where_equals: check the "value" rather than just the column name appearing (whitespace ignored).
+    # where_has checking only the column name would let through a semantically flipped value
+    # (e.g. "online" written as attendance_mode='In Person'); value-sensitive cases use this to catch it.
     for sub in exp.get("where_equals", []):
         if sub.replace(" ", "").lower() not in where.replace(" ", "").lower():
             fails.append(f"where 值不符,缺 '{sub}'(实际 {where or '∅'})")
@@ -75,8 +81,8 @@ def main():
 
     n = len(cases)
     full_ok = mode_ok = 0
-    by_mode: dict[str, list[int]] = {}                 # 期望 mode -> [整体正确数, 总数]
-    confusion: dict[tuple[str, str], int] = {}         # (期望 mode, 实际 mode) -> 次数
+    by_mode: dict[str, list[int]] = {}                 # expected mode -> [overall correct count, total]
+    confusion: dict[tuple[str, str], int] = {}         # (expected mode, actual mode) -> count
     failures: list[tuple[str, str, str]] = []
 
     print(f"[backend={planner.llm.backend_name()}] 评测集:{path.name} | {n} 题\n")

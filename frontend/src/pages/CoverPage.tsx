@@ -262,8 +262,8 @@ export default function CoverPage() {
       return m ? { code: m[1], name: m[2] } : { code: line, name: '' }
     })
 
-  // 弥散底图很重(155 万像素 getImageData + PNG 编码)。用 deferred 值驱动,让滑块即时响应、
-  // 拖动时跳过中间值,停下再出最终那张。
+  // The diffusion background is heavy (1.55M pixels getImageData + PNG encoding). Drive it with a deferred value so the slider responds at once,
+  // skips intermediate values while dragging, and produces the final image once dragging stops.
   const deferredDiff = useDeferredValue(diff)
   const diffusionUrl = useMemo(() => {
     if (bgType !== 'diffusion') return null
@@ -294,7 +294,7 @@ export default function CoverPage() {
     (bgType === 'photo' && !!photo) ||
     (bgType === 'diffusion' && !!diffusionUrl)
 
-  // 弥散底图在白色蒙版下需更高不透明度才显色;切到/离开弥散时把淡化值带到合适区间。
+  // The diffusion background needs a higher opacity under the white mask to show color; switching into/out of diffusion moves the fade value into a suitable range.
   const handleBgChange = (v: BgType) => {
     setBgType(v)
     if (v === 'diffusion') setFade((f) => (f <= 45 ? 90 : f))
@@ -302,7 +302,7 @@ export default function CoverPage() {
   }
   const fadeMax = bgType === 'diffusion' ? 100 : 45
 
-  // 竖向排版:量出各块真实高度,整体居中并略微上移,避免看起来头重脚轻。
+  // Vertical layout: measure the real height of each block, center the whole thing and shift it up a little, so it does not look top-heavy.
   useLayoutEffect(() => {
     const accent = accentRef.current
     const eyebrowEl = eyebrowRef.current
@@ -314,7 +314,7 @@ export default function CoverPage() {
     const tagsEl = tagsRef.current
     if (!accent || !eyebrowEl || !codeEl || !nameEl || !divider || !quoteCardEl) return
 
-    // 课程代码太长时缩小字号,避免溢出右边界
+    // Shrink the font size when the course code is too long, to avoid overflowing the right edge
     const codeBase = 160
     const codeMaxW = 900
     codeEl.style.fontSize = `${codeBase}px`
@@ -378,10 +378,10 @@ export default function CoverPage() {
       cy += GAP.quoteTags
       tagsEl.style.top = `${cy}px`
     }
-    // 无依赖数组:每次渲染后按真实 DOM 尺寸重排(文字变长会改变高度,静态依赖无法表达)
+    // No dependency array: re-layout by the real DOM size after each render (longer text changes the height, which a static dependency cannot express)
   })
 
-  // 预览舞台等比缩放:把 1080 宽的卡片缩进舞台宽度
+  // Scale the preview stage proportionally: fit the 1080-wide card into the stage width
   const fitStage = useCallback(() => {
     const stage = stageRef.current
     const card = cardRef.current

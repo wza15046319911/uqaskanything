@@ -1,0 +1,14 @@
+# AgentCore Runtime image: must be linux/arm64, listens on 8080, runs app.agent (/invocations + /ping).
+# Build: docker build --platform linux/arm64 -f Dockerfile.agentcore -t <ecr>:<tag> .
+FROM --platform=linux/arm64 python:3.13-slim
+
+WORKDIR /app
+
+COPY requirements-runtime.txt .
+RUN pip install --no-cache-dir -r requirements-runtime.txt
+
+COPY . .
+
+EXPOSE 8080
+
+CMD ["python", "-m", "app.agent"]

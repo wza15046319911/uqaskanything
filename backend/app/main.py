@@ -1,11 +1,12 @@
-"""main.py — FastAPI 应用入口。
+"""main.py — FastAPI application entry point.
 
-组装问答(/api/ask)与选课模拟器(/api/sim/*)两组路由。前后端分离:
-前端由 Vite 独立托管,后端只提供 JSON API,不再托管 HTML。
+Assembles the QA (/api/ask) and course planner simulator (/api/sim/*) routers.
+Frontend and backend are split: the frontend is served by Vite on its own, the
+backend only provides a JSON API and no longer serves HTML.
 
-运行:
+Run:
     uvicorn app.main:app --host 127.0.0.1 --port 8077
-    # 或  python -m app.main
+    # or  python -m app.main
 """
 from __future__ import annotations
 
@@ -24,5 +25,5 @@ app.include_router(sim.router)
 if __name__ == "__main__":
     import uvicorn
     with psycopg.connect(DSN) as conn:
-        retrieval.ensure_fts_index(conn)            # 启动时建一次 FTS 索引,读路径不再建
+        retrieval.ensure_fts_index(conn)            # build the FTS index once at startup; read path no longer builds it
     uvicorn.run(app, host="127.0.0.1", port=8077)

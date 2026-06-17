@@ -1,19 +1,24 @@
 """
-threshold_scan.py — KB 拒答门槛(kb_search min_sim)数据驱动扫描
-(对应「提高问答准确率」item 3:把手调魔数换成有数据支撑的值;student-facing 红线 3 refuse over wrong)
+threshold_scan.py — data-driven scan for the KB refuse threshold (kb_search min_sim)
+(maps to "improve QA accuracy" item 3: replace a hand-tuned magic number with a data-backed
+value; student-facing red line 3 refuse over wrong)
 
-对一组标注 answer / refuse 的问题,**预计算**每题的 kb_top_sim(query 向量与 kb_chunks
-的最高余弦相似度,与阈值无关,只算一次),再在 min_sim 网格上扫描,报告:
-  - 每个阈值的答全率(answer 题被放行)/ 拒对率(refuse 题被挡)/ 综合准确率
-  - 最优 min_sim(综合准确率最高;并列取更高/更保守的值)
-  - 当前生产值 0.55 的表现对比
-  - 「阈值分不开」的重叠区:sim 高于某些 answer 题的 refuse 题 —— 不可约误差,
-    说明纯阈值有天花板,需 answerability/rerank 才能进一步分开(诚实标注,不假装能调好)
+For a set of questions labelled answer / refuse, **precompute** each question's kb_top_sim (the
+highest cosine similarity between the query vector and kb_chunks, threshold-independent, done
+once), then scan over a min_sim grid and report:
+  - per-threshold answer-through rate (answer questions let through) / refuse-block rate (refuse
+    questions blocked) / combined accuracy
+  - best min_sim (highest combined accuracy; on a tie take the higher / more conservative value)
+  - comparison against the current production value 0.55
+  - the "threshold cannot split" overlap region: refuse questions whose sim is higher than some
+    answer questions -- irreducible error, showing a pure threshold has a ceiling and needs
+    answerability/rerank to split further (honest labelling, not pretending it can be tuned away)
 
-注意:只扫拒答门槛(min_sim)。转 KB 门槛(KB_PREFER_SIM / KB_STRONG_SIM)需课程侧
-sim 一起建模,属后续。LLM 无关,纯向量相似度,可重复。
+Note: only the refuse threshold (min_sim) is scanned. The switch-to-KB thresholds
+(KB_PREFER_SIM / KB_STRONG_SIM) need the course-side sim modelled together, left for later.
+LLM-free, pure vector similarity, repeatable.
 
-用法(从 backend/ 跑,需 Postgres:5433 kb_chunks 已灌 + Ollama bge-m3):
+Usage (run from backend/, needs Postgres:5433 with kb_chunks loaded + Ollama bge-m3):
     python -m app.pipelines.threshold_scan
     python -m app.pipelines.threshold_scan --lo 0.45 --hi 0.75 --step 0.01
 """
@@ -27,11 +32,11 @@ import psycopg
 from app.core.config import DSN, DATA_DIR
 from app.services import retrieval
 
-PROD_MIN_SIM = 0.55  # 当前 retrieval.kb_search 的生产值(qa.py 注释里手调来的)
+PROD_MIN_SIM = 0.55  # current production value of retrieval.kb_search (hand-tuned in qa.py comments)
 
 
 def _kb_top_sim(conn, query: str) -> float:
-    """query 向量与 kb_chunks 的最高余弦相似度(raw,不卡任何阈值)。"""
+    """Highest cosine similarity between the query vector and kb_chunks (raw, no threshold applied)."""
     vec = retrieval._embed(query)
     row = conn.execute(
         "SELECT 1-(embedding<=>%s::vector) AS sim FROM kb_chunks "
@@ -40,7 +45,7 @@ def _kb_top_sim(conn, query: str) -> float:
 
 
 def _accuracy(rows: list[dict], min_sim: float) -> tuple[int, int, int, int]:
-    """给定阈值,返回 (answer 放行数, answer 总数, refuse 挡住数, refuse 总数)。"""
+    """Given a threshold, return (answer let through, total answer, refuse blocked, total refuse)."""
     a_pass = a_tot = r_block = r_tot = 0
     for r in rows:
         if r["label"] == "answer":
@@ -79,7 +84,7 @@ def main():
     n_ans = sum(r["label"] == "answer" for r in rows)
     n_ref = n - n_ans
 
-    # 扫描
+    # scan
     grid = []
     t = args.lo
     while t <= args.hi + 1e-9:
@@ -89,9 +94,9 @@ def main():
         t += args.step
     best_acc = max(g[5] for g in grid)
     best = [g for g in grid if g[5] == best_acc]
-    best_hi = best[-1]  # 并列取更高(更保守:更倾向拒答)的阈值
+    best_hi = best[-1]  # on a tie take the higher (more conservative: leans toward refusing) threshold
 
-    # 当前生产值对比
+    # comparison against the current production value
     pa, pat, pb, prt = _accuracy(rows, PROD_MIN_SIM)
     prod_acc = (pa + pb) / n
 
@@ -101,14 +106,14 @@ def main():
           f"拒对 {best_hi[3]}/{best_hi[4]} | 综合 {best_hi[5]*100:.0f}%"
           + (f"  (并列最优 {len(best)} 个,取最高)" if len(best) > 1 else ""))
 
-    # 关键阈值附近一段表格(看趋势)
+    # a table around the key thresholds (to see the trend)
     print("\nmin_sim | 答全 | 拒对 | 综合")
     for thr, a_pass, a_tot, r_block, r_tot, acc in grid:
-        if abs(thr * 100 % 5) < 1e-6 or thr in (best_hi[0], PROD_MIN_SIM):  # 每 0.05 + 关键点
+        if abs(thr * 100 % 5) < 1e-6 or thr in (best_hi[0], PROD_MIN_SIM):  # every 0.05 + key points
             mark = "  <- 最优" if thr == best_hi[0] else ("  <- 生产" if thr == PROD_MIN_SIM else "")
             print(f"  {thr:.2f}  | {a_pass:>2}/{a_tot} | {r_block:>2}/{r_tot} | {acc*100:>3.0f}%{mark}")
 
-    # 可分性:answer 最低 sim vs refuse 最高 sim;重叠 = 不可约误差
+    # separability: lowest answer sim vs highest refuse sim; overlap = irreducible error
     ans_sorted = sorted((r for r in rows if r["label"] == "answer"), key=lambda r: r["sim"])
     ref_sorted = sorted((r for r in rows if r["label"] == "refuse"), key=lambda r: -r["sim"])
     ans_min = ans_sorted[0]["sim"] if ans_sorted else 0.0
@@ -116,7 +121,7 @@ def main():
     print(f"\nanswer 最低 sim = {ans_min:.3f}({ans_sorted[0]['q'][:30]})")
     print(f"refuse 最高 sim = {ref_max:.3f}({ref_sorted[0]['q'][:30]})")
     if ref_max >= ans_min:
-        # 重叠:落在 [ans_min, ref_max] 的两类题,任何单一阈值都无法同时分对
+        # overlap: the two question types falling in [ans_min, ref_max] cannot both be split right by any single threshold
         overlap_ref = [r for r in rows if r["label"] == "refuse" and r["sim"] >= ans_min]
         overlap_ans = [r for r in rows if r["label"] == "answer" and r["sim"] <= ref_max]
         print(f"\n⚠️ 重叠区 [{ans_min:.3f}, {ref_max:.3f}]:任何单一 min_sim 都分不开 —— 不可约误差")

@@ -1,27 +1,38 @@
 """
-floor_scan.py — 课程语义召回下限(SEMANTIC_MIN_SIM)数据驱动扫描
-(对应 P2「相关性 floor 的标注集 + 扫描」:把手定的 0.50 换成有数据背书、可复扫的值;
- 与 threshold_scan(KB 拒答门)同范式,LLM 无关,纯向量相似度,可重复)
+floor_scan.py — data-driven scan for the course semantic recall floor (SEMANTIC_MIN_SIM)
+(maps to P2 "relevance floor labelled set + scan": replace the hand-set 0.50 with a
+ data-backed, re-scannable value; same shape as threshold_scan (KB refuse gate), LLM-free,
+ pure vector similarity, repeatable)
 
-基于 course_relevance.jsonl 两类标注,embed 的是 planner 实产的英文 semantic_query
-(对生产忠实:课程检索走「中文主题→英文 query→向量」,直 embed 中文会得到不同 sim 分布):
-  - expect=relevant + codes:语料确有讲该主题的课。每个期望课码与 query 向量的最高余弦是
-    「信号」,floor 升高会把它挡掉(真命中流失)。
-  - expect=no_strong_match:语料没有真讲该主题的课。这类题语义最近邻(semantic_search)召回的
-    每门课都是 off-topic「噪声」,floor 越高裁掉越多。
+Based on the two label types in course_relevance.jsonl, the embed input is the English
+semantic_query the planner really produces (faithful to production: course retrieval goes
+"Chinese topic -> English query -> vector"; embedding the Chinese directly gives a different
+sim distribution):
+  - expect=relevant + codes: the corpus really has courses on this topic. The highest cosine
+    between each expected course code and the query vector is the "signal"; raising the floor
+    blocks it out (real hits are lost).
+  - expect=no_strong_match: the corpus has no course really on this topic. For these questions
+    every course the semantic nearest-neighbour (semantic_search) returns is off-topic "noise";
+    a higher floor cuts away more.
 
-预计算(与 floor 无关,只算一次):
-  - 信号 sim:每个期望课码的 max(1-cos)(同一课跨学期取最高,对齐 _fused_search 的按码去重);
-    库里查无的期望码显式计数报告,不静默(红线/规则19)。
-  - 噪声 sim:no_strong_match 题 semantic_search(min_sim=0, k) 召回课的原始向量 sim。
-再在 floor 网格上扫,报告每个候选 floor 的真命中保留率 / 噪声裁剪率 / 综合,标出:
-  - 当前生产值(retrieval.SEMANTIC_MIN_SIM)的表现
-  - 「最大保留 floor」:仍保住全部真命中的最高 floor(= 信号最低 sim 之下);floor 取此值以下
-    才不流失真课。综合准确率最优值仅作参考——它会为多裁噪声牺牲真课,而残留噪声本由 answer 的
-    相关性诚实指令(approach-3)兜底,不靠这个 floor(故 floor 的目标是「保真命中、顺带裁噪」)。
-  - 可分性:信号最低 sim vs 噪声最高 sim,重叠=不可约误差(P0 结论量化:纯 sim 分不开真/空主题)。
+Precompute (floor-independent, done once):
+  - signal sim: max(1-cos) per expected course code (take the highest across semesters for the
+    same course, matching the per-code dedup in _fused_search); expected codes not found in the
+    DB are counted and reported explicitly, not silenced (red line / rule 19).
+  - noise sim: the raw vector sim of courses returned by semantic_search(min_sim=0, k) for
+    no_strong_match questions.
+Then scan over a floor grid and report, for each candidate floor, the real-hit keep rate /
+noise cut rate / combined, marking:
+  - the current production value (retrieval.SEMANTIC_MIN_SIM) performance
+  - "max-keep floor": the highest floor that still keeps all real hits (= just below the lowest
+    signal sim); only a floor at or below this loses no real course. The combined-accuracy best
+    value is for reference only -- it sacrifices real courses to cut more noise, and the
+    remaining noise is already covered by answer's relevance-honesty instruction (approach-3),
+    not by this floor (so the floor's goal is "keep real hits, cut noise as a bonus").
+  - separability: lowest signal sim vs highest noise sim; overlap = irreducible error
+    (quantifies the P0 conclusion: pure sim cannot split real vs empty topics).
 
-用法(从 backend/ 跑,需 Postgres:5433 courses 已灌 embedding + Ollama bge-m3):
+Usage (run from backend/, needs Postgres:5433 with courses embedding loaded + Ollama bge-m3):
     python -m app.pipelines.floor_scan
     python -m app.pipelines.floor_scan --lo 0.40 --hi 0.65 --step 0.01 --show
 """
@@ -35,11 +46,12 @@ import psycopg
 from app.core.config import DSN, DATA_DIR
 from app.services import retrieval
 
-PROD_MIN_SIM = retrieval.SEMANTIC_MIN_SIM  # 当前生产值(唯一权威,不写死)
+PROD_MIN_SIM = retrieval.SEMANTIC_MIN_SIM  # current production value (single authority, not hard-coded)
 
 
 def _code_max_sim(conn, vec, code: str) -> float | None:
-    """期望课码与 query 向量的最高余弦(同一课跨学期取最高);库里查无该码返回 None。"""
+    """Highest cosine between an expected course code and the query vector (take the highest
+    across semesters for the same course); return None if the code is not found in the DB."""
     row = conn.execute(
         "SELECT max(1-(embedding<=>%s::vector)) FROM courses "
         "WHERE code=%s AND embedding IS NOT NULL", (vec, code)).fetchone()
@@ -47,7 +59,8 @@ def _code_max_sim(conn, vec, code: str) -> float | None:
 
 
 def _query_en(case: dict) -> str:
-    """取该题用于检索的英文 query;缺 semantic_query 显式报错(标注集须带,扫描不调 LLM)。"""
+    """Get the English query used to retrieve this question; raise explicitly if semantic_query
+    is missing (the label set must carry it, the scan does not call the LLM)."""
     eq = (case.get("semantic_query") or "").strip()
     if not eq:
         raise ValueError(f"标注缺 semantic_query(扫描需英文 query,不在此调 planner):{case.get('q')!r}")
@@ -55,7 +68,7 @@ def _query_en(case: dict) -> str:
 
 
 def _precompute(conn, cases: list[dict], k: int) -> tuple[list[dict], list[dict], list[str]]:
-    """预计算信号 / 噪声 sim 与查无的期望码。返回 (signals, noises, missing_codes)。"""
+    """Precompute signal / noise sim and the expected codes not found. Return (signals, noises, missing_codes)."""
     signals: list[dict] = []   # {topic, code, sim}
     noises: list[dict] = []     # {topic, code, sim}
     missing: list[str] = []
@@ -75,7 +88,7 @@ def _precompute(conn, cases: list[dict], k: int) -> tuple[list[dict], list[dict]
 
 
 def _rates(signals: list[dict], noises: list[dict], floor: float) -> tuple[int, int, int, int]:
-    """给定 floor:返回 (信号保留数, 信号总数, 噪声裁剪数, 噪声总数)。"""
+    """Given a floor: return (signals kept, total signals, noise cut, total noise)."""
     kept = sum(s["sim"] >= floor for s in signals)
     cut = sum(n["sim"] < floor for n in noises)
     return kept, len(signals), cut, len(noises)
@@ -107,12 +120,13 @@ def main():
         signals, noises, missing = _precompute(conn, cases, args.k)
 
     if missing:
-        # 标注的期望码在库里查无:显式报告,不静默吞掉(否则信号总数虚低、保留率假高)
+        # labelled expected codes not found in the DB: report explicitly, do not swallow silently
+        # (otherwise the signal total is falsely low and the keep rate falsely high)
         print(f"\n⚠️ 期望码库中查无({len(missing)} 个,已从信号集剔除):{'、'.join(missing)}")
     if not signals or not noises:
         ap.error(f"信号({len(signals)})或噪声({len(noises)})为空,无法扫描")
 
-    # 扫描网格
+    # scan grid
     grid = []
     t = args.lo
     while t <= args.hi + 1e-9:
@@ -121,13 +135,13 @@ def main():
         grid.append((round(t, 4), kept, sig_tot, cut, noi_tot, comb))
         t += args.step
 
-    # 最大保留 floor:仍保住全部真命中的最高 floor(= 信号最低 sim 之下一格)
+    # max-keep floor: the highest floor that still keeps all real hits (= one step below the lowest signal sim)
     full_keep = [g for g in grid if g[1] == g[2]]
     max_keep = full_keep[-1] if full_keep else None
-    # 综合准确率最优(仅参考:会为裁噪牺牲真课)
+    # combined-accuracy best (reference only: sacrifices real courses to cut noise)
     best_comb = max(g[5] for g in grid)
     best = [g for g in grid if g[5] == best_comb][0]
-    # 当前生产值
+    # current production value
     pk, pst, pc, pnt = _rates(signals, noises, PROD_MIN_SIM)
 
     sig_total = len(signals)
@@ -156,7 +170,7 @@ def main():
             print(f"  {thr:.2f} | {kept:>2}/{sig_tot} ({kept/sig_tot*100:>3.0f}%) | "
                   f"{cut:>2}/{noi_tot} ({cut/noi_tot*100:>3.0f}%) | {comb*100:>3.0f}%{mark}")
 
-    # 可分性:信号最低 sim vs 噪声最高 sim;重叠 = 任何单一 floor 都分不开 = 不可约误差
+    # separability: lowest signal sim vs highest noise sim; overlap = no single floor can split = irreducible error
     sig_sorted = sorted(signals, key=lambda s: s["sim"])
     noi_sorted = sorted(noises, key=lambda n: -n["sim"])
     sig_min = sig_sorted[0]
@@ -173,7 +187,7 @@ def main():
     else:
         print(f"\n✓ 信号/噪声完全可分:floor ∈ ({noi_max['sim']:.3f}, {sig_min['sim']:.3f}] 可 100% 分对。")
 
-    # 信号尾部(最接近 floor 的真命中):floor 的约束就来自这几门
+    # signal tail (real hits closest to the floor): the floor's constraint comes from these few
     print("\n信号尾部(最低 5 个,floor 的约束来源):")
     for s in sig_sorted[:5]:
         print(f"  sim={s['sim']:.3f}  {s['topic']} {s['code']}")

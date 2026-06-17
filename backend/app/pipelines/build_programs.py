@@ -1,9 +1,9 @@
 """
-build_programs.py — 阶段六入库:programs + program_course
-读 programs.jsonl -> programs(rules 存 JSONB,供模拟器)+ 递归派生扁平 program_course。
-可重复运行:programs 按主键 upsert,program_course 按 program_id 先删后插。
+build_programs.py — stage six load: programs + program_course
+Read programs.jsonl -> programs (rules stored as JSONB, used by the simulator) + a flat program_course derived recursively.
+Safe to re-run: programs upsert by primary key, program_course is delete-then-insert by program_id.
 
-用法:
+Usage:
     python build_programs.py --in programs.jsonl
 """
 from __future__ import annotations
@@ -39,7 +39,7 @@ CREATE INDEX IF NOT EXISTS idx_pc_program ON program_course(program_id);
 
 
 def _satisfiable_units(part: dict) -> float:
-    """部分的可满足单元:每门 standalone course 的 units + 每个 equivalence 组选一(取选项最大 units)。"""
+    """Satisfiable units of a part: the units of each standalone course + one choice per equivalence group (take the option with the largest units)."""
     tot = 0.0
     for it in part.get("items", []):
         if it.get("kind") == "course":
@@ -51,9 +51,9 @@ def _satisfiable_units(part: dict) -> float:
 
 
 def _is_mandatory_select(part: dict) -> bool:
-    """select 型部分若 units_min==可满足单元(必须全修、equiv 可替代),视为强制核心而非选修。
-    排除"从长列表里选子集"的真选修(units_min < 可满足单元)。覆盖 Honours/研究类的
-    "Complete exactly N units" 强制要求(如 2033 的 research/thesis 部分)。"""
+    """A select-type part where units_min == satisfiable units (must take all, equiv can substitute) is treated as a mandatory core, not an elective.
+    This excludes real electives that "pick a subset from a long list" (units_min < satisfiable units). It covers the Honours/research-type
+    "Complete exactly N units" mandatory requirement (such as the research/thesis part of 2033)."""
     if part.get("select_type") == "all":
         return False
     need = part.get("units_min") or 0
@@ -65,11 +65,11 @@ def _is_mandatory_select(part: dict) -> bool:
 
 
 def flatten(rules: list, via_plan: str = "", plan_subtype: str = "") -> list[tuple]:
-    """规则树 -> [(course_code, requirement_type, course_list, via_plan, plan_subtype, equiv_group)]
+    """rule tree -> [(course_code, requirement_type, course_list, via_plan, plan_subtype, equiv_group)]
 
-    equiv_group:standalone 课为 ''；equivalence(二选一)组的每个成员共享同一组键
-    (成员码排序后 '|' 连接),用于后续把同一槽位的多个备选折叠成 1 个槽位。
-    requirement_type:select_type='all' 或强制 select 部分(见 _is_mandatory_select)为 core,其余 elective。
+    equiv_group: a standalone course is ''; every member of an equivalence (choose-one) group shares the same group key
+    (member codes sorted then joined with '|'), used later to fold several alternatives of the same slot into one slot.
+    requirement_type: select_type='all' or a mandatory select part (see _is_mandatory_select) is core, the rest is elective.
     """
     out = []
     for r in rules:

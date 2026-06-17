@@ -1,23 +1,24 @@
 """
-kb_fetch_selenium.py — 用 headed 真实 Chrome 抓 support FAQ(过 Akamai JS sensor 反爬)
-(对应 plan.md 阶段二 / docs/kb_progress.md「support」)
+kb_fetch_selenium.py — fetch support FAQ with headed real Chrome (pass the Akamai JS sensor anti-bot)
+(matches plan.md phase two / docs/kb_progress.md "support")
 
-support detail 被 Akamai JS sensor 反爬:requests / Playwright-headless / 后端域 /
-REST 全 403。但 **headed 真实 Chrome(非 chromium)+ undetected-chromedriver** 能过
-(实测 5/5)。实时抓取,优于 Wayback 旧快照(覆盖率也从 38% 提到全量 846)。
+support detail is blocked by an Akamai JS sensor: requests / Playwright-headless / backend domain /
+REST all return 403. But **headed real Chrome (not chromium) + undetected-chromedriver** can pass
+(tested 5/5). Live fetch, better than old Wayback snapshots (coverage also rose from 38% to the full 846).
 
-要点:
-  - 必须 headed(headless 会被 sensor 检测,勿改 headless=True)。需本机 Google Chrome。
-  - 复用单个 driver 顺序抓;每篇质量门槛(非 Access Denied 且正文 >100c),不过则重试一次。
-  - 增量写 manifest 并 flush,中断不丢;`--resume` 跳过已抓 a_id 续抓。
-  - 只存渲染后 HTML(raw),解析仍走 kb_parse / 后续 faq 解析器。
+Key points:
+  - must be headed (headless gets detected by the sensor, do not set headless=True). needs local Google Chrome.
+  - reuse one driver and fetch in order; each page has a quality gate (not Access Denied and body >100c), retry once if it fails.
+  - write manifest incrementally and flush, no loss on interrupt; `--resume` skips already-fetched a_id and continues.
+  - store only rendered HTML (raw), parsing still goes through kb_parse / later faq parser.
 
-用法(从 backend/ 跑,会弹 Chrome 窗口,期间勿关):
-    python -m app.scrapers.kb_fetch_selenium --limit 15      # 小批试
-    python -m app.scrapers.kb_fetch_selenium                 # 全量(约 1 小时)
-    python -m app.scrapers.kb_fetch_selenium --resume        # 续抓
-    每篇渲染等待在 [--delay-min, --delay-max](默认 3–6s)间随机,避免固定间隔被 Akamai 识别;
-    撞限速时加大区间分小批:--resume --limit 30 --delay-min 5 --delay-max 10
+Usage (run from backend/, a Chrome window pops up, do not close it):
+    python -m app.scrapers.kb_fetch_selenium --limit 15      # small batch try
+    python -m app.scrapers.kb_fetch_selenium                 # full run (about 1 hour)
+    python -m app.scrapers.kb_fetch_selenium --resume        # continue fetching
+    each page's render wait is random within [--delay-min, --delay-max] (default 3-6s), to avoid a fixed
+    interval being detected by Akamai;
+    when rate-limited, widen the range and split into small batches: --resume --limit 30 --delay-min 5 --delay-max 10
 """
 from __future__ import annotations
 import re
@@ -63,7 +64,7 @@ def _done_aids(manifest: Path) -> set[str]:
 
 
 def _grab(driver, canonical: str, delay: float) -> str:
-    """get 一次,返回渲染后 HTML;空/被拦由调用方判断。"""
+    """get once, return rendered HTML; empty/blocked is judged by the caller."""
     driver.get(canonical)
     time.sleep(delay)
     return driver.page_source
@@ -108,7 +109,7 @@ def main():
                 html = _grab(driver, canonical, random.uniform(args.delay_min, args.delay_max))
                 body = trafilatura.extract(html) or ""
                 if "access denied" in html.lower() or len(body) < 100:
-                    # 重试用更长等待(上限再加 2s 区间),给被限速的页面更多冷却
+                    # retry with a longer wait (add 2s to the upper bound), give the rate-limited page more cooldown
                     html = _grab(driver, canonical,
                                  random.uniform(args.delay_max, args.delay_max + 2.0))
                     body = trafilatura.extract(html) or ""
@@ -131,7 +132,7 @@ def main():
                 fail += 1
                 consec_fail += 1
                 failed.append((aid, str(e)[:60]))
-                if consec_fail >= args.stop_after:        # 连续失败 -> 疑似 Akamai 限速,早停省时
+                if consec_fail >= args.stop_after:        # consecutive failures -> likely Akamai rate limit, stop early to save time
                     stopped = True
                     print(f"\n连续 {consec_fail} 篇失败,疑似撞 Akamai 限速,提前停止"
                           f"(已到 {i}/{len(todo)})。等冷却后再 --resume 续抓。")

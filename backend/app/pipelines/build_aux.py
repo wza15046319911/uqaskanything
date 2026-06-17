@@ -1,8 +1,8 @@
-"""build_aux.py — 入库 program 级附加规则:programs.aux_rules(全部规则备查)+ program_exclude(禁课表)。
-读 aux_rules.jsonl;programs.aux_rules 按 program_id 更新;program_exclude 按 program_id 先删后插。
-找不到对应 program 的记录会计数并报告,不静默。
+"""build_aux.py — load program-level extra rules: programs.aux_rules (all rules kept for reference) + program_exclude (banned-course table).
+Read aux_rules.jsonl; programs.aux_rules is updated by program_id; program_exclude is delete-then-insert by program_id.
+Records with no matching program are counted and reported, not silent.
 
-用法:
+Usage:
     python build_aux.py --in aux_rules.jsonl
 """
 from __future__ import annotations

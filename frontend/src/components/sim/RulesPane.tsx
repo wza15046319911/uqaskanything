@@ -39,8 +39,8 @@ const dragCode = (e: DragEvent, code: string) => {
 const CARD_CLS =
   'flex cursor-grab items-center gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5 transition hover:-translate-y-px hover:border-accent hover:shadow-surface active:cursor-grabbing'
 
-// 去掉被多数规则共享的前导词(如 program 缩写 "BInfTech"),只保留区分部分;
-// 不共享该前缀的标题(如 "General Elective Courses")保持原样,且永不清空标题。
+// Drop the leading word shared by most rules (like the program short name "BInfTech"), keep only the distinguishing part;
+// titles that do not share that prefix (like "General Elective Courses") stay as is, and a title is never cleared.
 const stripSharedPrefix = (titles: string[]): string[] => {
   if (titles.length < 2) return titles
   let lists = titles.map((t) => t.split(/\s+/))
@@ -89,7 +89,7 @@ export default function RulesPane(props: RulesPaneProps) {
     data.rules.forEach((r) => (m[r.ref] = r))
     return m
   }, [data.rules])
-  // 手风琴单展开:展开某子规则时,收起同一父级下的其他兄弟规则。
+  // Accordion single-open: when one child rule is opened, collapse its sibling rules under the same parent.
   const toggleRule = (rule: Rule, open: boolean) =>
     setCollapsedOv((m) => {
       const next = { ...m, [rule.ref]: !open }
@@ -166,7 +166,7 @@ export default function RulesPane(props: RulesPaneProps) {
       doScroll()
       return
     }
-    // 展开目标课程所在规则的整条祖先链,并切到其顶层组件 tab。
+    // Expand the whole ancestor chain of the rule holding the target course, and switch to its top-level tab.
     const chain: string[] = []
     let cur: Rule | undefined = ruleByRef[ruleRef]
     while (cur) {
@@ -361,7 +361,7 @@ export default function RulesPane(props: RulesPaneProps) {
     )
   }
 
-  // 构建规则节点(命令式:分支药丸只在每组第一次出现时插入)
+  // Build rule nodes (imperative: the branch pill is inserted only the first time each group appears)
   const ov = data.overall || {}
   const groups = ov.branch_groups || []
   const chosenBr = ov.branch || {}
@@ -540,7 +540,7 @@ export default function RulesPane(props: RulesPaneProps) {
 
   return (
     <div ref={paneRef} className="flex min-w-0 flex-col gap-4">
-      {/* 完成度 */}
+      {/* Completion */}
       <section className="sticky top-4 z-10 min-w-0 rounded-2xl border border-border bg-surface px-5 py-4 shadow-surface sm:px-6">
         <div className="mb-3 flex items-center gap-2.5">
           <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
@@ -565,7 +565,7 @@ export default function RulesPane(props: RulesPaneProps) {
           </>
         )}
       </section>
-      {/* 搜索框 */}
+      {/* Search box */}
       <section className={cardCls}>
         <ComboBox
           aria-label="跳到课程:输课程码或课名快速定位…"
@@ -597,7 +597,7 @@ export default function RulesPane(props: RulesPaneProps) {
           </ComboBox.Popover>
         </ComboBox>
       </section>
-      {/* AI 选课建议:自然语言说目标 -> 引擎定池 + LLM 在合法候选内排序 */}
+      {/* AI course advice: state the goal in natural language -> engine fixes the pool + LLM ranks within the valid candidates */}
       <section className={cardCls}>
         <div className="mb-3 flex items-center gap-2.5">
           <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
@@ -657,7 +657,7 @@ export default function RulesPane(props: RulesPaneProps) {
           </div>
         )}
       </section>
-      {/* 规则列表 */}
+      {/* Rule list */}
       <section className={cardCls}>
         {topRules.length === 0 ? (
           <div className="py-5 text-center text-sm text-muted">没有可选课程。</div>

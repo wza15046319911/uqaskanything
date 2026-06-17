@@ -1,5 +1,5 @@
-// 弥散背景参数控件:色相 / 柔度 / 颗粒 三档滑块 + 换一张(随机 seed)。
-// sim 导出预览与封面生成器共用同一套旋钮;enabled 开关、淡化浓度由各自容器维护。
+// Diffusion background param controls: three sliders for hue / softness / grain + reshuffle (random seed).
+// The sim export preview and the cover generator share the same knobs; the enabled switch and fade level are kept by each container.
 
 import { Button, Label, Slider } from '@heroui/react'
 

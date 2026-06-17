@@ -1,9 +1,11 @@
 """
-build_db.py — 阶段三:建表 + 灌库
-读 courses.jsonl 写入 Postgres(pgvector)。embedding 列留空,由 embed.py 填充。
-可重复运行:按 offering_id upsert,不会重复插入,也不会覆盖已算好的 embedding。
+build_db.py — stage three: create tables + load data
+Read courses.jsonl and write into Postgres (pgvector). The embedding column is
+left empty and filled by embed.py.
+Safe to re-run: upsert by offering_id, no duplicate inserts, and it does not
+overwrite an embedding that was already computed.
 
-用法:
+Usage:
     python build_db.py --in courses.jsonl
 """
 from __future__ import annotations
@@ -18,7 +20,7 @@ import psycopg
 
 from app.core.config import DSN
 EMBED_DIM = 1024  # bge-m3
-YEAR_LONG_MIN_DAYS = 240  # 授课跨度阈值:标准学期约 120 天、最长短学期约 165 天、年课约 270 天
+YEAR_LONG_MIN_DAYS = 240  # teaching span threshold: a normal semester is about 120 days, the longest short term about 165 days, a year-long course about 270 days
 
 DDL = f"""
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -75,6 +77,14 @@ CREATE INDEX IF NOT EXISTS idx_courses_midterm ON courses(midterm_status);
 -- unknown=没有考核项数据(判不出)。默认 unknown(保守):存量行不会被误当成「确定没有 group」。
 ALTER TABLE courses ADD COLUMN IF NOT EXISTS group_status TEXT NOT NULL DEFAULT 'unknown';
 CREATE INDEX IF NOT EXISTS idx_courses_group ON courses(group_status);
+
+-- 当前学期开课标记(按 code 派生,见 pipelines/backfill_offerings):semester 文本列按 offering 存且不可靠
+-- (S1 行是 2026,S2 行多为去年 2025 代理,真实 S2 开课清单在 S2_CODES 文件而非列),
+-- 故 S1/S2 的「本期是否开课」走这两个按 code 统一的标记列。默认 false,须跑 backfill_offerings 填充。
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS offered_s1 BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE courses ADD COLUMN IF NOT EXISTS offered_s2 BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE INDEX IF NOT EXISTS idx_courses_offered_s1 ON courses(offered_s1);
+CREATE INDEX IF NOT EXISTS idx_courses_offered_s2 ON courses(offered_s2);
 """
 
 COLS = ["offering_id", "code", "title", "study_period", "semester", "year",
@@ -86,31 +96,31 @@ COLS = ["offering_id", "code", "title", "study_period", "semester", "year",
 JSON_COLS = {"incompatible", "assessments", "learning_outcomes", "topics",
              "learning_activities"}
 
-# 课程类型推断(确定性,精度优先):title 关键词为主信号,assessment 类别补召回。
-# placement 仅认 title(纯 assessment 的 Placement 类别噪声大:很多正常课带实习考核环节)。
+# Course type inference (deterministic, precision first): title keywords are the main signal, assessment category adds recall.
+# placement only trusts the title (a pure assessment Placement category is noisy: many normal courses include a placement assessment step).
 _TYPE_PLACEMENT_RE = re.compile(r"\b(placement|internship|practicum|fieldwork)\b", re.I)
 _TYPE_THESIS_RE = re.compile(r"\b(thesis|dissertation)\b", re.I)
 _TYPE_RESEARCH_RE = re.compile(r"\bresearch\b", re.I)
-# 不含 lab/laboratory:'Laboratory Skills in Genetic Research' 等讲授课会被误标(精度优先)。
+# No lab/laboratory: taught courses like 'Laboratory Skills in Genetic Research' would be mislabelled (precision first).
 _TYPE_RESEARCH_CTX_RE = re.compile(r"\b(project|honours|honour|capstone)\b", re.I)
 
-# 期中考试时点(确定性):UQ 极少用 "Midterm",期中标准命名是 "In-Semester Exam";
-# in-class 课堂测验按业务规则计入期中。期末标准命名是 "Final" / "End of Semester"。
+# Midterm exam timing (deterministic): UQ rarely uses "Midterm"; the standard name for a midterm is "In-Semester Exam";
+# an in-class test counts as a midterm by business rule. The standard name for a final is "Final" / "End of Semester".
 _MID_RE = re.compile(r"mid[\s-]*sem|mid[\s-]*term|midterm|in[\s-]*semester|in[\s-]*class", re.I)
 _FINAL_RE = re.compile(r"final|end[\s-]*of[\s-]*semester|end[\s-]*sem", re.I)
 _EXAMLIKE_RE = re.compile(r"\b(exam|quiz|test)\b", re.I)
 
-# 小组/团队评估(确定性,召回优先——与 course_type 的精度优先相反)。UQ 标准标记是 task 末尾的
-# "Team or group-based";部分课只在 task 里写 Group Project / Group Presentation / Team... 而没打
-# 标准标记,一并按 group 计。本列服务「想避开 group work」的学生:漏判才坑人,故宁可多排除。
+# Group/team assessment (deterministic, recall first — opposite to the precision-first rule of course_type). The UQ standard marker is
+# "Team or group-based" at the end of the task; some courses only write Group Project / Group Presentation / Team... in the task and do not add
+# the standard marker, but they still count as group. This column serves students who want to avoid group work: missing a case is what hurts them, so prefer to exclude more.
 _GROUP_RE = re.compile(r"team or group-based|\bgroup\b|\bteam\b", re.I)
 
 
 def is_year_long(study_period: str | None) -> bool | None:
-    """据 study_period 授课起止跨度判断是否年课(横跨连续两学期)。
+    """Decide whether a course is year-long from the teaching span in study_period (crossing two consecutive semesters).
 
-    形如 "Semester 1, 2026 (23/02/2026 - 21/11/2026)":跨度 >= YEAR_LONG_MIN_DAYS
-    即年课。无法解析出日期区间返回 None(交调用方显式计数,不静默当成非年课)。
+    For a value like "Semester 1, 2026 (23/02/2026 - 21/11/2026)": a span >= YEAR_LONG_MIN_DAYS
+    means year-long. If the date range cannot be parsed, return None (the caller counts it explicitly, instead of silently treating it as not year-long).
     """
     if not study_period:
         return None
@@ -126,17 +136,17 @@ def is_year_long(study_period: str | None) -> bool | None:
 
 
 def classify_course_type(title: str | None, assessments: list | None) -> str:
-    """据 title + assessment 类别确定性判课程类型,返回 placement/thesis/research/coursework。
+    """Decide the course type deterministically from title + assessment category, returning placement/thesis/research/coursework.
 
-    精度优先(宁可漏标也别错杀正常课,符合 student-facing「refuse over wrong」):
-      - placement:title 含 placement/internship/practicum/fieldwork(不认纯 assessment 信号)
-      - thesis:title 含 thesis/dissertation,或某项考核的 category 单独就是 'Thesis'
-      - research:title 含 research 且同时含 project/honours/capstone(滤掉「讲授研究方法」类课)
-      - 其余:coursework
-    优先级 placement > thesis > research(如「Industry Research Placement」判 placement)。
+    Precision first (prefer to miss a label rather than wrongly kill a normal course, matching the student-facing rule "refuse over wrong"):
+      - placement: title contains placement/internship/practicum/fieldwork (a pure assessment signal is not trusted)
+      - thesis: title contains thesis/dissertation, or an assessment whose category is just 'Thesis' on its own
+      - research: title contains research and also contains project/honours/capstone (this filters out "teaching research methods" courses)
+      - otherwise: coursework
+    Priority is placement > thesis > research (for example "Industry Research Placement" is judged as placement).
 
-    UQ 的 assessment.category 是逗号拼接的多值串(如 'Project, Thesis')。只看「拆逗号后
-    单独等于 Thesis」的考核,避免把带期末考的授课课(如 STAT3008,某项 category='Project, Thesis')误标论文课。
+    UQ's assessment.category is a comma-joined multi-value string (such as 'Project, Thesis'). Only an assessment that
+    equals exactly Thesis after splitting on commas counts, so a taught course with a final exam (such as STAT3008, where one assessment has category='Project, Thesis') is not mislabelled as a thesis course.
     """
     t = title or ""
     if _TYPE_PLACEMENT_RE.search(t):
@@ -153,13 +163,13 @@ def classify_course_type(title: str | None, assessments: list | None) -> str:
 
 
 def classify_midterm(assessments: list | None) -> str:
-    """据考核命名确定性判是否含期中考试,返回 has/none/unknown。
+    """Decide deterministically whether there is a midterm exam from the assessment names, returning has/none/unknown.
 
-    只看 exam/quiz/test 类考核(category 含 exam,或 task 含 exam/quiz/test):
-      - has:任一 task 命中期中词族(in-semester/mid-sem/mid-term/midterm/in-class)
-      - unknown:有此类考核但命名判不出时点(既非期中也非期末,如裸 'Exam'/'Quiz')
-      - none:无此类考核,或全部是期末(final/end-of-semester)
-    判不出时点一律归 unknown,绝不静默当成「没有期中」(student-facing「refuse over wrong」)。
+    Only exam/quiz/test type assessments are considered (category contains exam, or task contains exam/quiz/test):
+      - has: any task matches the midterm word family (in-semester/mid-sem/mid-term/midterm/in-class)
+      - unknown: there are such assessments but the name does not tell the timing (neither midterm nor final, such as a bare 'Exam'/'Quiz')
+      - none: no such assessment, or all of them are finals (final/end-of-semester)
+    When the timing cannot be decided it always becomes unknown, never silently treated as "no midterm" (student-facing "refuse over wrong").
     """
     items = [
         (a.get("task") or "")
@@ -174,13 +184,13 @@ def classify_midterm(assessments: list | None) -> str:
 
 
 def classify_group(assessments: list | None) -> str:
-    """据考核 task 命名确定性判是否含小组/团队评估,返回 has/none/unknown。
+    """Decide deterministically whether there is a group/team assessment from the assessment task names, returning has/none/unknown.
 
-    召回优先(与 classify_course_type 的精度优先相反):本列服务「想避开 group work」的学生,
-    把有 group 的课漏判成 none 才会坑人,故标准标记 + 裸 group/team 词都算 has。
-      - has:任一 task 命中 group/team 信号
-      - none:有考核项但无一命中
-      - unknown:没有考核项数据(判不出,绝不当 none)
+    Recall first (opposite to the precision-first rule of classify_course_type): this column serves students who want to avoid group work,
+    and missing a course that has group work as none is what hurts them, so both the standard marker and a bare group/team word count as has.
+      - has: any task matches a group/team signal
+      - none: there are assessments but none match
+      - unknown: no assessment data (cannot decide, never treated as none)
     """
     items = [(a.get("task") or "") for a in (assessments or [])]
     if not items:
@@ -191,13 +201,13 @@ def classify_group(assessments: list | None) -> str:
 
 
 def load_exam_overrides(path: str) -> dict:
-    """读人工核实的考试状态修正表:offering_id -> {has_exam?, midterm_status?, ...}。
+    """Read the manually verified exam-status correction table: offering_id -> {has_exam?, midterm_status?, ...}.
 
-    自动分类器(classify_midterm / scraper 的 has_exam)只能据考核 category/命名判断,判不出
-    在考试周或现场监考的 quiz/OSCA/Viva 这类「不叫 Examination 的考试」。逐门核 ECP 后把判定写进
-    data/exam_overrides.jsonl(每行一个 offering),建库时套用,确保全量重建 / watch_s2 增量入库
-    都不会把人工核实结果还原成自动分类值。
-    文件缺失返回空(override 可选增强);某行 JSON 解析失败或缺 offering_id 直接抛错(不静默)。
+    The automatic classifiers (classify_midterm / the scraper's has_exam) can only judge by assessment category/name, and cannot
+    decide exams that are held in the exam period or invigilated on site, like quiz/OSCA/Viva, that are "not called Examination". After checking each ECP by hand, the decision is written into
+    data/exam_overrides.jsonl (one offering per line) and applied at build time, so that a full rebuild / watch_s2 incremental load
+    will not roll the manually verified result back to the automatic value.
+    A missing file returns empty (the override is an optional enhancement); a line that fails JSON parsing or lacks offering_id raises directly (not silent).
     """
     p = pathlib.Path(path)
     if not p.exists():
@@ -216,9 +226,9 @@ def load_exam_overrides(path: str) -> dict:
 
 
 def apply_exam_override(c: dict, ov: dict) -> list[str]:
-    """把 override 套到课程行 c(原地改),返回被改动的字段名列表(供计数/报告)。
+    """Apply the override onto the course row c (in place), returning the list of changed field names (for counting/reporting).
 
-    只允许覆盖 has_exam / midterm_status 两列;值与现有相同不算改动。"""
+    Only the two columns has_exam / midterm_status may be overridden; a value equal to the current one does not count as a change."""
     changed: list[str] = []
     for field in ("has_exam", "midterm_status"):
         if field in ov and c.get(field) != ov[field]:
@@ -232,7 +242,7 @@ def row_values(c: dict) -> list:
     for col in COLS:
         v = c.get(col)
         if col == "prerequisite_parsed":
-            # None 必须存 JSON null(无先修),不能退化成 []——要与「未爬到」区分
+            # None must be stored as JSON null (no prerequisite), not as [] — it has to be distinguished from "not scraped"
             v = json.dumps(v, ensure_ascii=False)
         elif col in JSON_COLS:
             v = json.dumps(v if v is not None else [], ensure_ascii=False)
@@ -277,7 +287,7 @@ def main():
                 c["group_status"] = gs
                 n_group[gs] = n_group.get(gs, 0) + 1
                 ov = overrides.get(c.get("offering_id"))
-                if ov and apply_exam_override(c, ov):     # 人工核实修正(在自动分类之后,确保不被还原)
+                if ov and apply_exam_override(c, ov):     # manual correction (after automatic classification, so it is not rolled back)
                     ov_hits += 1
                 n_mid[c["midterm_status"]] = n_mid.get(c["midterm_status"], 0) + 1
                 cur.execute(sql, row_values(c))
@@ -287,6 +297,8 @@ def main():
           f"study_period 无法解析 {n_unparsed} 门(is_year_long=NULL);"
           f"course_type {n_type};midterm_status {n_mid};group_status {n_group};"
           f"人工核实修正命中 {ov_hits} 个 offering(共录入 override {len(overrides)} 条)")
+    from app.pipelines import backfill_offerings
+    backfill_offerings.main()
 
 
 if __name__ == "__main__":

@@ -1,14 +1,14 @@
-// 模拟器本地状态 + 学期换算工具。
+// Simulator local state + semester conversion helpers.
 
 export interface SimLocalState {
   program_id: string
   chosen_plans: string[]
   branch: string[]
-  placement: Record<string, number> // code -> 学期格索引
+  placement: Record<string, number> // code -> semester cell index
   start_year: number
   n_semesters: number
   units_cap: number
-  start_sem: string // 入学学期 'S1' | 'S2'
+  start_sem: string // starting semester 'S1' | 'S2'
 }
 
 const OTHER: Record<string, string> = { S1: 'S2', S2: 'S1' }
@@ -17,20 +17,20 @@ function normSem(startSem: string): string {
   return startSem === 'S2' ? 'S2' : 'S1'
 }
 
-// 格 i 是 S1 还是 S2:由入学学期决定起点,之后交替。
+// Whether cell i is S1 or S2: the starting semester sets the start, then they alternate.
 export function semKind(startSem: string, i: number): string {
   const s = normSem(startSem)
   return i % 2 === 0 ? s : OTHER[s]
 }
 
-// 格 i 的日历年:S1 入学每 2 格进 1 年;S2 入学时下一个 S1 已是次年。
+// Calendar year of cell i: for S1 entry every 2 cells adds 1 year; for S2 entry the next S1 is already the following year.
 export function semYear(startYear: number, startSem: string, i: number): number {
   const s = normSem(startSem)
   return s === 'S1' ? startYear + Math.floor(i / 2) : startYear + Math.floor((i + 1) / 2)
 }
 
-// 学期数由学位总学分自动判定:满载 8 学分/学期,即 总学分 / 8(向上取整),可为奇数(如 1.5 年制 3 学期)。
-// 已排课的最后一格作为下限,避免学期上限调小(兼读)时把课挤出格子外。
+// The number of semesters is derived from the degree total units: full load is 8 units/semester, i.e. total units / 8 (rounded up), and may be odd (e.g. 3 semesters for a 1.5-year degree).
+// The last cell of placed courses is the lower bound, to avoid pushing courses out of the grid when the semester cap is lowered (part-time).
 export function computeSemesters(totalUnits: number, placement: Record<string, number>): number {
   const base = Math.ceil((totalUnits || 0) / 8)
   const maxCell = Object.values(placement).reduce((m, i) => Math.max(m, i), -1)
@@ -58,7 +58,7 @@ export function loadState(): SimLocalState {
     const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null')
     if (s && typeof s === 'object') return { ...defaultState(), ...s }
   } catch {
-    // 损坏的 localStorage 退回默认
+    // corrupted localStorage falls back to default
   }
   return defaultState()
 }

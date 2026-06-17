@@ -50,7 +50,7 @@ def test_build_where_course_type_only_is_in_equivalent():
 
 
 def test_build_where_all_dimensions_order():
-    # 全维度一起:顺序严格按 _WHERE_BUILDERS,course_type_only 在 exclude 前,均在尾部
+    # 全维度一起:顺序严格按 _WHERE_BUILDERS,semester 走 offered_s* 标记(无参),course_type_only 在 exclude 前,均在尾部
     sql, params = build_where({
         "has_exam": True, "has_hurdle": False, "midterm_status": "has",
         "group_status": "none", "level": "Undergraduate", "units": 2,
@@ -59,10 +59,20 @@ def test_build_where_all_dimensions_order():
     assert sql == (
         "has_exam = %s AND has_hurdle = %s AND midterm_status = %s AND "
         "group_status = %s AND level = %s AND units = %s AND location = %s AND "
-        "attendance_mode = %s AND semester = %s AND course_type = ANY(%s) AND "
+        "attendance_mode = %s AND offered_s1 = TRUE AND course_type = ANY(%s) AND "
         "course_type <> ALL(%s)")
     assert params == [True, False, "has", "none", "Undergraduate", 2, "St Lucia",
-                      "In Person", "S1", ["coursework"], ["thesis"]]
+                      "In Person", ["coursework"], ["thesis"]]
+
+
+def test_build_where_semester_routes_to_offered_flag():
+    # semester 不是普通列匹配:S1/S2 路由到按 code 派生的 offered_s1/offered_s2 标记(无 %s 参数),
+    # 因为 semester 文本列按 offering 存且对「本期是否开课」不可靠(见 backfill_offerings)。
+    assert build_where({"semester": "S2"}) == ("offered_s2 = TRUE", [])
+    assert build_where({"semester": "S1"}) == ("offered_s1 = TRUE", [])
+    # 与其它维度组合:has_exam 进 params,semester 标记跟在后面不带参
+    assert build_where({"has_exam": False, "semester": "S2"}) == (
+        "has_exam = %s AND offered_s2 = TRUE", [False])
 
 
 def test_build_where_empty_is_pure_no_raise():

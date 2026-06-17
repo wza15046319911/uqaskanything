@@ -1,19 +1,19 @@
 """
-kb_fetch_wayback.py — 从 Wayback Machine 抓 support FAQ 存档(绕开 support 反爬,合规)
-(对应 plan.md 阶段二 / docs/kb_progress.md「support」)
+kb_fetch_wayback.py — fetch support FAQ archives from the Wayback Machine (bypass support anti-bot, compliant)
+(matches plan.md phase two / docs/kb_progress.md "support")
 
-support detail 页被 Akamai 级边缘反爬拦死(普通 HTTP / Playwright / 后端域 / REST
-全 403,见 kb_browser_probe.py)。archive.org 存了约 38% 的 200 快照——抓 archive
-完全绕开 support 反爬且合规。本脚本:
-  1. CDX API 列出 support detail 的全部 200 存档,按 a_id 取最新快照
-  2. 抓 `/web/<ts>id_/<原始URL>` 的原始 HTML 落 raw/support.my.uq.edu.au/
-  3. 规范 URL 仍指向官方 detail 页(答案链回官方),记录快照时间
+The support detail pages are blocked by Akamai-level edge anti-bot (plain HTTP / Playwright / backend domain / REST
+all 403, see kb_browser_probe.py). archive.org has about 38% of the 200 snapshots -- fetching the archive
+fully bypasses the support anti-bot and is compliant. This script:
+  1. CDX API lists all 200 archives of support detail, take the latest snapshot per a_id
+  2. fetch the raw HTML of `/web/<ts>id_/<original URL>` into raw/support.my.uq.edu.au/
+  3. the canonical URL still points to the official detail page (answers link back to official), record the snapshot time
 
-覆盖率受限于 archive.org;无存档的 a_id(约 525 篇)需正式渠道(UQ IT 要 KB 数据)。
+Coverage is limited by archive.org; a_id without an archive (about 525) need an official channel (ask UQ IT for KB data).
 
-用法(从 backend/ 跑):
-    python -m app.scrapers.kb_fetch_wayback --limit 5      # 小批试
-    python -m app.scrapers.kb_fetch_wayback                # 全量
+Usage (run from backend/):
+    python -m app.scrapers.kb_fetch_wayback --limit 5      # small batch try
+    python -m app.scrapers.kb_fetch_wayback                # full run
 """
 from __future__ import annotations
 import re
@@ -45,7 +45,7 @@ def _support_aids(csv_path: Path) -> set[str]:
 
 
 def latest_snapshots(want: set[str]) -> dict[str, tuple[str, str]]:
-    """CDX -> {a_id: (timestamp, original_url)},只保留每个 a_id 最新的 200 快照。"""
+    """CDX -> {a_id: (timestamp, original_url)}, keep only the latest 200 snapshot per a_id."""
     r = requests.get(CDX, headers=HEADERS, timeout=120, params={
         "url": "support.my.uq.edu.au/app/answers/detail", "matchType": "prefix",
         "filter": "statuscode:200", "output": "json", "fl": "original,timestamp"})

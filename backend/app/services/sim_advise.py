@@ -1,15 +1,15 @@
 """
-sim_advise.py — 阶段四:AI 选课建议(确定性定池,LLM 只排序/解释)
+sim_advise.py — stage 4: AI course advice (deterministic candidate pool, LLM only ranks/explains)
 
-原则:「能选什么」由引擎决定——枚举可选(available)∪ 开放规则(E/F)可计入的码;
-LLM 只在这个固定候选集内排序和说明,永远不能引入集合外的码:
-  护栏① 候选喂 LLM 前已按合法池过滤;
-  护栏② answer.guard_citations 把 LLM 输出里集合外的码整行剥除并显式列出。
-诚实披露:可选池里没有 courses 行(无 embedding,检索不可达)的码数量显式返回,
-不在可达子集上静默装作覆盖完整。
+Principle: "what you can pick" is decided by the engine — enumerated available ∪ codes that open rules (E/F) can count;
+the LLM only ranks and explains within this fixed candidate set, and can never introduce a code outside the set:
+  guardrail 1: candidates are filtered by the legal pool before feeding the LLM;
+  guardrail 2: answer.guard_citations strips whole lines for out-of-set codes in the LLM output and lists them explicitly.
+Honest disclosure: the number of codes in the available pool that have no courses row (no embedding, unreachable by retrieval) is returned explicitly,
+not silently pretending full coverage over the reachable subset.
 
-用法:
-    python sim_advise.py "我想做 AI 和机器学习"          # 2559 空状态自测
+Usage:
+    python sim_advise.py "我想做 AI 和机器学习"          # 2559 empty-state self-test
 """
 from __future__ import annotations
 import re
@@ -18,7 +18,7 @@ from app.services import answer, llm, retrieval, planner
 from app.services.simulator import PlanSimulator
 
 MAX_CANDIDATES = 8
-MIN_SIM = 0.45            # semantic_search 默认地板;召回 <3 时降到 0.30 重试一次
+MIN_SIM = 0.45            # semantic_search default floor; lower to 0.30 and retry once when recall <3
 MIN_SIM_RETRY = 0.30
 
 SYSTEM = (
@@ -30,8 +30,8 @@ SYSTEM = (
 
 
 def _goal_constraint_desc(goal: str) -> str:
-    """把目标里确定性识别到的结构化约束(有无考试/小组/层级/学分/排除课型)拼成中文描述,
-    供 prompt 告知 LLM「候选已据实满足这些条件」。复用 planner 的提取器(规则15:不重造)。"""
+    """Join the structured constraints deterministically detected in the goal (exam/group/level/units/excluded type) into a Chinese description,
+    so the prompt can tell the LLM "candidates already truly satisfy these conditions". Reuses planner's extractors (rule 15: do not rebuild)."""
     parts: list[str] = []
     ex = planner._exam_intent(goal)
     if ex is False:
@@ -57,8 +57,8 @@ def _goal_constraint_desc(goal: str) -> str:
 
 
 def _legal_target(sim, st: dict, prog_list: set, enum_ref: dict, code: str) -> str | None:
-    """候选码的归属:枚举可选 -> 其规则 ref;否则按 E(程序课表)→ F(任意)找有余量的
-    开放规则(undergraduate 课表的限 level<=6);无处可归 -> None(不进候选)。"""
+    """Attribution of a candidate code: enumerated available -> its rule ref; otherwise look for an open rule with room
+    in order E (program course list) -> F (any) (undergraduate course list limited to level<=6); nowhere to go -> None (not a candidate)."""
     if code in enum_ref:
         return enum_ref[code]
     m = re.search(r"\d", code)
@@ -89,14 +89,14 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
         sim.choose_branch(ref)
 
     st = {e["ref"]: e for e in sim.status()}
-    enum_ref: dict[str, str] = {}            # 枚举可选码 -> 所属规则 ref
+    enum_ref: dict[str, str] = {}            # enumerated available code -> its rule ref
     for ref, slots in sim.available_by_rule().items():
         for s in slots:
             for code in ([s["code"]] if s["kind"] == "course" else s["options"]):
                 enum_ref.setdefault(code, ref)
     prog_list = sim._all_referenced_codes()
 
-    # 诚实披露:枚举可选里没有 courses 行的码,检索永远不可达
+    # honest disclosure: codes in enumerated available with no courses row are forever unreachable by retrieval
     unreachable = sorted(c for c in enum_ref if c not in sim._all_codes)
 
     open_room = any(e.get("open") and not e.get("inactive")
@@ -107,16 +107,16 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
                 "available_count": 0, "unreachable_count": len(unreachable),
                 "unreachable_codes": unreachable, "note": "可选池为空,未调用 LLM"}
 
-    # 确定性识别目标里的结构化约束(有无考试/小组/学分/层级/排除课型),复用 planner 的受控
-    # filters 生成器。红线1/规则12:这类是结构化事实,绝不让 LLM 猜——它会把「像项目课」的课
-    # 当成「没考试」推荐(如曾把有考试的 RELN1000 说成考试少)。识别到约束就在候选池上确定性过滤。
+    # deterministically detect structured constraints in the goal (exam/group/units/level/excluded type), reusing planner's controlled
+    # filters generator. Red line 1 / rule 12: these are structured facts, never let the LLM guess — it would treat a "project-like" course
+    # as "no exam" and recommend it (e.g. once said the exam-bearing RELN1000 had few exams). If a constraint is detected, filter the candidate pool deterministically.
     filters = planner._program_filter_where(goal)
     has_topic = planner._has_topic(goal)
     valid_codes: set | None = None
     if filters:
         try:
             valid_codes = {r["code"] for r in retrieval.filter_search(conn, filters)}
-        except ValueError:                    # filters 受控生成本不该非法;兜底不阻断,记日志
+        except ValueError:                    # controlled-generated filters should not be illegal; fall back without blocking, log it
             print(f"[sim_advise] 结构化 filters 被安全网拦截,降级为不过滤: {filters!r}")
             filters = {}
     constraint = _goal_constraint_desc(goal)
@@ -128,7 +128,7 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
             if code in sim.selected or code in sim.excluded:
                 continue
             if valid_codes is not None and code not in valid_codes:
-                continue                       # 确定性过滤:不满足结构化约束的课一律剔除
+                continue                       # deterministic filter: drop any course not satisfying the structured constraint
             if any(c["code"] == code for c in cands):
                 continue
             ref = _legal_target(sim, st, prog_list, enum_ref, code)
@@ -141,11 +141,11 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
             if len(cands) >= MAX_CANDIDATES:
                 return
 
-    # 候选来源:有主题(或没有结构化约束)走语义召回 + 上面的确定性过滤;纯结构化目标(无主题,
-    # 如「我想选没考试的课」)直接走确定性 filter_search 取真满足条件的池,不靠语义猜。
+    # candidate source: with a topic (or no structured constraint), use semantic recall + the deterministic filter above; a pure structured goal (no topic,
+    # e.g. "I want courses with no exam") goes straight to deterministic filter_search for the pool that truly satisfies the conditions, not guessing by semantics.
     if has_topic or not filters:
         collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM))
-        if len(cands) < 3:                    # 召回不足:降相似度地板重试一次(仅语义路径)
+        if len(cands) < 3:                    # recall too low: lower the similarity floor and retry once (semantic path only)
             collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM_RETRY))
     else:
         collect(retrieval.filter_search(conn, filters))
