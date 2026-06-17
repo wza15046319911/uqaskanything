@@ -6,62 +6,66 @@ from app.services import planner
 from app.services.planner import (
     _enforce_level_hint, _program_filter_where, _force_program_route,
     _expand_program_abbr, _code_level_digits, _faculty_units,
-    _validate_coord_unit, _both_semesters_intent, _strip_semester_any,
+    _validate_coord_unit, _both_semesters_intent,
     _excluded_title_kw, plan)
 
-PG = "level='Postgraduate Coursework'"
-UG = "level='Undergraduate'"
+PG = "Postgraduate Coursework"
+UG = "Undergraduate"
 
 
 def test_master_bachelor_map_to_level():
-    assert _enforce_level_hint("has_exam=false", "Master没考试的课") == f"has_exam=false AND {PG}"
-    assert _enforce_level_hint("", "bachelor 的课") == UG
-    assert _enforce_level_hint("", "硕士课程") == PG
-    assert _enforce_level_hint("", "学士课程") == UG
+    # 槽位化后 _enforce_level_hint 吃/吐 filters dict:命中层级词 -> 写入 level 槽
+    assert _enforce_level_hint({"has_exam": False}, "Master没考试的课") == \
+        {"has_exam": False, "level": PG}
+    assert _enforce_level_hint({}, "bachelor 的课") == {"level": UG}
+    assert _enforce_level_hint({}, "硕士课程") == {"level": PG}
+    assert _enforce_level_hint({}, "学士课程") == {"level": UG}
     # 既有的研究生/本科继续生效
-    assert _enforce_level_hint("", "研究生课") == PG
-    assert _enforce_level_hint("", "undergraduate courses") == UG
+    assert _enforce_level_hint({}, "研究生课") == {"level": PG}
+    assert _enforce_level_hint({}, "undergraduate courses") == {"level": UG}
 
 
 def test_program_name_of_form_not_treated_as_level():
     # "Master of X" / "Bachelor of X" 是专业名,不该被兜底成 level(避免污染 program 查询)
-    assert _enforce_level_hint("", "Master of Data Science 的课") == ""
-    assert _enforce_level_hint("has_exam=false", "Bachelor of Computer Science") == "has_exam=false"
+    assert _enforce_level_hint({}, "Master of Data Science 的课") == {}
+    assert _enforce_level_hint({"has_exam": False}, "Bachelor of Computer Science") == \
+        {"has_exam": False}
 
 
 def test_keyword_overrides_wrong_llm_level():
     # 问题含层级词时确定性值为准:LLM 把 bachelor 错映射成 Postgraduate 也要被纠正(规则 12)
-    assert _enforce_level_hint(PG, "bachelor没考试的课") == UG
-    assert _enforce_level_hint(f"{PG} AND has_exam=false", "bachelor没考试的课") == f"{UG} AND has_exam=false"
+    assert _enforce_level_hint({"level": PG}, "bachelor没考试的课") == {"level": UG}
+    assert _enforce_level_hint({"level": PG, "has_exam": False}, "bachelor没考试的课") == \
+        {"level": UG, "has_exam": False}
 
 
 def test_no_keyword_respects_llm_level_and_unchanged():
     # 无我方层级关键词(如 honours)时尊重 LLM 已写的 level
-    assert _enforce_level_hint(UG, "honours 课") == UG
-    # 无层级关键词不动 where
-    assert _enforce_level_hint("has_exam=false", "没考试的课") == "has_exam=false"
+    assert _enforce_level_hint({"level": UG}, "honours 课") == {"level": UG}
+    # 无层级关键词不动 filters
+    assert _enforce_level_hint({"has_exam": False}, "没考试的课") == {"has_exam": False}
 
 
 def test_program_filter_where_rebuilds_structured_conditions():
-    # 有/无考试确定性映射(否定优先)
-    assert _program_filter_where("没有考试的课") == "has_exam=false"
-    assert _program_filter_where("有考试的课") == "has_exam=true"
-    # 学分 + 考试叠加
-    assert _program_filter_where("2学分没考试的课") == "has_exam=false AND units=2"
-    # 排除课型
+    # 有/无考试确定性映射(否定优先)-> filters dict
+    assert _program_filter_where("没有考试的课") == {"has_exam": False}
+    assert _program_filter_where("有考试的课") == {"has_exam": True}
+    # 学分 + 考试叠加(units 归一成数值)
+    assert _program_filter_where("2学分没考试的课") == {"has_exam": False, "units": 2}
+    # 排除课型(去重升序)
     assert _program_filter_where("不含thesis和placement的课") == \
-        "course_type NOT IN ('placement','thesis')"
+        {"course_type_exclude": ["placement", "thesis"]}
     # 有/无小组评估确定性映射(否定优先,中英关键词)
-    assert _program_filter_where("没有小组作业的课") == "group_status='none'"
-    assert _program_filter_where("没有 group project 的课") == "group_status='none'"
-    assert _program_filter_where("有 groupwork 的课") == "group_status='has'"
+    assert _program_filter_where("没有小组作业的课") == {"group_status": "none"}
+    assert _program_filter_where("没有 group project 的课") == {"group_status": "none"}
+    assert _program_filter_where("有 groupwork 的课") == {"group_status": "has"}
     # 考试 + 小组叠加
     assert _program_filter_where("没考试也没有小组作业的课") == \
-        "has_exam=false AND group_status='none'"
+        {"has_exam": False, "group_status": "none"}
     # 层级词经 _enforce_level_hint 注入
-    assert _program_filter_where("研究生没考试的课") == f"has_exam=false AND {PG}"
-    # 无任何可映射维度 -> 空串(退化为普通 program_to_courses)
-    assert _program_filter_where("Bachelor of Commerce 的必修课") == ""
+    assert _program_filter_where("研究生没考试的课") == {"has_exam": False, "level": PG}
+    # 无任何可映射维度 -> 空 dict(退化为普通 program_to_courses)
+    assert _program_filter_where("Bachelor of Commerce 的必修课") == {}
 
 
 def test_force_program_route_combined_program_filter():
@@ -92,11 +96,11 @@ def test_low_burden_short_circuits_before_llm():
     # -> 客观负担过滤(无考试+无hurdle+排除项目课)+ 按考核项数升序,绝不靠 LLM 判难度。
     p = plan("能躺平的课", schema_doc="x")
     assert p["mode"] == "filter" and p["order"] == "assessments_asc"
-    assert "has_exam=false" in p["where"] and "has_hurdle=false" in p["where"]
-    assert "thesis" in p["where"] and "research" in p["where"] and "placement" in p["where"]
+    assert p["filters"]["has_exam"] is False and p["filters"]["has_hurdle"] is False
+    assert set(p["filters"]["course_type_exclude"]) == {"thesis", "research", "placement"}
     # 层级词确定性合并
     p2 = plan("轻松好过的研究生课", schema_doc="x")
-    assert "Postgraduate Coursework" in p2["where"] and p2["order"] == "assessments_asc"
+    assert p2["filters"]["level"] == "Postgraduate Coursework" and p2["order"] == "assessments_asc"
     # 其它低负担同义触发词
     for q in ["作业少的课", "水课推荐", "考核少的课"]:
         assert plan(q, schema_doc="x")["order"] == "assessments_asc", q
@@ -104,7 +108,7 @@ def test_low_burden_short_circuits_before_llm():
     for q in ["assessment组成最简单的课", "考核最简单的课", "考核组成简单的课"]:
         p3 = plan(q, schema_doc="x")
         assert p3["mode"] == "filter" and p3["order"] == "assessments_asc", q
-        assert "has_exam=false" in p3["where"] and "has_hurdle=false" in p3["where"], q
+        assert p3["filters"]["has_exam"] is False and p3["filters"]["has_hurdle"] is False, q
 
 
 def test_code_level_digit_extraction():
@@ -146,18 +150,6 @@ def test_both_semesters_intent():
     assert _both_semesters_intent("S1和S2的课") is False
     assert _both_semesters_intent("S2没考试的课") is False
     assert _both_semesters_intent("没有考试的课") is False
-
-
-def test_strip_semester_any():
-    # 剥掉 IN 写法(尾部连接词一并清),保留其余结构化条件
-    assert _strip_semester_any("semester IN ('S1','S2') AND midterm_status='none' AND has_exam=false") \
-        == "midterm_status='none' AND has_exam=false"
-    # 剥掉等值写法(前部连接词一并清)
-    assert _strip_semester_any("has_exam=false AND semester='S1'") == "has_exam=false"
-    # 仅 semester 条件 -> 清成空串(此时由 both-semester 路径固定补 IN)
-    assert _strip_semester_any("semester IN ('S1','S2')") == ""
-    # 无 semester 条件 -> 原样
-    assert _strip_semester_any("has_exam=false") == "has_exam=false"
 
 
 def test_excluded_title_kw():

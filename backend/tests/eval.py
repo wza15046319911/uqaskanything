@@ -141,6 +141,7 @@ def regression_checks(conn) -> bool:
     """对抗审查修复的回归断言(逐条 assert,锁住已修 bug)。"""
     from app.services import retrieval
     from app.services import answer
+    from app.services import planner
     checks = []
 
     # 1. 枚举守卫:非 St Lucia 校区绝不返回全库
@@ -158,10 +159,12 @@ def regression_checks(conn) -> bool:
     except Exception as e:
         checks.append(("宽泛问题优雅兜底", False, f"抛异常 {e}"))
 
-    # 4. guard_where 拦注入/DoS
-    bad = ["pg_sleep(1) IS NULL", "code IN (SELECT code FROM programs)", "true", "1=1"]
-    blocked = sum(_raises(retrieval.guard_where, w) for w in bad)
-    checks.append(("guard_where 拦注入", blocked == len(bad), f"{blocked}/{len(bad)} 被拦"))
+    # 4. 注入安全(结构性):build_where 把值全塞 params(绝不进 SQL 文本),_validate_filters 丢脑补列
+    inj = "St Lucia'; DROP TABLE courses --"
+    sql, params = retrieval.build_where({"location": inj})
+    safe = "%s" in sql and inj in params and inj not in sql
+    dropped = planner._validate_filters({"requirement_type": "x", "title": "%ml%"}) == {}
+    checks.append(("注入安全(参数化+丢脑补列)", safe and dropped, f"sql={sql!r}"))
 
     # 5. 答案护栏:越界(虚构)课码被剔除、合法码保留(分行,避开整行剔除)
     out = answer.guard_citations("推荐 COMP4702。\n还有 FAKE9999。", [{"code": "COMP4702"}])
@@ -221,7 +224,6 @@ def regression_checks(conn) -> bool:
                    f"2561={program_lookup.has_plan_level_core(conn, '2561')} 2033={program_lookup.has_plan_level_core(conn, '2033')}"))
 
     # 12. C:确定性 program 强制(含双学位复数名)+ 不误伤普通课程查询
-    from app.services import planner
     f1 = planner._force_program_route("Bachelors of Mathematics / Computer Science 要修哪些核心课")
     f2 = planner._force_program_route("CSSE1001是哪些专业的必修")
     f3 = planner._force_program_route("CS有哪些课程没有考试")
@@ -231,10 +233,10 @@ def regression_checks(conn) -> bool:
                    and f3 is None,
                    f"f1={f1} f2={f2} f3={f3}"))
 
-    # 13. C:研究生/本科 -> 确定性注入 level 过滤
+    # 13. C:研究生/本科 -> 确定性注入 level 槽位(filters dict)
     checks.append(("C:研究生→level过滤注入",
-                   planner._enforce_level_hint("", "研究生阶段跟数据科学相关的课") == "level='Postgraduate Coursework'"
-                   and planner._enforce_level_hint("has_exam=true", "本科有考试的课") == "has_exam=true AND level='Undergraduate'",
+                   planner._enforce_level_hint({}, "研究生阶段跟数据科学相关的课") == {"level": "Postgraduate Coursework"}
+                   and planner._enforce_level_hint({"has_exam": True}, "本科有考试的课") == {"has_exam": True, "level": "Undergraduate"},
                    "ok"))
 
     # 14. 程序级禁课:BCompSc(2559)禁修 MATH1040;permit 路由 + 回答"不能"
@@ -259,14 +261,6 @@ def regression_checks(conn) -> bool:
         allok = allok and ok
     print(f"回归断言:{sum(1 for _,o,_ in checks if o)}/{len(checks)} 通过")
     return allok
-
-
-def _raises(fn, *a) -> bool:
-    try:
-        fn(*a)
-        return False
-    except Exception:
-        return True
 
 
 def main():

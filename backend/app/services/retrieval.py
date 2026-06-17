@@ -3,16 +3,16 @@ retrieval.py — 统一检索层。
 四种检索 + 安全网,全部接收 psycopg 连接 conn,返回 list[dict]。
 
 分工(沿用项目「确定性决策用代码,语言任务交模型」):
-  - 本模块全是确定性活:SELECT-only 拦截、SQL 拼装、向量检索、全文检索、RRF 融合。
-  - 不调 LLM;query_en/semantic_en 由上层(query.py 的 LLM 规划)给好的英文主题词。
+  - 本模块全是确定性活:结构化槽位拼装(参数化)、向量检索、全文检索、RRF 融合。
+  - 不调 LLM;filters 槽位由 planner 校验后给来,query_en/semantic_en 是给好的英文主题词。
 
 公开函数:
-  - guard_where(where) -> str
+  - build_where(filters) -> (sql, params)  # 校验后的槽位 -> 参数化 WHERE 片段(注入安全是结构性的)
   - ensure_fts_index(conn) -> None  # 启动时一次性建 FTS 索引,读路径不再建
-  - filter_search(conn, where) -> list[dict]
+  - filter_search(conn, filters, order_by='code', coord_units=None, exclude_title=None) -> list[dict]
   - semantic_search(conn, query_en, k=8, min_sim=SEMANTIC_MIN_SIM=0.50) -> list[dict]
   - keyword_search(conn, query_en, k=20) -> list[dict]
-  - hybrid_search(conn, where, semantic_en, k=8) -> list[dict]
+  - hybrid_search(conn, filters, semantic_en, k=8) -> list[dict]
   - course_detail(conn, code) -> dict | None  # 单门课完整详情(介绍/先修/考核/开课)
 
 返回 dict 字段:code, title, semester, level, units, has_exam,语义/混合附带 sim。
@@ -47,60 +47,6 @@ RRF_K = 60  # RRF 常数,业界默认 60
 # 噪声多在 <0.50(AI 里的 Marketing 0.490/Law 0.499、纯虚构主题整组),0.50 是不误伤真命中、
 # 又能砍明确噪声的分界。残留的 0.50~0.55 off-topic 是 bi-encoder 固有局限,归 reranker(P1)。
 SEMANTIC_MIN_SIM = 0.50
-
-# where 白名单:只允许这些结构化列(文本主题列不在内,主题走 semantic)
-ALLOWED_COLS = (
-    "code", "semester", "year", "location", "attendance_mode",
-    "level", "units", "has_exam", "has_hurdle", "course_type", "midterm_status",
-    "group_status",
-)
-
-# 单个比较条件的合法形态:{白名单列} {运算符} {字面量}
-#   - 字面量:单引号字符串 / 数字 / true|false|null
-#   - IN:所有白名单列;字面量列表(无子查询),如 IN ('A','B') 或 IN (1,2)
-#   - NOT IN:仅 course_type(NOT NULL 列,无三值逻辑漏排风险);两种否定写法都收:
-#     `course_type NOT IN (...)` 与 `NOT course_type IN (...)`。可空列禁 NOT IN(会静默漏掉 NULL 行)。
-_COL = r"(?:" + "|".join(ALLOWED_COLS) + r")"
-_CMP = r"(?:=|!=|<>|<=|>=|<|>)"
-_LIT = r"(?:'[^']*'|-?\d+(?:\.\d+)?|true|false|null)"
-_IN_LIST = r"\(\s*" + _LIT + r"(?:\s*,\s*" + _LIT + r")*\s*\)"
-_COND = (
-    r"\s*(?:"
-    + r"not\s+course_type\s+in\s*" + _IN_LIST
-    + r"|course_type\s+not\s+in\s*" + _IN_LIST
-    + r"|" + _COL + r"\s*(?:" + _CMP + r"\s*" + _LIT + r"|in\s*" + _IN_LIST + r")"
-    + r")\s*"
-)
-# 整体:条件用 AND/OR 连接,禁止括号/函数/逗号/子查询/SELECT
-WHERE_WHITELIST = re.compile(
-    r"^" + _COND + r"(?:(?:and|or)" + _COND + r")*$", re.I
-)
-# 校验前再兜底拦一层危险词(字符串字面量已被剥离,不会误杀值里的 select)
-DANGEROUS = re.compile(r"(;|--|/\*|\bselect\b)", re.I)
-
-
-def guard_where(where: str) -> str:
-    """
-    SELECT-only 安全网(白名单结构)。
-    WHERE 只允许「{白名单列} {比较运算符} {字面量}」用 AND/OR 连接;
-    禁止 括号(IN 列表除外)、函数调用、逗号、子查询、SELECT。
-    任何不符合的整体 raise ValueError;通过则返回去空白后的原始 where。
-    """
-    if not where or not where.strip():
-        raise ValueError("where 不能为空")
-    w = where.strip()
-    # 先把单引号字符串字面量替成空串,避免值里含 select/and 等被白名单/危险词误判
-    stripped = re.sub(r"'[^']*'", "''", w)
-    # 剥离字面量后只该剩 ASCII(列名/运算符/数字/布尔)。非 ASCII(如 NBSP 等 unicode 空白)
-    # 会被 \s 放过却让 Postgres 报错 -> 在此拦掉,避免绕过白名单后 500。
-    if not stripped.isascii():
-        raise ValueError(f"where 含非 ASCII 字符,已拦截:{where!r}")
-    if DANGEROUS.search(stripped):
-        raise ValueError(f"where 含非法内容(分号/注释/SELECT),已拦截:{where!r}")
-    if not WHERE_WHITELIST.fullmatch(stripped):
-        raise ValueError(f"where 不符合白名单(仅允许 列 运算符 字面量 经 AND/OR 连接):{where!r}")
-    return w
-
 
 def _embed(text: str) -> str:
     """取 bge-m3 向量并转成 pgvector 字面量。"""
@@ -143,7 +89,7 @@ _ORDER_BY = {
 
 def _coord_clause(coord_units) -> tuple[str, list]:
     """学院/学科 -> coordinating_unit 限定:返回 (SQL 片段, 参数列表)。
-    coordinating_unit 是文本列(不进 guard_where 白名单),只走参数化 IN,值来自代码侧受控映射。"""
+    coordinating_unit 是文本列(不是 build_where 的结构化筛选列),只走参数化 IN,值来自代码侧受控映射。"""
     units = [u for u in (coord_units or []) if u]
     if not units:
         return "", []
@@ -151,7 +97,7 @@ def _coord_clause(coord_units) -> tuple[str, list]:
 
 
 def _title_exclude_clause(exclude_title) -> tuple[str, list]:
-    """课程性质标题排除 -> (SQL 片段, 参数列表)。title 是文本列(不进 guard_where 白名单),
+    """课程性质标题排除 -> (SQL 片段, 参数列表)。title 是文本列(不是 build_where 的结构化筛选列),
     只走参数化 NOT ILIKE,值来自 planner 受控词表(capstone/review/project…),注入安全。
     coalesce 避免 NULL 标题被 NOT ILIKE 静默排掉(NULL NOT ILIKE 结果为 NULL→不命中)。"""
     kws = [k for k in (exclude_title or []) if k]
@@ -161,14 +107,92 @@ def _title_exclude_clause(exclude_title) -> tuple[str, list]:
     return parts, [f"%{k}%" for k in kws]
 
 
-def filter_search(conn, where: str, order_by: str = "code", coord_units=None,
-                  exclude_title=None) -> list[dict]:
-    """纯结构化过滤:SELECT 固定列 FROM courses WHERE {guard(where)} [+coord +title] ORDER BY {白名单子句}。
+# filters 槽位 -> WHERE 片段的确定性拼装表(单一真相源:加一种结构化筛选 = 在此加一行)。
+# 列表顺序即 %s 在片段里的出现顺序;列名来自代码侧闭集,值全进 params——没有自由字符串进 SQL,
+# 注入安全是结构性的(取代旧 guard_where 的串净化)。
+_WHERE_BUILDERS = (
+    ("has_exam",        "has_exam = %s"),
+    ("has_hurdle",      "has_hurdle = %s"),
+    ("midterm_status",  "midterm_status = %s"),
+    ("group_status",    "group_status = %s"),
+    ("level",           "level = %s"),
+    ("units",           "units = %s"),
+    ("location",        "location = %s"),
+    ("attendance_mode", "attendance_mode = %s"),
+    ("semester",        "semester = %s"),
+)
 
+
+def build_where(filters: dict | None) -> tuple[str, list]:
+    """校验后的 filters 槽位 -> 参数化 (where_sql, params)。
+
+    只拼代码侧闭集里的列名,值全进 params(psycopg %s);没有自由字符串进 SQL,
+    注入安全是结构性的(取代旧 guard_where 的串净化)。空 filters 返回 ("", [])——
+    纯函数不抛;是否容忍空 WHERE 由调用方决定(filter_search 抛、both_semesters 容忍)。
+    course_type_only/exclude 用 = ANY / <> ALL 数组参数,等价旧的 IN / NOT IN
+    (course_type 是 NOT NULL 列,<> ALL 无三值逻辑漏排)。"""
+    f = filters or {}
+    clauses: list[str] = []
+    params: list = []
+    for key, tmpl in _WHERE_BUILDERS:
+        v = f.get(key)
+        if v is None:
+            continue
+        clauses.append(tmpl)
+        params.append(v)
+    only = f.get("course_type_only")
+    if only:
+        clauses.append("course_type = ANY(%s)")
+        params.append(list(only))
+    exclude = f.get("course_type_exclude")
+    if exclude:
+        clauses.append("course_type <> ALL(%s)")
+        params.append(list(exclude))
+    # code 首位数字 = 课程级别号(1xxx 入门本科…7/8/9 研究生)。code 文本列绝不做学科 LIKE,
+    # 但确定性抽出的首位数字是结构化筛选:取 code 里第一个数字字符(POSIX 子串,等价 _first_digit),
+    # 值(数字列表)进 params,注入安全。
+    levels = f.get("code_level")
+    if levels:
+        clauses.append("substring(code from '[0-9]') = ANY(%s)")
+        params.append(list(levels))
+    return " AND ".join(clauses), params
+
+
+def describe_where(filters: dict | None) -> str:
+    """build_where 的可读对偶:filters 槽位 -> 人读 WHERE 描述串(仅供 meta 展示 / 前端
+    program_facts.filter 字段 / route_eval 断言,绝不进 SQL)。course_type_exclude/only 渲染成
+    NOT IN / IN;bool 渲染 true/false;字符串加引号。"""
+    if not filters:
+        return ""
+    parts: list[str] = []
+    for k, v in filters.items():
+        if k == "course_type_exclude":
+            parts.append("course_type NOT IN (" + ",".join(f"'{t}'" for t in v) + ")")
+        elif k == "course_type_only":
+            parts.append("course_type IN (" + ",".join(f"'{t}'" for t in v) + ")")
+        elif k == "code_level":
+            parts.append("code首位∈{" + ",".join(map(str, v)) + "}")
+        elif isinstance(v, bool):
+            parts.append(f"{k}={'true' if v else 'false'}")
+        elif isinstance(v, str):
+            parts.append(f"{k}='{v}'")
+        else:
+            parts.append(f"{k}={v}")
+    return " AND ".join(parts)
+
+
+def filter_search(conn, filters: dict, order_by: str = "code", coord_units=None,
+                  exclude_title=None) -> list[dict]:
+    """纯结构化过滤:SELECT 固定列 FROM courses WHERE {build_where(filters)} [+coord +title] ORDER BY {白名单子句}。
+
+    filters 经 build_where 拼成参数化片段。空 filters -> raise ValueError:空 WHERE 会退化成全表扫,
+    把全库当「符合条件」返回(踩 student-facing 红线 5);上游 qa 接 ValueError 优雅降级 empty。
     order_by 走 _ORDER_BY 白名单(默认 code);非法键回退 code。
     coord_units 追加参数化 coordinating_unit IN (...);exclude_title 追加参数化 title NOT ILIKE。
     去重与排序无关(seen_codes 集)。"""
-    where = guard_where(where)
+    where, where_params = build_where(filters)
+    if not where:
+        raise ValueError("filters 不能为空(空 WHERE 会全表扫,踩红线)")
     order_clause = _ORDER_BY.get(order_by, _ORDER_BY["code"])
     coord_sql, coord_params = _coord_clause(coord_units)
     title_sql, title_params = _title_exclude_clause(exclude_title)
@@ -176,7 +200,7 @@ def filter_search(conn, where: str, order_by: str = "code", coord_units=None,
     sql = f"SELECT {SELECT_COLS} FROM courses WHERE {full_where} ORDER BY {order_clause}"
     out: list[dict] = []
     seen_codes: set = set()         # 同课跨学期多 offering 按课去重(seen_codes 集,与排序无关)
-    for r in conn.execute(sql, coord_params + title_params).fetchall():
+    for r in conn.execute(sql, where_params + coord_params + title_params).fetchall():
         d = _row_to_dict(r)
         if d["code"] in seen_codes:
             continue
@@ -185,22 +209,24 @@ def filter_search(conn, where: str, order_by: str = "code", coord_units=None,
     return out
 
 
-def filter_search_both_semesters(conn, where: str | None = None, coord_units=None,
+def filter_search_both_semesters(conn, filters: dict | None = None, coord_units=None,
                                  exclude_title=None) -> list[dict]:
-    """「S1 和 S2 都满足」:同一课码在 S1、S2 各有一个满足 where 的 offering 才算命中。
+    """「S1 和 S2 都满足」:同一课码在 S1、S2 各有一个满足 filters 的 offering 才算命中。
 
     「都」是跨学期合取,扁平 WHERE 的 semester IN ('S1','S2') 只能表达并集(任一学期满足),
     数量会虚高;此路径用 GROUP BY code HAVING count(DISTINCT semester)=2 取真合取。
-    where 为附加结构化条件(不含 semester,本函数固定补 IN('S1','S2'));可为空(只问两学期都开)。
-    coord_units / exclude_title 同 filter_search 走参数化追加。
-    semester 限定与子查询为代码侧受控构造,where 仍过 guard_where 安全网。"""
-    cond = (guard_where(where) + " AND ") if (where and where.strip()) else ""
+    filters 为附加结构化条件(不含 semester,本函数固定补 IN('S1','S2'));可为空(只问两学期都开)——
+    故 build_where 返回空片段时不抛(永不真全表扫,semester IN 已限定范围),与 filter_search 不同。
+    coord_units / exclude_title 同 filter_search 走参数化追加。"""
+    where, where_params = build_where(filters)
+    cond = (where + " AND ") if where else ""
     coord_sql, coord_params = _coord_clause(coord_units)
     title_sql, title_params = _title_exclude_clause(exclude_title)
     base = (cond + "semester IN ('S1','S2')"
             + (f" AND {coord_sql}" if coord_sql else "")
             + (f" AND {title_sql}" if title_sql else ""))
-    base_params = coord_params + title_params       # base 在外层与子查询各出现一次
+    # base 在外层 WHERE 与子查询各出现一次;其 %s 顺序为 where -> coord -> title(semester IN 是字面量)。
+    base_params = where_params + coord_params + title_params
     sql = (
         f"SELECT {SELECT_COLS} FROM courses WHERE {base} "
         f"AND code IN (SELECT code FROM courses WHERE {base} "
@@ -229,7 +255,7 @@ def semantic_search(conn, query_en: str, k: int = 8, min_sim: float = SEMANTIC_M
     """
     if not query_en or not query_en.strip():
         raise ValueError("query_en 不能为空")
-    return _fused_search(conn, where=None, query_en=query_en, k=k, min_sim=min_sim,
+    return _fused_search(conn, filters=None, query_en=query_en, k=k, min_sim=min_sim,
                          coord_units=coord_units)
 
 
@@ -247,27 +273,28 @@ def keyword_search(conn, query_en: str, k: int = 20) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
-def hybrid_search(conn, where: str | None, semantic_en: str, k: int = 8,
+def hybrid_search(conn, filters: dict | None, semantic_en: str, k: int = 8,
                   coord_units=None) -> list[dict]:
     """
-    结构化 where(可空,空=全表)过滤后,RRF 融合「向量排序」与「全文检索排序」,取前 k。
-    语义维度同样卡 SEMANTIC_MIN_SIM:结构化 where(如 has_exam=false)不收窄主题,
+    结构化 filters(可空,空=不按结构化收窄,只主题召回)过滤后,RRF 融合「向量排序」与「全文检索排序」,取前 k。
+    语义维度同样卡 SEMANTIC_MIN_SIM:结构化 filters(如 has_exam=false)不收窄主题,
     若不卡下限,topical 召回的尾部会混入 off-topic 课(如 AI 查询混入 Marketing/心理课)。
     coord_units 非空时把候选限定在指定 coordinating_unit(学科→学院,排除跨学院噪声)。
     """
     if not semantic_en or not semantic_en.strip():
         raise ValueError("semantic_en 不能为空")
-    return _fused_search(conn, where=where, query_en=semantic_en, k=k, min_sim=SEMANTIC_MIN_SIM,
+    return _fused_search(conn, filters=filters, query_en=semantic_en, k=k, min_sim=SEMANTIC_MIN_SIM,
                          coord_units=coord_units)
 
 
-def _fused_search(conn, where, query_en, k, min_sim, coord_units=None) -> list[dict]:
+def _fused_search(conn, filters, query_en, k, min_sim, coord_units=None) -> list[dict]:
     """
-    RRF 融合核心:在同一个候选集合(可被 where + coord_units 过滤)上分别取向量排序和
+    RRF 融合核心:在同一个候选集合(可被 filters + coord_units 过滤)上分别取向量排序和
     全文排序,用 score=Σ 1/(RRF_K+rank) 融合,返回带 sim 的 top-k。
-    coordinating_unit 走参数化 IN(文本列不进 guard_where),与 where 合并成 filt。
+    filters 经 build_where 拼成参数化片段(可空=不按结构化收窄),coordinating_unit 走参数化 IN,
+    合并成 filt。穿参铁律:where_params 在 filt 里位于 coord_params 之前,且 vec 的 %s 在 filt 之前。
     """
-    where = guard_where(where) if where and where.strip() else None
+    where, where_params = build_where(filters)
     coord_sql, coord_params = _coord_clause(coord_units)
     conds = [c for c in (where, coord_sql) if c]
     filt = ("WHERE " + " AND ".join(conds)) if conds else ""
@@ -275,13 +302,14 @@ def _fused_search(conn, where, query_en, k, min_sim, coord_units=None) -> list[d
     vec = _embed(query_en)
     pool = k * 3  # 每路候选量,取大些保证融合后还够 k 个
 
-    # 向量路:offering_id -> (rank, sim);参数顺序须与 SQL 内 %s 文本出现顺序一致
+    # 向量路:offering_id -> (rank, sim);参数顺序须与 SQL 内 %s 文本出现顺序严格一致:
+    # SELECT 的 vec -> filt 里 where_params 再 coord_params -> ORDER BY 的 vec -> LIMIT。
     vec_sql = (
         f"SELECT offering_id, {SELECT_COLS}, 1-(embedding<=>%s::vector) AS sim "
         f"FROM courses {filt} "
         f"ORDER BY embedding<=>%s::vector LIMIT %s"
     )
-    vec_rows = conn.execute(vec_sql, (vec, *coord_params, vec, pool)).fetchall()
+    vec_rows = conn.execute(vec_sql, (vec, *where_params, *coord_params, vec, pool)).fetchall()
 
     # 全文路:offering_id -> rank(命中即入,没命中不入)
     kw_filt = filt + (" AND " if filt else "WHERE ") + \
@@ -291,7 +319,7 @@ def _fused_search(conn, where, query_en, k, min_sim, coord_units=None) -> list[d
         f"ORDER BY ts_rank({TSV_EXPR}, websearch_to_tsquery('english', %s)) DESC, code "
         f"LIMIT %s"
     )
-    kw_rows = conn.execute(kw_sql, (*coord_params, query_en, query_en, pool)).fetchall()
+    kw_rows = conn.execute(kw_sql, (*where_params, *coord_params, query_en, query_en, pool)).fetchall()
 
     # 缓存行数据 + sim(用向量路那份,行内已带 sim);vec_oids 标记向量召回过的条目
     info: dict = {}
@@ -433,33 +461,17 @@ if __name__ == "__main__":
             print(f"  {d['code']}  {d['title']}  ({d['semester']}, {d['level']}, "
                   f"units={d['units']}, exam={d['has_exam']}){tail}")
 
-    # guard_where 白名单验证:必须拒的 + 必须放行的
-    must_reject = [
-        "", "pg_sleep(0.4) IS NULL", "code IN (SELECT code FROM programs)",
-        "true", "1=1", "has_exam=false; drop table courses",
-        "title ilike '%ml%'", "1=1 -- x",
-        "requirement_type NOT IN ('thesis')",   # 非白名单列(原 bug)仍须拒
-    ]
-    must_pass = [
-        "has_exam=false",
-        "level='Postgraduate Coursework' AND units=2",
-        "location='St Lucia'",
-        "has_exam=false AND course_type NOT IN ('placement','thesis','research')",
-        "course_type='thesis'",
-    ]
-    print("== guard_where 白名单验证 ==")
-    for bad in must_reject:
-        try:
-            guard_where(bad)
-            print(f"  !! 未拦截(应拦):{bad!r}")
-        except ValueError:
-            print(f"  OK 已拦截 {bad!r}")
-    for good in must_pass:
-        try:
-            guard_where(good)
-            print(f"  OK 已放行 {good!r}")
-        except ValueError as e:
-            print(f"  !! 误杀(应放行):{good!r} -> {e}")
+    # build_where 拼装验证:槽位 -> 参数化 (sql, params),值全进 params(注入安全是结构性的)
+    print("== build_where 参数化验证 ==")
+    for f in [
+        {"has_exam": False},
+        {"level": "Postgraduate Coursework", "units": 2},
+        {"location": "St Lucia"},
+        {"has_exam": False, "course_type_exclude": ["placement", "thesis", "research"]},
+        {"course_type_only": ["thesis"]},
+        {},  # 空 -> ("", []),由调用方决定是否容忍
+    ]:
+        print(f"  {f}  ->  {build_where(f)}")
 
     # 启动时一次性建索引(写连接)
     with psycopg.connect(DSN) as conn:
@@ -469,7 +481,7 @@ if __name__ == "__main__":
     with psycopg.connect(DSN) as conn:
         conn.read_only = True
 
-        f_rows = filter_search(conn, "has_exam=false")
+        f_rows = filter_search(conn, {"has_exam": False})
         print(f"\n== filter has_exam=false 计数: {len(f_rows)} ==")
         show("filter has_exam=false 前3条", f_rows)
 
@@ -479,7 +491,7 @@ if __name__ == "__main__":
         k_rows = keyword_search(conn, "machine learning")
         show("keyword 'machine learning' top3", k_rows)
 
-        h_rows = hybrid_search(conn, "level='Postgraduate Coursework'", "data science")
+        h_rows = hybrid_search(conn, {"level": "Postgraduate Coursework"}, "data science")
         show("hybrid level=Postgraduate Coursework + 'data science' top3", h_rows, sim=True)
 
     print("\n自测完成。")

@@ -1,59 +1,56 @@
-"""WHERE 双层防护回归(纯函数,无 DB):planner._clean_where + retrieval.guard_where。
+"""WHERE 注入安全回归(纯函数,无 DB):槽位化后注入安全是「结构性」的。
 
-覆盖原始 bug(LLM 脑补 requirement_type + NOT IN 直接 500)与新增 course_type / NOT IN 能力,
-以及评审发现的边界:NOT IN 仅限 course_type、两种否定写法、非 ASCII 绕过、IS 两层一致。
+旧 guard_where/_clean_where 靠扫描自由 WHERE 串拦注入;现在 LLM 只填类型化槽位,
+WHERE 由 build_where 拼装——列名来自代码侧闭集,值全进 params(psycopg %s),
+没有自由字符串进 SQL,无 SQL 文本可净化。本文件锁住这条安全不变量(替代旧双层防护):
+  - 恶意/任意值只会落到 params,绝不出现在 SQL 文本里;
+  - LLM 脑补的列名(requirement_type / 自由 SQL 残留)被 _validate_filters 确定性丢弃。
+槽位形状的正确性见 test_planner_slots.py;此处只校验安全属性。
 """
-import pytest
+from app.services import planner
+from app.services.retrieval import build_where
+from app.services.planner import _validate_filters
 
-from app.services.planner import _clean_where
-from app.services.retrieval import guard_where
-
-# 触发原始报错的 where:非白名单列 + NOT IN
-BUGGY = "has_exam=false AND requirement_type NOT IN ('placement', 'thesis', 'research')"
-# 修复后 planner 应产出的合法 where
-FIXED = "has_exam=false AND course_type NOT IN ('placement','thesis','research')"
-# NBSP 夹在 token 之间:\s 会放过,但剥离字面量后非 ASCII 必须被拦
-NBSP_WHERE = "has_exam=false AND course_type='thesis'"
+INJECTION = "St Lucia'; DROP TABLE courses; --"
 
 
-def test_clean_where_clears_hallucinated_column():
-    # _clean_where 必须确定性清空(整段),不放行给下游 guard
-    assert _clean_where(BUGGY) == ""
-    assert _clean_where("requirement_type='core'") == ""
-    assert _clean_where("foo IS NOT NULL") == ""
-    # IS guard 不支持,_clean_where 同步清掉(两层语法一致)
-    assert _clean_where("course_type IS NULL") == ""
+def test_malicious_value_stays_in_params_never_in_sql():
+    # 注入字符串作为 location 值:只能进 params,SQL 文本里只有占位符 %s
+    sql, params = build_where({"location": INJECTION})
+    assert sql == "location = %s"
+    assert params == [INJECTION]
+    assert INJECTION not in sql and ";" not in sql and "DROP" not in sql.upper()
 
 
-def test_clean_where_keeps_valid_where():
-    assert _clean_where(FIXED) == FIXED
-    assert _clean_where("has_exam=false") == "has_exam=false"
-    assert _clean_where("course_type='thesis'") == "course_type='thesis'"
+def test_course_type_list_value_parameterized():
+    # 列表值(NOT IN / IN)同样参数化:值进 params,SQL 只有 %s 数组占位
+    sql, params = build_where({"course_type_exclude": ["thesis'; DROP", "research"]})
+    assert sql == "course_type <> ALL(%s)"
+    assert params == [["thesis'; DROP", "research"]]
+    assert "DROP" not in sql.upper()
 
 
-def test_guard_where_rejects_buggy_and_injection():
-    for bad in [
-        BUGGY,
-        "requirement_type NOT IN ('thesis')",
-        "code IN (SELECT code FROM programs)",
-        "course_type NOT IN (select 1)",
-        "has_exam=false; drop table courses",
-        # NOT IN 仅对 course_type 开放:可空列禁用(否则静默漏掉 NULL 行)
-        "location NOT IN ('Gatton')",
-        "NOT location IN ('Gatton')",
-        NBSP_WHERE,
-    ]:
-        with pytest.raises(ValueError):
-            guard_where(bad)
+def test_validate_drops_hallucinated_columns():
+    # LLM 脑补的列 / 自由 SQL 残留键一律丢弃,绝不进 build_where(取代 _clean_where 的整段清空)
+    assert _validate_filters(
+        {"requirement_type": "core", "title": "%ml%",
+         "has_exam=false; drop table courses": 1}) == {}
+    # 合法槽位保留、脑补键剔除(混入场景)
+    assert _validate_filters({"has_exam": False, "requirement_type": "thesis"}) == \
+        {"has_exam": False}
 
 
-def test_guard_where_allows_course_type_in_and_not_in():
-    for good in [
-        FIXED,
-        "course_type='thesis'",
-        "course_type IN ('research','thesis')",
-        "course_type NOT IN ('placement')",
-        "NOT course_type IN ('placement','thesis')",
-        "has_exam=false AND NOT course_type IN ('placement')",
-    ]:
-        assert guard_where(good) == good
+def test_validate_rejects_out_of_enum_level(monkeypatch):
+    # level 按真实枚举校验,LLM 编的不存在层级值被丢弃(不会拼进 SQL)
+    monkeypatch.setitem(planner._ENUM_CACHE, "level",
+                        {"undergraduate", "postgraduate coursework"})
+    assert _validate_filters({"level": "Master"}) == {}
+    assert _validate_filters({"level": "Postgraduate Coursework"}) == \
+        {"level": "Postgraduate Coursework"}
+
+
+def test_build_where_only_emits_closed_set_columns():
+    # 即便校验后的 dict 里塞进未知键(防御性),build_where 也只认 _WHERE_BUILDERS / course_type_*,
+    # 未知键不产生任何 SQL 片段(列名闭集,结构性安全)
+    sql, params = build_where({"has_exam": False, "evil_col": "x", "drop": 1})
+    assert sql == "has_exam = %s" and params == [False]
