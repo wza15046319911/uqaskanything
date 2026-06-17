@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars and fill in (terraform.tfvars is gitignored, do not commit).
+region            = "us-east-1"
+deepinfra_api_key = "your DeepInfra key"
+alert_email       = "you@example.com" # budget alerts + kill-switch notifications (confirm the SNS email)
+db_ingress_cidrs  = ["0.0.0.0/0"] # security tradeoff: see README; use the VPC variant for a private DB
+
+# optional:
+# bedrock_model           = "openai.gpt-oss-20b-1:0"  # cheaper
+# project                 = "uq-course-qa"
+# budget_limit            = 30   # monthly USD budget alert threshold
+# kill_switch_invocations = 200  # proxy invocations / 5-min that trip the kill switch
