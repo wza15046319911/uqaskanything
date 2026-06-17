@@ -23,17 +23,19 @@ from pathlib import Path
 import psycopg
 
 from app.core.config import DSN, DATA_DIR
-from app.services import planner
+from app.services import planner, retrieval
 
 
 def _route_of(question: str, schema: str, conn) -> tuple[str, str, str, bool]:
-    """跑 planner.plan,返回 (mode, direction, where, 是否给了 semantic);
-    plan 抛 ValueError(无法形成检索条件)记为 mode='empty'。"""
+    """跑 planner.plan,返回 (mode, direction, where 描述, 是否给了 semantic);
+    plan 抛 ValueError(无法形成检索条件)记为 mode='empty'。
+    where 描述由 retrieval.describe_where 从 filters 槽位渲染(build_where 的可读对偶),
+    使 where_has/where_equals 的列名/值断言对槽位化后的计划仍逐字成立。"""
     try:
         p = planner.plan(question, schema_doc=schema, conn=conn)
     except ValueError:
         return ("empty", "", "", False)
-    return (p["mode"], p.get("direction", ""), p.get("where", ""),
+    return (p["mode"], p.get("direction", ""), retrieval.describe_where(p.get("filters")),
             bool(p.get("semantic_query")))
 
 

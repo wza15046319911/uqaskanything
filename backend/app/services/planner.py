@@ -4,13 +4,14 @@ planner.py — 阶段五:自然语言 -> 查询计划(Query Plan)
 (默认本地 Ollama qwen2.5-coder,可切 DeepSeek)。
 
 分工(确定性决策用代码,语言任务交模型):
-  - LLM 只做语言活:判 mode、写 WHERE、给英文 semantic_query、抽 course_code/program_name/direction
-  - 代码做确定性活:schema 实时注入、JSON 解析、WHERE 合法性拦截、缺失字段纠偏兜底
+  - LLM 只做语言活:判 mode、填结构化 filters 槽位、给英文 semantic_query、抽 course_code/program_name/direction
+  - 代码做确定性活:schema 实时注入、JSON 解析、filters 逐键枚举/类型校验、缺失字段纠偏兜底
+    (WHERE 由 retrieval.build_where 从校验后的槽位参数化拼装,LLM 绝不写 SQL)
 
 公开接口:
   - build_schema_doc(conn) -> str
   - plan(question, schema_doc=None, conn=None) -> dict
-    返回 {mode, where, semantic_query, course_code, program_name, direction}
+    返回 {mode, filters, semantic_query, course_code, program_name, direction}
     mode ∈ {filter, semantic, hybrid, program, kb, course_detail}
 
 后端开关:见 llm 模块。设了 DEEPSEEK_API_KEY(可写进 .env)就全程走 DeepSeek,否则本地 Ollama。
@@ -25,6 +26,7 @@ import json
 import argparse
 
 import psycopg
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator, model_validator
 
 from app.services import llm
 
@@ -151,18 +153,6 @@ _FACULTY_KW = [
 
 MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail")
 
-# WHERE 只允许这些结构化枚举/数值列;文本列(title/code/description...)严禁出现
-ALLOWED_WHERE_COLS = {"semester", "year", "location", "attendance_mode",
-                      "level", "units", "has_exam", "has_hurdle", "course_type",
-                      "midterm_status", "group_status"}
-# 剥离字面量后,where 里允许出现的字母标识符:白名单列 + 逻辑/比较词 + 布尔空值。
-# 出现别的(如 LLM 脑补的 requirement_type)即判非法整段清空。
-# 不含 is:guard_where 不支持 IS (NOT) NULL,这里同步清掉,两层语法保持一致。
-ALLOWED_WHERE_IDENTS = ALLOWED_WHERE_COLS | {
-    "and", "or", "not", "in", "true", "false", "null"}
-TEXT_COLS = re.compile(r"\b(title|code|description|search_blob|learning_outcomes|topics|coordinator|coordinating_unit)\b", re.I)
-LIKE_RE = re.compile(r"\b(like|ilike|similar\s+to)\b", re.I)
-BANNED = re.compile(r"(;|--|/\*|\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|select)\b)", re.I)
 # 课程码:4 字母+4 数字。中文紧贴时 ASCII \b 不成立,改用环视边界;
 # 末尾禁字母/数字,避免把 CSSE10012(5 位数字)误判成 CSSE1001。
 COURSE_CODE_RE = re.compile(r"(?<![A-Za-z])([A-Za-z]{4}\d{4})(?![A-Za-z0-9])")
@@ -189,73 +179,159 @@ TOPIC_HINT = re.compile(
 PROMPT = """你是 UQ 课程库查询规划器。把用户问题转成 JSON 查询计划,只输出 JSON,不要解释。
 {schema}
 
-mode 一共 5 种:
-- "filter":只有结构化条件(学期/有无考试/hurdle/本研/学分/校区等),没有模糊主题。给 where,semantic_query 留空。
-- "semantic":只有模糊主题/学科(如"跟机器学习相关"),没有结构化条件。给英文 semantic_query,where 留空。
-- "hybrid":既有结构化条件又有模糊主题/学科。where 和 semantic_query 都给。
-- "program":问"课程 <-> 专业"的关系。识别两种方向:
-    · direction="course_to_programs":问"某门课(给了课程码,如 CSSE1001)是哪些专业的必修/选修"。填 course_code。
-    · direction="program_to_courses":问"某个专业(如 Bachelor of Computer Science)要修哪些课"。填 program_name。
-- "kb":问的是学校事务/政策/日期/服务,而不是具体课程或专业。例如:开学/census/缴费/退课截止等日期、
-  重置密码、申请缓考、假期开放时间、停车收费、遭遇骚扰或霸凌求助、开具在读证明等。
-  其它字段留空,但 **kb 模式要额外给 kb_query**:把问题翻成一句精准的英文 KB 查询(UQ 官方页面是英文),
-  用官方术语(如缓考=deferred exam、在读证明=enrolment verification letter、退课=withdraw/drop)。其它 mode 的 kb_query 留空。
-  **只要问题里出现课程码(如 CSSE1001)或学位名(Bachelor of…/学士/硕士),就不是 kb。**
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【第一步:判 mode(6 选 1)】
+判定顺序:先看有没有课程码/学位名(→ program 或 course_detail),再看是不是学校事务(→ kb),
+最后才在课程检索三类(filter/semantic/hybrid)里分。
 
-【关键规则】
-- 学科/专业方向/主题(计算机/人工智能/金融/网络安全/心理学…)一律走 semantic_query,**用英文**表达;
-  **绝不能**用 title/code/description 做 LIKE 匹配(课名是英文、学科横跨多个课程码)。
-- 缩写也算学科,必须翻成英文放进 semantic_query,**绝不能因为不认识就丢弃**:
-  CS=computer science、AI=artificial intelligence、ML=machine learning、IT=information technology、EE=electrical engineering。
-- where 只能用这些列:semester, year, location, attendance_mode, level, units, has_exam, has_hurdle, course_type, midterm_status, group_status。
-  字符串用单引号,布尔写 true/false(不加引号),不写分号/SELECT/LIKE,绝不碰 title/code/description 等文本列。
-- 期中考试(midterm / 期中 / in-semester exam)用 midterm_status 列,取值 'has'/'none'/'unknown':
-  「有期中」-> midterm_status='has';「没有期中/不含期中」-> midterm_status='none';**绝不能**用 has_exam 表达期中
-  (has_exam 只区分有无任何考试,不分期中期末)。问期末考试无专用列,仍只能用 has_exam。
-- 课程类型(实习/论文/研究 vs 普通授课课)用 course_type 列(取值 coursework/placement/research/thesis),
-  **绝不能**自己编 requirement_type 之类不存在的列。「不含/排除某些类型」用 NOT IN,「只要某类型」用 = 或 IN。
-- 小组/团队评估(group project / groupwork / group assessment / 小组作业 / 团队评估)用 group_status 列,
-  取值 'has'/'none'/'unknown':「没有 group / 不含小组作业」-> group_status='none';「有 group 作业」-> group_status='has'。
-- level 只有两个合法值:'Undergraduate' 与 'Postgraduate Coursework'。bachelor/学士/本科 -> 'Undergraduate';
-  master/硕士/研究生 -> 'Postgraduate Coursework'。**绝不能**写 level='Master' 这种不存在的值。
-- **绝不替换用户没说的值**:只能把用户原话里出现的校区/学期/层级照搬进 where。
-  若用户要的 location/semester/level 不在 schema 所列枚举内(例如用户问 Gatton 但枚举只有 St Lucia),
-  就**原样用用户的字面值**(如 location='Gatton'),让结果正确为空;**绝不能**擅自换成枚举里已知的值(如 St Lucia)。
-- 课程码形如 4 个字母+4 个数字(CSSE1001)。问题里出现课程码且在问"哪些专业",就是 program/course_to_programs。
-- 学院/学科归属(如「EECS学院」「商学院」「计算机学院的课」)用 coord_unit 字段:**只能从 schema 的
-  coordinating_unit 清单里挑一个最匹配的、逐字原样照抄**(绝不改写/补全/缩写/翻译;清单里没有就留空)。
-  学院是**范围限定**不是主题:用户只点名学院 + 结构化条件(有无考试/学分/年级…)而没有别的主题时,
-  semantic_query **留空**、mode 用 filter(返回该学院全部符合条件的课);只有还含真正主题(如机器学习)
-  时才同时给 semantic_query 走 hybrid。没点名学院的问题 coord_unit 留空。
-- 严格输出这个结构(用不到的字段给空字符串;kb_query 仅 kb 模式填英文,其它留空):
-  {{"mode":"...","where":"...","semantic_query":"...","course_code":"...","program_name":"...","direction":"...","kb_query":"...","coord_unit":"..."}}
+- "course_detail":问题里出现一个课程码(如 CSSE1001),且问的是**这门课本身**
+  (介绍/先修/考核/学分/什么时候开)。填 course_code,其它全空。
+- "program":问的是**课程 ↔ 专业的关系**,三种 direction:
+    · "course_to_programs":课程码 +「是哪些专业的必修/选修」。填 course_code。
+    · "program_to_courses":学位名(Bachelor of…/Master of…/学士/硕士)+「要修哪些课/培养方案」。填 program_name。
+    · "permit":课程码 + 学位名 +「能不能修/可不可以修/禁不禁修」。填 course_code + program_name。
+- "kb":学校事务/政策/日期/服务,**与具体课程或专业无关**。例如开学/census/缴费/退课截止日期、
+  重置密码、申请缓考、假期开放时间、停车收费、求助、开在读证明。填 kb_query(英文官方术语,
+  如缓考=deferred exam、在读证明=enrolment verification letter、退课=withdraw/drop)。
+  **铁律:只要出现课程码或学位名,就绝不是 kb。**
+- 其余都是「在课程库里筛课」,按有没有「模糊主题」分三类:
+    · "filter":只有结构化条件(学期/有无考试/hurdle/本研/学分/校区/学院…),**没有**模糊主题。
+       filters 填值,semantic_query 留空。
+    · "semantic":只有模糊主题/学科(机器学习/网络安全…),**没有**结构化条件。
+       semantic_query 填英文,filters 全留默认。
+    · "hybrid":既有结构化条件,又有模糊主题。filters 和 semantic_query 都填。
 
-例子:
-- "没有考试的课" -> {{"mode":"filter","where":"has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "没有考试的研究生课" -> {{"mode":"filter","where":"level='Postgraduate Coursework' AND has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "没考试的、不含placement/thesis/research类型的课" -> {{"mode":"filter","where":"has_exam=false AND course_type NOT IN ('placement','thesis','research')","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "Master没考试的课" -> {{"mode":"filter","where":"level='Postgraduate Coursework' AND has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "哪些课没有期中考试" -> {{"mode":"filter","where":"midterm_status='none'","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "有期中考试的课" -> {{"mode":"filter","where":"midterm_status='has'","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "没有小组作业的课" -> {{"mode":"filter","where":"group_status='none'","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "没有 group project 的研究生课" -> {{"mode":"filter","where":"level='Postgraduate Coursework' AND group_status='none'","semantic_query":"","course_code":"","program_name":"","direction":""}}
-- "CS有哪些课没有 groupwork" -> {{"mode":"hybrid","where":"group_status='none'","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
-- "CS有哪些课有期中考试" -> {{"mode":"hybrid","where":"midterm_status='has'","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
-- "找跟机器学习相关的课" -> {{"mode":"semantic","where":"","semantic_query":"machine learning","course_code":"","program_name":"","direction":""}}
-- "跟机器学习相关的课" -> {{"mode":"semantic","where":"","semantic_query":"machine learning","course_code":"","program_name":"","direction":""}}
-- "CS有哪些课程没有考试" -> {{"mode":"hybrid","where":"has_exam=false","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
-- "计算机相关、没有hurdle的研究生课" -> {{"mode":"hybrid","where":"level='Postgraduate Coursework' AND has_hurdle=false","semantic_query":"computer science","course_code":"","program_name":"","direction":""}}
-- "EECS学院下所有没考试的课" -> {{"mode":"filter","where":"has_exam=false","semantic_query":"","course_code":"","program_name":"","direction":"","coord_unit":"Elec Engineering & Comp Science School"}}
-- "商学院里有期中考试的课" -> {{"mode":"filter","where":"midterm_status='has'","semantic_query":"","course_code":"","program_name":"","direction":"","coord_unit":"Business School"}}
-- "EECS学院里跟机器学习相关的课" -> {{"mode":"hybrid","where":"","semantic_query":"machine learning","course_code":"","program_name":"","direction":"","coord_unit":"Elec Engineering & Comp Science School"}}
-- "CSSE1001是哪些专业的必修" -> {{"mode":"program","where":"","semantic_query":"","course_code":"CSSE1001","program_name":"","direction":"course_to_programs"}}
-- "Bachelor of Computer Science 要修哪些课" -> {{"mode":"program","where":"","semantic_query":"","course_code":"","program_name":"Bachelor of Computer Science","direction":"program_to_courses"}}
-- "census date 是什么时候" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"When is the census date"}}
-- "怎么重置 UQ 密码" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"How to reset my UQ password"}}
-- "怎么申请缓考" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"How to apply for a deferred exam"}}
-- "怎么开在读证明" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"How to get an enrolment verification letter"}}
-- "圣诞假期图书馆开放吗" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"Are the libraries open during the Christmas holidays"}}
-- "St Lucia 校区停车怎么收费" -> {{"mode":"kb","where":"","semantic_query":"","course_code":"","program_name":"","direction":"","kb_query":"St Lucia campus parking fees"}}
+「模糊主题」= 学科方向/研究领域(计算机/人工智能/金融/心理学…),无法用某个结构化列表达,
+只能靠语义召回。「学院归属」(EECS/商学院)**不是**主题(见下 coord_unit)。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【第二步:严格输出这个 JSON】不涉及的筛选维度给 null,列表给 []:
+{{
+  "mode": "filter|semantic|hybrid|program|kb|course_detail",
+  "semantic_query": "",
+  "filters": {{
+    "has_exam": null, "has_hurdle": null,
+    "midterm_status": null, "group_status": null,
+    "level": null, "units": null,
+    "location": null, "attendance_mode": null, "semester": null,
+    "course_type_exclude": [], "course_type_only": [],
+    "coord_unit": ""
+  }},
+  "course_code": "", "program_name": "", "direction": "", "kb_query": ""
+}}
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【第三步:逐个填槽 —— 你只填值,绝不写 SQL】
+
+# semantic_query(模糊主题)
+- 学科/方向/领域一律放这里,**必须英文**。绝不要把学科塞进 filters 或课程码。
+- 缩写一定翻成英文全称,**绝不因为不认识就丢掉**:CS=computer science、AI=artificial intelligence、
+  ML=machine learning、IT=information technology、EE=electrical engineering。
+- 没有模糊主题(纯条件筛选)时留空 ""。
+
+# has_exam / has_hurdle(布尔三态:true / false / null)
+- 「有考试」-> has_exam=true;「没有考试/无考试/不含考试」-> has_exam=false。
+- 「有 hurdle」-> has_hurdle=true;「没有 hurdle」-> has_hurdle=false。
+- **否定优先**:句子里同时像「有」又像「没有」时,以否定为准(「没有期末考试」整体是「无考试」,
+  填 has_exam=false,绝不要因为看到「考试」就填 true)。
+- 没提到就保持 null。
+
+# midterm_status(期中考试,'has' / 'none' / null)
+- 「有期中/含期中/有 in-semester exam」-> 'has';「没有期中/不含期中」-> 'none'。
+- **期中和「考试」是两件事**:期中只用 midterm_status,**绝不能用 has_exam 表达期中**。
+  问「期末考试」没有专用列,只能用 has_exam(期末 ≈ 有考试)。
+
+# group_status(小组/团队评估,'has' / 'none' / null)
+- 关键词:小组作业/团队作业/group project/groupwork/group assessment/group/team。
+- 「有小组作业」-> 'has';「没有小组作业/不含 group」-> 'none'(同样否定优先)。
+
+# level(只有两个合法值,别无第三)
+- 本科/本科生/bachelor/undergraduate -> "Undergraduate"。
+- 研究生/硕士/master/postgraduate -> "Postgraduate Coursework"。
+- **绝不能**写 "Master"/"PG"/"研究生" 这类不存在的值。
+- 「Master of Computer Science」是**学位名**(→ program/program_name),不是 level;
+  只有「研究生的课/master 的课」这种把 master 当层级用时,才填 level。
+
+# units(学分,数值)
+- 「2 学分/2 units」-> 2。没提到 null。
+
+# semester(学期,'S1' / 'S2' / null)
+- 第一学期/semester 1/S1 -> 'S1';第二学期/semester 2/S2 -> 'S2'。
+- 「两个学期都开/S1 和 S2 都…」这种**跨学期都满足**的全称量词,**semester 仍留 null**
+  (交给后端的 both-semesters 合取逻辑处理,你只要别填单个学期即可)。
+
+# course_type_exclude / course_type_only(课程类型,合法值 coursework/placement/research/thesis)
+- 「排除/不含/不要某些类型」-> 放进 course_type_exclude(如 ["thesis","research","placement"])。
+- 「只要某类型/仅 placement」-> 放进 course_type_only。
+- **两个列表二选一**,不要同时填。都没提到就都给 []。
+
+# location / attendance_mode(校区 / 授课模式)—— 红线,务必照抄
+- **照搬用户原话的字面值,绝不替换、绝不补全、绝不翻译成别的已知值**。
+- 即使用户说的值看起来不在常见枚举里(如 Gatton、Herston、Online、远程),也**原样填**。
+  是否在库里由后端判定;你擅自把 Gatton 换成 St Lucia 会把全错的结果当对的返回(严重事故)。
+- 没提到校区/模式就给 null。
+
+# coord_unit(开课学院,范围限定,不是主题)
+- 用户点名某学院(EECS学院/商学院/某学院的课)时,从上方注入的**真实学院清单**里
+  **逐字原样**挑一个最匹配的填进去(不改写/不缩写/不翻译);清单里找不到就留 ""。
+- 学院是**范围**不是主题:用户只点名学院 + 结构化条件、而**没有**真正学科主题时 ->
+  semantic_query 留空、mode=filter;既点名学院**又**有真主题(如「EECS 里跟机器学习相关的」)
+  -> 同时给 semantic_query,mode=hybrid。
+- 没点名学院就留 ""。计算机/CS/软件 等**学科词不要**当学院填(这类课跨多个学院挂靠),走 semantic_query。
+
+# 组合查询(专业 + 筛选)
+- 「Bachelor of X 里没有考试的课」这种**专业范围内再加结构化条件**:mode=program、
+  direction=program_to_courses、program_name 填学位名,**同时**把结构化条件填进 filters(如 has_exam=false)。
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【例子】(filters 中未写出的键一律保持默认 null / []，省略以保持简短)
+
+- "没有考试的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"has_exam":false}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "没有考试的研究生课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"has_exam":false,"level":"Postgraduate Coursework"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "Master 没考试的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"has_exam":false,"level":"Postgraduate Coursework"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "哪些课没有期中考试" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"midterm_status":"none"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "有期中考试的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"midterm_status":"has"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "没有小组作业的研究生课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"group_status":"none","level":"Postgraduate Coursework"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "没考试的、不含 placement/thesis/research 的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"has_exam":false,"course_type_exclude":["placement","thesis","research"]}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "St Lucia 校区 2 学分的本科课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"location":"St Lucia","units":2,"level":"Undergraduate"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "Gatton 校区的本科课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"location":"Gatton","level":"Undergraduate"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "线上的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"attendance_mode":"Online"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "EECS学院下所有没考试的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"has_exam":false,"coord_unit":"Elec Engineering & Comp Science School"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "商学院里有期中考试的课" ->
+  {{"mode":"filter","semantic_query":"","filters":{{"midterm_status":"has","coord_unit":"Business School"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "找跟机器学习相关的课" ->
+  {{"mode":"semantic","semantic_query":"machine learning","filters":{{}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "CS有哪些课没有考试" ->
+  {{"mode":"hybrid","semantic_query":"computer science","filters":{{"has_exam":false}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "计算机相关、没有 hurdle 的研究生课" ->
+  {{"mode":"hybrid","semantic_query":"computer science","filters":{{"has_hurdle":false,"level":"Postgraduate Coursework"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "EECS学院里跟机器学习相关的课" ->
+  {{"mode":"hybrid","semantic_query":"machine learning","filters":{{"coord_unit":"Elec Engineering & Comp Science School"}},"course_code":"","program_name":"","direction":"","kb_query":""}}
+- "CSSE1001 是哪些专业的必修" ->
+  {{"mode":"program","semantic_query":"","filters":{{}},"course_code":"CSSE1001","program_name":"","direction":"course_to_programs","kb_query":""}}
+- "Bachelor of Computer Science 要修哪些课" ->
+  {{"mode":"program","semantic_query":"","filters":{{}},"course_code":"","program_name":"Bachelor of Computer Science","direction":"program_to_courses","kb_query":""}}
+- "Bachelor of Computer Science 里没有考试的课" ->
+  {{"mode":"program","semantic_query":"","filters":{{"has_exam":false}},"course_code":"","program_name":"Bachelor of Computer Science","direction":"program_to_courses","kb_query":""}}
+- "Master of Data Science 能不能修 CSSE1001" ->
+  {{"mode":"program","semantic_query":"","filters":{{}},"course_code":"CSSE1001","program_name":"Master of Data Science","direction":"permit","kb_query":""}}
+- "CSSE1001 这门课讲什么 / 先修是什么" ->
+  {{"mode":"course_detail","semantic_query":"","filters":{{}},"course_code":"CSSE1001","program_name":"","direction":"","kb_query":""}}
+- "census date 是什么时候" ->
+  {{"mode":"kb","semantic_query":"","filters":{{}},"course_code":"","program_name":"","direction":"","kb_query":"When is the census date"}}
+- "怎么申请缓考" ->
+  {{"mode":"kb","semantic_query":"","filters":{{}},"course_code":"","program_name":"","direction":"","kb_query":"How to apply for a deferred exam"}}
 
 用户问题:{q}"""
 
@@ -307,23 +383,149 @@ def _call_llm(prompt: str) -> str:
 
 # ---------- 确定性校验 / 兜底 ----------
 
-def _clean_where(where: str) -> str:
-    """WHERE 合法性确定性拦截:非法(SELECT/分号/文本列/LIKE)一律清空,绝不放行。"""
-    if not where or not where.strip():
-        return ""
-    w = where.strip()
-    # 先剥离单引号字符串字面量(同 retrieval.guard_where),避免值里含 select/and
-    # 或像 location='Select Campus' 这种被 BANNED/白名单误杀整段。
-    stripped = re.sub(r"'[^']*'", "''", w)
-    if BANNED.search(stripped) or LIKE_RE.search(stripped) or TEXT_COLS.search(stripped):
-        return ""
-    # 列白名单:在「剥离字面量后」的串上取所有字母标识符,任何一个不在白名单标识符里
-    # (列/逻辑词/布尔空值)-> 判非法整段清空。逐 token 比锚定运算符更稳,
-    # 能拦住 LLM 脑补列 + NOT IN / IS 这类换了位置的写法。
-    for ident in re.findall(r"[a-zA-Z_]+", stripped):
-        if ident.lower() not in ALLOWED_WHERE_IDENTS:
-            return ""
-    return w
+# filters 槽位校验用的合法值闭集(确定性,_FiltersModel 的 validators 共用)。
+_TRISTATE_VALS = {"has", "none", "unknown"}
+_COURSE_TYPE_VALS = {"coursework", "placement", "research", "thesis"}
+_DIGITS = {"1", "2", "3", "4", "5", "6", "7", "8", "9"}
+
+
+def _as_number(val):
+    """数值槽位归一化:bool 不算数值;int/float 原样;数字字符串转 float(整数值收敛成 int);否则 None。"""
+    if isinstance(val, bool):
+        return None
+    if isinstance(val, (int, float)):
+        return val
+    if isinstance(val, str):
+        try:
+            f = float(val.strip())
+        except ValueError:
+            return None
+        return int(f) if f.is_integer() else f
+    return None
+
+
+class _FiltersModel(BaseModel):
+    """LLM 槽位的 pydantic v2 校验模型(单一真相源;加一种结构化筛选维度 = 加一个字段 + 一个 validator)。
+
+    每个字段都用 mode="before" validator 逐字段复刻确定性语义,绝不依赖 pydantic 默认 coerce:
+    布尔不接受 "false"/1;units 用 _as_number 不把 True/字符串硬转,且声明 int|float 避免 2 被吞成 2.0;
+    level 按真实 DB 枚举(_ENUM_CACHE)校验;location/attendance_mode 照搬用户原值、不校验枚举
+    (Gatton/Online 红线——非枚举是故意的,正确为空由 _enforce_enum_guard/_enforce_attendance_guard 裁定)。
+    单字段非法只丢该字段(validator 返回 None)、绝不抛;未知键由 model_validator 记日志后丢弃(规则19)。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    has_exam: bool | None = None
+    has_hurdle: bool | None = None
+    midterm_status: str | None = None
+    group_status: str | None = None
+    level: str | None = None
+    units: int | float | None = None
+    location: str | None = None
+    attendance_mode: str | None = None
+    semester: str | None = None
+    course_type_exclude: list | None = None
+    course_type_only: list | None = None
+    code_level: list | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _log_unknown(cls, data):
+        if isinstance(data, dict):
+            known = cls.model_fields.keys()
+            for k, v in data.items():
+                if k not in known and v not in (None, "", [], {}):
+                    print(f"[planner] 丢弃未知 filters 键:{k!r}={v!r}")
+        return data
+
+    @field_validator("has_exam", "has_hurdle", mode="before")
+    @classmethod
+    def _v_bool(cls, v, info: ValidationInfo):
+        if isinstance(v, bool):
+            return v
+        if v is not None:
+            print(f"[planner] 丢弃非布尔 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("midterm_status", "group_status", mode="before")
+    @classmethod
+    def _v_tristate(cls, v, info: ValidationInfo):
+        if isinstance(v, str) and v.strip().lower() in _TRISTATE_VALS:
+            return v.strip().lower()
+        if v is not None:
+            print(f"[planner] 丢弃非法 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("semester", mode="before")
+    @classmethod
+    def _v_semester(cls, v, info: ValidationInfo):
+        if isinstance(v, str) and v.strip() in {"S1", "S2"}:
+            return v.strip()
+        if v is not None:
+            print(f"[planner] 丢弃非法 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("level", mode="before")
+    @classmethod
+    def _v_level(cls, v, info: ValidationInfo):
+        if isinstance(v, str) and v.strip().lower() in _ENUM_CACHE.get("level", set()):
+            return v.strip()
+        if v is not None:
+            print(f"[planner] 丢弃不在真实枚举内的 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("units", mode="before")
+    @classmethod
+    def _v_units(cls, v, info: ValidationInfo):
+        num = _as_number(v)
+        if num is not None:
+            return num
+        if v is not None:
+            print(f"[planner] 丢弃非数值 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("location", "attendance_mode", mode="before")
+    @classmethod
+    def _v_literal(cls, v, info: ValidationInfo):
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if v is not None:
+            print(f"[planner] 丢弃非法 {info.field_name}={v!r}")
+        return None
+
+    @field_validator("course_type_exclude", "course_type_only", mode="before")
+    @classmethod
+    def _v_type_list(cls, v, info: ValidationInfo):
+        if not isinstance(v, list):
+            if v not in (None, ""):
+                print(f"[planner] 丢弃非列表 {info.field_name}={v!r}")
+            return None
+        clean = [t.strip().lower() for t in v
+                 if isinstance(t, str) and t.strip().lower() in _COURSE_TYPE_VALS]
+        dropped = [t for t in v
+                   if not (isinstance(t, str) and t.strip().lower() in _COURSE_TYPE_VALS)]
+        if dropped:
+            print(f"[planner] 丢弃非法 course_type 值 {dropped!r}(键 {info.field_name})")
+        return sorted(dict.fromkeys(clean)) or None
+
+    @field_validator("code_level", mode="before")
+    @classmethod
+    def _v_digit_list(cls, v, info: ValidationInfo):
+        if not isinstance(v, list):
+            if v not in (None, ""):
+                print(f"[planner] 丢弃非列表 {info.field_name}={v!r}")
+            return None
+        clean = sorted({d for d in (str(x).strip() for x in v) if d in _DIGITS})
+        return clean or None
+
+
+def _validate_filters(raw: dict | None) -> dict:
+    """LLM 槽位 -> 校验后的确定性槽位 dict。内部走 _FiltersModel(pydantic v2)逐字段校验:
+    非法值丢弃并记日志(规则19:不静默 coerce、不放行),空/缺省维度不出现在返回 dict 里(= 该维度不过滤)。
+    保持 dict 进 / dict 出的边界,下游 build_where、_enforce_*、qa 全部消费纯 dict,不感知 pydantic。"""
+    if not isinstance(raw, dict):
+        return {}
+    return _FiltersModel.model_validate(raw).model_dump(exclude_none=True)
 
 
 def _has_topic(question: str) -> bool:
@@ -344,16 +546,14 @@ _CAMPUS_RE = {key: re.compile(rf"(?<![A-Za-z]){re.escape(key)}(?![A-Za-z])", re.
               for key in _CAMPUS_LITERALS if key.isascii()}
 
 
-def _enforce_enum_guard(where: str, question: str) -> str:
-    """确定性兜底:问题提到某校区时,保证 where 的 location 条件不被 LLM 漏写或篡改。
+def _enforce_enum_guard(filters: dict, question: str) -> dict:
+    """确定性兜底:问题提到某校区时,保证 filters 的 location 不被 LLM 漏写或篡改。
 
-    - 校区不在真实枚举内(Gatton/Herston…):强制把 location 改成「用户原校区字面值」
+    - 校区不在真实枚举内(Gatton/Herston…):强制把 location 设成「用户原校区字面值」
       (使 SQL 命中 0),绝不留成 St Lucia。核心不变量:问非 St Lucia 校区必须返回空。
     - 校区在枚举内(St Lucia):LLM 已写 location 就尊重;漏写则确定性补回——否则
       「St Lucia 校区的人工智能课」会丢掉校区过滤,退化成全库语义检索。
     """
-    if not where:
-        where = ""
     loc_enum = _ENUM_CACHE.get("location", set())
     # 检测问题里提到的校区(查表确定性匹配),取第一个命中的规范字面值
     asked = None
@@ -367,18 +567,13 @@ def _enforce_enum_guard(where: str, question: str) -> str:
             asked = literal
             break
     if asked is None:
-        return where
-    has_loc = bool(re.search(r"\blocation\s*=", where, re.I))
-    forced = f"location='{asked}'"
+        return filters
     if asked.lower() in loc_enum:
-        # 在枚举内:LLM 写了 location 就放行,漏写则补回(不覆盖,避免改掉 LLM 写对的值)
-        if has_loc:
-            return where
-        return f"{where.strip()} AND {forced}" if where.strip() else forced
-    # 不在枚举内:把 where 里已有的 location 等值条件替成用户原校区;没有就追加一个。
-    if has_loc:
-        return re.sub(r"\blocation\s*=\s*'[^']*'", forced, where, flags=re.I)
-    return f"{where.strip()} AND {forced}" if where.strip() else forced
+        # 在枚举内:LLM 写了 location 就放行,漏写则补回(setdefault 不覆盖 LLM 写对的值)
+        filters.setdefault("location", asked)
+        return filters
+    filters["location"] = asked   # 不在枚举内:强制用户原校区字面值(使结果正确为空)
+    return filters
 
 
 # 授课模式意图 -> 规范 attendance_mode 字面值(确定性查表)。库里 attendance_mode 目前只有
@@ -393,10 +588,9 @@ _ATTEND_RE = {key: re.compile(rf"(?<![A-Za-z]){re.escape(key)}(?![A-Za-z])", re.
               for key in _ATTEND_LITERALS if key.isascii()}
 
 
-def _enforce_attendance_guard(where: str, question: str) -> str:
-    """确定性兜底:问到授课模式(线上/面授/远程…)时,保证 where 的 attendance_mode 不被 LLM
+def _enforce_attendance_guard(filters: dict, question: str) -> dict:
+    """确定性兜底:问到授课模式(线上/面授/远程…)时,保证 filters 的 attendance_mode 不被 LLM
     换成枚举里仅有的 'In Person'。非枚举模式 -> 用用户原模式字面值(使结果正确为空,不反向命中)。"""
-    where = where or ""
     asked = None
     for key, literal in _ATTEND_LITERALS.items():
         rx = _ATTEND_RE.get(key)
@@ -408,17 +602,13 @@ def _enforce_attendance_guard(where: str, question: str) -> str:
             asked = literal
             break
     if asked is None:
-        return where
+        return filters
     enum = _ENUM_CACHE.get("attendance_mode", set())
-    has_am = bool(re.search(r"\battendance_mode\s*=", where, re.I))
-    forced = f"attendance_mode='{asked}'"
     if asked.lower() in enum:
-        if has_am:
-            return where
-        return f"{where.strip()} AND {forced}" if where.strip() else forced
-    if has_am:
-        return re.sub(r"\battendance_mode\s*=\s*'[^']*'", forced, where, flags=re.I)
-    return f"{where.strip()} AND {forced}" if where.strip() else forced
+        filters.setdefault("attendance_mode", asked)
+        return filters
+    filters["attendance_mode"] = asked
+    return filters
 
 
 def _fallback_semantic(question: str) -> str:
@@ -480,32 +670,11 @@ def _force_program_route(question: str) -> tuple[str, str, str] | None:
     return None
 
 
-def _semester_intent(question: str) -> str:
-    """确定性判学期意图,返回 'S1'/'S2'/''(同时命中以 S1 优先,极少见)。"""
-    if _SEM_S1_RE.search(question):
-        return "S1"
-    if _SEM_S2_RE.search(question):
-        return "S2"
-    return ""
-
-
 def _both_semesters_intent(question: str) -> bool:
     """确定性判「S1 和 S2 都…」类查询(跨学期合取):S1、S2 同时出现且带「都/both」量词。
     与「S1和S2的课」(并集)区分——后者无量词,仍走普通 IN。"""
     return bool(_SEM_S1_RE.search(question) and _SEM_S2_RE.search(question)
                 and _BOTH_QUANT_RE.search(question))
-
-
-def _strip_semester_any(where: str) -> str:
-    """剔除 where 里所有 semester 条件(= 与 IN 两种写法),供「两学期都」路径用
-    (semester 由 retrieval.filter_search_both_semesters 固定补 IN('S1','S2'))。"""
-    if not where:
-        return where
-    for pat in (r"semester\s+in\s*\([^)]*\)", r"semester\s*=\s*'[^']*'"):
-        where = re.sub(r"\s+(?:and|or)\s+" + pat, "", where, flags=re.I)
-        where = re.sub(pat + r"\s+(?:and|or)\s+", "", where, flags=re.I)
-        where = re.sub(r"^\s*" + pat + r"\s*$", "", where, flags=re.I)
-    return where.strip()
 
 
 def _exam_intent(question: str):
@@ -577,67 +746,46 @@ def _validate_coord_unit(raw: str) -> str:
     return ""
 
 
-def _strip_semester(where: str) -> str:
-    """从 where 串里剔除 LLM 写的 semester 等值条件(语义意图改走参数化 SQL)。"""
-    if not where:
-        return where
-    w = re.sub(r"\s+(?:and|or)\s+semester\s*=\s*'[^']*'", "", where, flags=re.I)
-    w = re.sub(r"semester\s*=\s*'[^']*'\s+(?:and|or)\s+", "", w, flags=re.I)
-    w = re.sub(r"^\s*semester\s*=\s*'[^']*'\s*$", "", w, flags=re.I)
-    return w.strip()
-
-
-def _force_where_clause(where: str, col_pattern: str, clause: str) -> str:
-    """把 where 里某列条件替换成确定性 clause(列不存在则追加 AND);col_pattern 匹配该列已有条件。"""
-    where = (where or "").strip()
-    if re.search(col_pattern, where, re.I):
-        return re.sub(col_pattern, clause, where, count=1, flags=re.I)
-    return f"{where} AND {clause}" if where else clause
-
-
-def _enforce_level_hint(where: str, question: str) -> str:
+def _enforce_level_hint(filters: dict, question: str) -> dict:
     """确定性注入 level 过滤(规则 12):问题含明确层级词时,确定性值为准。
 
-    问题里出现 研究生/本科/master/bachelor/硕士/学士 等 -> 强制把 level 设成对应字面值:
-    where 已有 level 等值条件就替换(纠正 LLM 写错的值,如 bachelor 被映射成 Postgraduate),
-    没有就追加。问题无层级词时尊重 LLM 已写的 level(可能据 honours 等其它线索给出)。
-    """
-    where = where or ""
+    问题里出现 研究生/本科/master/bachelor/硕士/学士 等 -> 强制把 level 设成对应字面值
+    (覆盖 LLM 可能写错的值,如 bachelor 被错映射成 Postgraduate)。问题无层级词时尊重 LLM
+    已写的 level(可能据 honours 等其它线索给出)。"""
     for rx, val in _LEVEL_KW:
         if rx.search(question):
-            forced = f"level='{val}'"
-            if re.search(r"\blevel\s*=\s*'[^']*'", where, re.I):
-                return re.sub(r"\blevel\s*=\s*'[^']*'", forced, where, flags=re.I)
-            return f"{where.strip()} AND {forced}" if where.strip() else forced
-    return where
+            filters["level"] = val
+            return filters
+    return filters
 
 
-def _program_filter_where(question: str) -> str:
-    """确定性从问题重建「专业范围内」可叠加的结构化 where(组合查询:专业 + 筛选)。
+def _program_filter_where(question: str) -> dict:
+    """确定性从问题重建「专业范围内」可叠加的结构化 filters(组合查询:专业 + 筛选)。
 
-    只取能干净映射到 courses 列的维度:有无考试 / 有无小组评估 / 学分 / 排除课型 / 学历层级;命中即拼,
-    都没有则返回空串(此时退化为普通 program_to_courses)。不依赖 LLM 的 where,保证确定性。"""
-    conds: list[str] = []
+    只取能干净映射到 courses 列的维度:有无考试 / 有无小组评估 / 学分 / 排除课型 / 学历层级;命中即填,
+    都没有则返回空 dict(此时退化为普通 program_to_courses)。不依赖 LLM,保证确定性。"""
+    filters: dict = {}
     ex = _exam_intent(question)
     if ex is not None:
-        conds.append(f"has_exam={'true' if ex else 'false'}")
+        filters["has_exam"] = ex
     gr = _group_intent(question)
     if gr is not None:
-        conds.append(f"group_status='{'has' if gr else 'none'}'")
+        filters["group_status"] = "has" if gr else "none"
     mu = UNITS_RE.search(question)
     if mu:
-        conds.append(f"units={mu.group(1)}")
+        filters["units"] = _as_number(mu.group(1))
     types = _excluded_types(question)
     if types:
-        conds.append("course_type NOT IN (" + ",".join(f"'{t}'" for t in types) + ")")
-    return _enforce_level_hint(" AND ".join(conds), question).strip()
+        filters["course_type_exclude"] = types
+    return _enforce_level_hint(filters, question)
 
 
 def plan(question: str, schema_doc: str | None = None, conn: object | None = None) -> dict:
     """自然语言 -> 查询计划 dict。
 
     schema_doc 缺省时若给了 conn 就实时构建;两者都没有则用一份静态 schema(枚举占位)。
-    返回 {mode, where, semantic_query, course_code, program_name, direction, kb_query, ...};
+    返回 {mode, filters, semantic_query, course_code, program_name, direction, kb_query, ...};
+    filters 是校验后的结构化槽位 dict(供 retrieval.build_where 参数化拼装,取代旧的自由 where 串);
     kb_query 仅 kb 模式非空(英文 KB query,供 kb_search 跨语言召回),其它模式恒空。
     """
     if schema_doc is None:
@@ -657,13 +805,13 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             and not PROGRAM_NAME_RE.search(question)
             and not _has_topic(question)):
         # 排除 thesis/research/placement:这类考核项少但实为整学期大项目,负担最重,绝不算「低负担」。
-        base = ("has_exam=false AND has_hurdle=false "
-                "AND course_type NOT IN ('thesis','research','placement')")
+        base = {"has_exam": False, "has_hurdle": False,
+                "course_type_exclude": ["placement", "research", "thesis"]}
         return {
             "mode": "filter",
-            "where": _enforce_level_hint(base, question),
+            "filters": _enforce_level_hint(base, question),
             "semantic_query": "", "course_code": "", "program_name": "",
-            "direction": "", "semester": "", "coord_units": [], "order": "assessments_asc"}
+            "direction": "", "coord_units": [], "order": "assessments_asc"}
 
     raw = _call_llm(PROMPT.format(schema=schema_doc, q=question))
     try:
@@ -678,25 +826,22 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
         except json.JSONDecodeError as e:
             raise ValueError(f"LLM 返回非法 JSON:{raw!r}") from e
 
-    # where 必须是字符串;非 str(对象/列表/数字)直接判非法清空,不 stringify。
-    raw_where = p.get("where", "")
-    where_str = raw_where.strip() if isinstance(raw_where, str) else ""
+    # filters:LLM 的结构化槽位对象(取代旧的自由 where 串)。coord_unit 不进 build_where
+    # (走 coord_units 参数化路径),先从槽位取出再单独校验;semester 留在 filters,build_where 处理。
+    raw_filters = dict(p.get("filters")) if isinstance(p.get("filters"), dict) else {}
+    llm_coord_raw = str(raw_filters.pop("coord_unit", "") or "")
 
-    # 归一化所有字段为字符串
-    # semester / coord_units 是确定性结构化附加条件,走参数化 SQL(不进 LLM where 串):
-    #   - semester:S1 用 semester 列,S2 用 S2_CODES(列里 S2 不全,见 CLAUDE.md)
-    #   - coord_units:商科/文科 等学院映射成 coordinating_unit(文本列按设计不进 where 白名单)
+    # 归一化各字段。filters 由 _validate_filters 逐键按真实枚举/类型确定性校验(取代旧 _clean_where)。
+    # semester / coord_units 走参数化 SQL:semester 是 build_where 的列;coord_units 走 _coord_clause。
     out = {
         "mode": str(p.get("mode", "")).strip().lower(),
-        "where": where_str,
+        "filters": _validate_filters(raw_filters),
         "semantic_query": str(p.get("semantic_query", "") or "").strip(),
         "course_code": str(p.get("course_code", "") or "").strip().upper(),
         "program_name": str(p.get("program_name", "") or "").strip(),
         "direction": str(p.get("direction", "") or "").strip().lower(),
-        "semester": "",
         "coord_units": [],
         "order": "",
-        "code_levels": [],
         "kb_query": "",
         "both_semesters": False,
         "exclude_title": [],
@@ -705,30 +850,32 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
     if out["mode"] not in MODES:
         raise ValueError(f"非法 mode={out['mode']!r}(原始 {p!r})")
 
-    # WHERE 确定性清洗:含文本列/LIKE/SELECT 一律清空
-    out["where"] = _clean_where(out["where"])
-    # 确定性枚举兜底:用户问非枚举校区时,强制 where 用用户原校区字面值(使结果正确为空),
+    # 确定性枚举兜底:用户问非枚举校区时,强制 filters 用用户原校区字面值(使结果正确为空),
     # 绝不放任 LLM 把 Gatton 换成 St Lucia 返回全库。
-    out["where"] = _enforce_enum_guard(out["where"], question)
+    out["filters"] = _enforce_enum_guard(out["filters"], question)
     # 同理:问「线上/远程」等非枚举授课模式时,绝不能被换成枚举里仅有的 'In Person'
-    out["where"] = _enforce_attendance_guard(out["where"], question)
-    # 「S1 和 S2 都…」:跨学期合取(扁平 IN 只能表达并集,数量虚高)。剥掉 LLM 写的 semester 条件,
+    out["filters"] = _enforce_attendance_guard(out["filters"], question)
+    # 「S1 和 S2 都…」:跨学期合取(扁平 IN 只能表达并集,数量虚高)。剥掉单 semester 槽,
     # 由 retrieval.filter_search_both_semesters 固定补 IN('S1','S2') + GROUP BY HAVING 取真合取。
     if _both_semesters_intent(question):
         out["both_semesters"] = True
-        out["where"] = _strip_semester_any(out["where"])
+        out["filters"].pop("semester", None)
     # 课程性质标题排除(确定性):capstone/project/review/proposal 等 title 信号,course_type 列
     # 分不出,走参数化 NOT ILIKE(qa 层施加,见 retrieval._title_exclude_clause)。非课程模式忽略。
     out["exclude_title"] = _excluded_title_kw(question)
-    # 确定性抽「按 code 首位数字筛年级」(code 不进 where,qa 层 Python 后过滤);非课程模式忽略。
-    out["code_levels"] = _code_level_digits(question)
+    # 「按 code 首位数字筛年级」确定性抽取(code 首位是结构化事实,rule-12,不交 LLM):作为 code_level
+    # 槽位并入 filters,由 retrieval.build_where 出 substring(code,首位)=ANY(%s) 走 SQL。program 组合
+    # 分支会重置 filters,故同一 _levels 在该分支再注入一次(下方);course_detail/kb/permit 会清空 filters。
+    _levels = _code_level_digits(question)
+    if _levels:
+        out["filters"]["code_level"] = _levels
     # 学科 -> coordinating_unit 受控映射(确定性查表,走参数化 SQL);命中则把语义召回限定回本学院。
     # 只收聚在单一学院、跨学院挂靠少的学科(商科/文科);计算机类不在此(见 _FACULTY_UNITS 注)。
     # 非课程模式(program/kb)由 qa 忽略。
     out["coord_units"] = _faculty_units(question)
     # Option C:LLM 从真实学院清单选出的 coord_unit(逐字命中真实枚举才放行)并入范围,
     # 覆盖确定性查表没收的院名/缩写(如 EECS)。两路取并集,确定性查表仍优先保底。
-    llm_coord = _validate_coord_unit(str(p.get("coord_unit", "") or ""))
+    llm_coord = _validate_coord_unit(llm_coord_raw)
     if llm_coord and llm_coord not in out["coord_units"]:
         out["coord_units"].append(llm_coord)
 
@@ -747,7 +894,7 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
         # 课程码 + 无学位名 + 无「专业/必修/选修」关系词 -> 单门课详情(介绍/先修/考核/学分)
         out["mode"] = "course_detail"
         out["course_code"] = COURSE_CODE_RE.search(question).group(1).upper()
-        out["where"] = ""
+        out["filters"] = {}
         out["semantic_query"] = ""
         out["program_name"] = ""
         out["direction"] = ""
@@ -759,7 +906,7 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
         if COURSE_CODE_RE.search(question) or PROGRAM_NAME_RE.search(question):
             out["mode"] = "semantic"
         else:
-            out["where"] = ""
+            out["filters"] = {}
             out["semantic_query"] = ""
             out["course_code"] = ""
             out["program_name"] = ""
@@ -784,7 +931,7 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             if not out["program_name"]:
                 out["program_name"] = _extract_program_name(question)
             out["program_name"] = _expand_program_abbr(out["program_name"])
-            out["where"] = ""
+            out["filters"] = {}
             out["semantic_query"] = ""
             return out
         # 触发收紧:program_to_courses 仅当问题里出现明确学位串(Bachelor of/Master of/学士/硕士…)
@@ -795,15 +942,18 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             out["program_name"] = ""
             out["direction"] = ""
             # LLM 误判 program 时常丢掉结构化条件;确定性找回 units(学分)以便走 hybrid。
-            if not out["where"]:
+            if not out["filters"]:
                 mu = UNITS_RE.search(question)
                 if mu:
-                    out["where"] = f"units={mu.group(1)}"
+                    out["filters"] = {"units": _as_number(mu.group(1))}
         else:
             # program_to_courses 可叠加「专业范围内」的结构化筛选(确定性从问题重建,不依赖 LLM);
             # course_to_programs 等无附加条件,清空避免误用。
-            out["where"] = (_program_filter_where(question)
-                            if out["direction"] == "program_to_courses" else "")
+            out["filters"] = (_program_filter_where(question)
+                              if out["direction"] == "program_to_courses" else {})
+            # code_level 同样并入(该分支重置了 filters);只对 program_to_courses 的课表范围有意义。
+            if _levels and out["direction"] == "program_to_courses":
+                out["filters"]["code_level"] = _levels
             out["program_name"] = _expand_program_abbr(out["program_name"])
             out["semantic_query"] = ""
             return out
@@ -814,34 +964,34 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
     out["direction"] = ""
 
     topic = _has_topic(question)
-    # 确定性 level 兜底:问"研究生/本科"但 where 未含 level 时补上(规则 12),修 LLM 漏过滤。
-    out["where"] = _enforce_level_hint(out["where"], question)
+    # 确定性 level 兜底:问"研究生/本科"但 filters 未含 level 时补上(规则 12),修 LLM 漏过滤。
+    out["filters"] = _enforce_level_hint(out["filters"], question)
 
-    # 学院 = 确定性范围(coord_units),不是语义主题。点名学院 + 有结构化 where、且除院名外无真主题时,
+    # 学院 = 确定性范围(coord_units),不是语义主题。点名学院 + 有结构化 filters、且除院名外无真主题时,
     # 范围交给 coord_units 走纯 filter、清掉 semantic_query —— 否则 LLM 易把院名(尤其 EECS 这类缩写,
     # bge-m3 几乎 embed 不出)当主题走 hybrid,全被 min_sim 滤成 0。有真主题(机器学习…)才保留院内语义。
-    if out["coord_units"] and out["where"] and not topic:
+    if out["coord_units"] and out["filters"] and not topic:
         out["semantic_query"] = ""
         out["mode"] = "filter"
 
-    # 反向守卫(对称于下面「兜底 1」):无真实主题词(_has_topic=False)却已有结构化 where,
+    # 反向守卫(对称于下面「兜底 1」):无真实主题词(_has_topic=False)却已有结构化 filters,
     # 但被 LLM 误判成 semantic/hybrid——常见是把「code 开头为 X」这类结构化约束当主题塞进
-    # semantic_query。code 前缀已由 code_levels 确定性处理,这里清空伪 semantic_query、降回 filter,
+    # semantic_query。code 前缀已由 code_level 槽位确定性处理,这里清空伪 semantic_query、降回 filter,
     # 否则纯筛选查询会被向量 min_sim 门滤成寥寥几条(LLM 非确定性偶发踩到,结果时多时少)。
-    if not topic and out["where"] and out["mode"] in ("semantic", "hybrid"):
+    if not topic and out["filters"] and out["mode"] in ("semantic", "hybrid"):
         out["semantic_query"] = ""
         out["mode"] = "filter"
 
-    # program 被撤销(mode="")后需要落到一个有效 mode:有 where 走 filter,否则 semantic。
+    # program 被撤销(mode="")后需要落到一个有效 mode:有 filters 走 filter,否则 semantic。
     if out["mode"] == "":
-        out["mode"] = "filter" if out["where"] else "semantic"
-    # level-hint 给 semantic 补了 where:有主题升 hybrid,无主题降 filter。
-    if out["where"] and out["mode"] == "semantic":
+        out["mode"] = "filter" if out["filters"] else "semantic"
+    # level-hint 给 semantic 补了 filters:有主题升 hybrid,无主题降 filter。
+    if out["filters"] and out["mode"] == "semantic":
         out["mode"] = "hybrid" if topic else "filter"
 
-    # 兜底 1:问题含主题但 mode 落到 filter -> 升级 hybrid(有 where)或 semantic(无 where)
+    # 兜底 1:问题含主题但 mode 落到 filter -> 升级 hybrid(有 filters)或 semantic(无 filters)
     if topic and out["mode"] == "filter":
-        out["mode"] = "hybrid" if out["where"] else "semantic"
+        out["mode"] = "hybrid" if out["filters"] else "semantic"
 
     # 兜底 2:semantic/hybrid 缺 semantic_query 且问题含主题 -> 确定性补英文学科词
     if out["mode"] in ("semantic", "hybrid") and not out["semantic_query"]:
@@ -853,12 +1003,12 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
         else:
             raise ValueError(f"semantic 模式缺 semantic_query 且问题无主题词:{question!r}")
 
-    # 兜底 3:filter/hybrid 必须有合法 where
-    if out["mode"] in ("filter", "hybrid") and not out["where"]:
+    # 兜底 3:filter/hybrid 必须有合法 filters(空 filters 会让 filter_search 抛→qa 接成 empty)
+    if out["mode"] in ("filter", "hybrid") and not out["filters"]:
         if out["semantic_query"]:
             out["mode"] = "semantic"   # 只剩语义,降级
         else:
-            raise ValueError(f"{out['mode']} 模式无合法 where 也无 semantic_query:{question!r}")
+            raise ValueError(f"{out['mode']} 模式无合法 filters 也无 semantic_query:{question!r}")
 
     return out
 

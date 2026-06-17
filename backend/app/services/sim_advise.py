@@ -108,17 +108,17 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
                 "unreachable_codes": unreachable, "note": "可选池为空,未调用 LLM"}
 
     # 确定性识别目标里的结构化约束(有无考试/小组/学分/层级/排除课型),复用 planner 的受控
-    # where 生成器。红线1/规则12:这类是结构化事实,绝不让 LLM 猜——它会把「像项目课」的课
+    # filters 生成器。红线1/规则12:这类是结构化事实,绝不让 LLM 猜——它会把「像项目课」的课
     # 当成「没考试」推荐(如曾把有考试的 RELN1000 说成考试少)。识别到约束就在候选池上确定性过滤。
-    where = planner._program_filter_where(goal)
+    filters = planner._program_filter_where(goal)
     has_topic = planner._has_topic(goal)
     valid_codes: set | None = None
-    if where:
+    if filters:
         try:
-            valid_codes = {r["code"] for r in retrieval.filter_search(conn, where)}
-        except ValueError:                    # where 受控生成本不该非法;兜底不阻断,记日志
-            print(f"[sim_advise] 结构化 where 被安全网拦截,降级为不过滤: {where!r}")
-            where = ""
+            valid_codes = {r["code"] for r in retrieval.filter_search(conn, filters)}
+        except ValueError:                    # filters 受控生成本不该非法;兜底不阻断,记日志
+            print(f"[sim_advise] 结构化 filters 被安全网拦截,降级为不过滤: {filters!r}")
+            filters = {}
     constraint = _goal_constraint_desc(goal)
     cands: list[dict] = []
 
@@ -143,12 +143,12 @@ def advise(conn, program_id: str, goal: str, selected: list = (),
 
     # 候选来源:有主题(或没有结构化约束)走语义召回 + 上面的确定性过滤;纯结构化目标(无主题,
     # 如「我想选没考试的课」)直接走确定性 filter_search 取真满足条件的池,不靠语义猜。
-    if has_topic or not where:
+    if has_topic or not filters:
         collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM))
         if len(cands) < 3:                    # 召回不足:降相似度地板重试一次(仅语义路径)
             collect(retrieval.semantic_search(conn, goal, k=40, min_sim=MIN_SIM_RETRY))
     else:
-        collect(retrieval.filter_search(conn, where))
+        collect(retrieval.filter_search(conn, filters))
 
     out = {"goal": goal, "candidates": cands,
            "available_count": len(enum_ref),
