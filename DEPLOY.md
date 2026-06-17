@@ -163,7 +163,7 @@ python3 -m venv .venv
 ```ini
 # LLM:开启 DeepSeek(线上要 true,你本地是 false)
 LLM_ENABLED=true
-DEEPSEEK_API_KEY=sk-9e76c49cbbd14fae82f2b3290d845bfd
+DEEPSEEK_API_KEY=sk-your-deepseek-api-key
 
 # Embedding:硅基流动
 EMBED_API_KEY=sk-你的硅基流动key
