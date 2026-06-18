@@ -1,3 +1,5 @@
+import i18n from '../i18n'
+
 export interface Course {
   code: string
   title: string | null
@@ -109,11 +111,11 @@ export async function fetchAskStream(question: string, h: AskStreamHandlers): Pr
       body: JSON.stringify({ question, generate: true }),
     })
   } catch (e) {
-    h.onError(`连不上服务:${e instanceof Error ? e.message : String(e)}(确认后端 uvicorn 正在运行)`)
+    h.onError(i18n.t('ask.connectFail', { msg: e instanceof Error ? e.message : String(e) }))
     return
   }
   if (!r.ok || !r.body) {
-    h.onError(`服务异常 (HTTP ${r.status})`)
+    h.onError(i18n.t('ask.serverError', { status: r.status }))
     return
   }
 

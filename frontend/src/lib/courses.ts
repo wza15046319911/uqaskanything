@@ -1,29 +1,14 @@
 import type { Course } from '../api/ask'
+import i18n from '../i18n'
 
 export interface Slot {
   group: boolean
   members: Course[]
 }
 
-const CN_NUM: Record<number, string> = {
-  2: '二',
-  3: '三',
-  4: '四',
-  5: '五',
-  6: '六',
-  7: '七',
-  8: '八',
-  9: '九',
-  10: '十',
-}
-
-export function cnNum(k: number): string {
-  return CN_NUM[k] ?? String(k)
-}
-
 export function levelZh(level: string | null | undefined): string {
-  if (level === 'Postgraduate Coursework') return '研究生'
-  if (level === 'Undergraduate') return '本科'
+  if (level === 'Postgraduate Coursework') return i18n.t('common.postgrad')
+  if (level === 'Undergraduate') return i18n.t('common.undergrad')
   return level ?? ''
 }
 

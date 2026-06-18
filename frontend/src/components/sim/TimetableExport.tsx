@@ -2,6 +2,7 @@
 // Reuses hex colors and inline styles; the color mapping shares sim-sections with the screen cards.
 // The background is an OpenAI-style diffusion gradient (diffusion-bg), with content floating on a white panel to keep it readable.
 
+import { useTranslation } from 'react-i18next'
 import { semKind, semYear, type SimLocalState } from '../../lib/sim'
 import { sectionOf, type SectionMap } from '../../lib/sim-sections'
 import type { SimStateResponse } from '../../api/sim'
@@ -38,6 +39,7 @@ export default function TimetableExport({
   bg,
   coreOnly,
 }: TimetableExportProps) {
+  const { t } = useTranslation()
   const visible = (c: string) => !coreOnly || sectionOf(sectionMap, c).isCore
   const placedBy: Record<number, string[]> = {}
   for (const [c, i] of Object.entries(state.placement)) {
@@ -45,7 +47,7 @@ export default function TimetableExport({
     ;(placedBy[i] = placedBy[i] || []).push(c)
   }
   const legend = coreOnly ? sectionMap.legend.filter((s) => s.isCore) : sectionMap.legend
-  const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
+  const ctitle = (c: string) => data.courses[c]?.title || t('sim.noOfferingParen')
   const cunits = (c: string) => data.courses[c]?.units
   // When diffusion is on, the panel/cells are semi-transparent so the background shows through; course cards stay more opaque to keep text readable.
   const panelBg = diffusion.enabled ? 'rgba(255, 255, 255, 0.5)' : '#ffffff'
@@ -103,7 +105,7 @@ export default function TimetableExport({
                   paddingTop: 6,
                 }}
               >
-                Year {y + 1}
+                {t('common.year', { n: y + 1 })}
               </div>
               {[2 * y, 2 * y + 1].map((i) => {
                 if (i >= state.n_semesters) return null
@@ -135,7 +137,9 @@ export default function TimetableExport({
                       <span style={{ fontSize: 13, fontWeight: 700, color: UQ_DEEP }}>
                         {kind} {year}
                       </span>
-                      <span style={{ fontSize: 12, color: MUTED }}>{u} 学分</span>
+                      <span style={{ fontSize: 12, color: MUTED }}>
+                        {t('common.units', { n: u })}
+                      </span>
                     </div>
                     {codes.length === 0 && (
                       <div style={{ fontSize: 12, color: '#b6b6c0', padding: '6px 0' }}>—</div>
@@ -185,7 +189,7 @@ export default function TimetableExport({
                           </span>
                           {un != null && (
                             <span style={{ fontSize: 11.5, color: MUTED, flexShrink: 0 }}>
-                              {un} units
+                              {t('common.units', { n: un })}
                             </span>
                           )}
                         </div>

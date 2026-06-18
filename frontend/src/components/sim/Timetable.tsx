@@ -20,6 +20,7 @@ import {
   toast,
 } from '@heroui/react'
 import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
 import { type SimLocalState, semKind, semYear, getDragCode, setDragCode } from '../../lib/sim'
 import { buildSectionMap, sectionOf } from '../../lib/sim-sections'
 import { exportNodePng } from '../../lib/export-image'
@@ -49,9 +50,10 @@ export default function Timetable({
   onAuto,
   onClear,
 }: TimetableProps) {
+  const { t } = useTranslation()
   const val = data.validation
   const capOver = new Set(val.cap_over || [])
-  const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
+  const ctitle = (c: string) => data.courses[c]?.title || t('sim.noOfferingParen')
   const [dragOver, setDragOver] = useState<{ cell: number; blocked: boolean } | null>(null)
   const reduce = useReducedMotion()
   const chipAnim = reduce
@@ -144,7 +146,7 @@ export default function Timetable({
 
   const togglePreview = () => {
     if (!previewOpen && Object.keys(state.placement).length === 0) {
-      toast('先把课排进去再导出')
+      toast(t('timetable.placeFirst'))
       return
     }
     setPreviewOpen((v) => !v)
@@ -158,7 +160,7 @@ export default function Timetable({
       const name = (data.title || 'program').slice(0, 40)
       await exportNodePng(node, `${name}-plan.jpg`, { format: 'jpg', quality: 0.9 })
     } catch (e) {
-      toast('导出失败:' + (e instanceof Error ? e.message : String(e)))
+      toast(t('timetable.exportFail', { msg: e instanceof Error ? e.message : String(e) }))
     } finally {
       setDownloading(false)
     }
@@ -205,12 +207,14 @@ export default function Timetable({
   return (
     <section className="min-w-0 rounded-2xl border border-border bg-surface p-4 shadow-surface lg:sticky lg:top-4 lg:self-start">
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">时间表</h2>
+        <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
+          {t('timetable.title')}
+        </h2>
         <span className="ml-auto flex flex-wrap items-center justify-end gap-1.5 text-xs text-muted tabular-nums">
-          已排 {placedN} 门 · {totalU}/{data.total_units}学分
+          {t('timetable.placedSummary', { n: placedN, counted: totalU, total: data.total_units })}
           {ov.formula_satisfied && (
             <Chip size="sm" variant="soft" color="success">
-              学位要求满足✓
+              {t('timetable.degreeSatisfied')}
             </Chip>
           )}
           {data.level_caps
@@ -229,12 +233,12 @@ export default function Timetable({
             ))}
           {unatt > 0 && (
             <Chip size="sm" variant="soft" color="warning">
-              {unatt} 门未计入
+              {t('timetable.unattributed', { n: unatt })}
             </Chip>
           )}
           {nbad > 0 && (
             <Chip size="sm" variant="soft" color="danger">
-              {nbad} 处冲突
+              {t('timetable.conflicts', { n: nbad })}
             </Chip>
           )}
         </span>
@@ -257,19 +261,19 @@ export default function Timetable({
           selectedKey={state.start_sem}
           onSelectionChange={(k) => k != null && onParam({ start_sem: String(k) })}
         >
-          <Label>入学学期</Label>
+          <Label>{t('timetable.startSem')}</Label>
           <Select.Trigger>
             <Select.Value />
             <Select.Indicator />
           </Select.Trigger>
           <Select.Popover>
             <ListBox>
-              <ListBox.Item id="S1" textValue="S1 入学">
-                S1 入学
+              <ListBox.Item id="S1" textValue={t('timetable.s1Start')}>
+                {t('timetable.s1Start')}
                 <ListBox.ItemIndicator />
               </ListBox.Item>
-              <ListBox.Item id="S2" textValue="S2 入学">
-                S2 入学
+              <ListBox.Item id="S2" textValue={t('timetable.s2Start')}>
+                {t('timetable.s2Start')}
                 <ListBox.ItemIndicator />
               </ListBox.Item>
             </ListBox>
@@ -282,7 +286,7 @@ export default function Timetable({
           formatOptions={{ useGrouping: false }}
           onChange={(v) => onParam({ start_year: Number.isFinite(v) ? v : 2026 })}
         >
-          <Label>起始年</Label>
+          <Label>{t('timetable.startYear')}</Label>
           <NumberField.Group>
             <NumberField.DecrementButton />
             <NumberField.Input className="w-16 text-center" />
@@ -290,7 +294,7 @@ export default function Timetable({
           </NumberField.Group>
         </NumberField>
         <NumberField value={state.n_semesters} isReadOnly>
-          <Label>学期数</Label>
+          <Label>{t('timetable.semesters')}</Label>
           <NumberField.Group>
             <NumberField.Input className="w-10 text-center" />
           </NumberField.Group>
@@ -302,7 +306,7 @@ export default function Timetable({
           step={2}
           onChange={(v) => onParam({ units_cap: Number.isFinite(v) ? v : 8 })}
         >
-          <Label>每学期上限(学分)</Label>
+          <Label>{t('timetable.unitsCap')}</Label>
           <NumberField.Group>
             <NumberField.DecrementButton />
             <NumberField.Input className="w-10 text-center" />
@@ -313,13 +317,13 @@ export default function Timetable({
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Button size="sm" variant="secondary" onPress={onAuto}>
-          一键自动排
+          {t('timetable.autoPlace')}
         </Button>
         <Button size="sm" variant="danger-soft" onPress={onClear}>
-          清空
+          {t('timetable.clear')}
         </Button>
         <Button size="sm" variant="secondary" onPress={togglePreview}>
-          {previewOpen ? '收起预览' : '导出图片'}
+          {previewOpen ? t('timetable.collapsePreview') : t('timetable.exportImage')}
         </Button>
       </div>
 
@@ -327,7 +331,7 @@ export default function Timetable({
         {Array.from({ length: Math.ceil(state.n_semesters / 2) }, (_, y) => (
           <Fragment key={y}>
             <div className="col-span-2 mt-1.5 text-[11px] font-semibold tracking-wide text-muted first:mt-0">
-              Year {y + 1}
+              {t('common.year', { n: y + 1 })}
             </div>
             {[2 * y, 2 * y + 1]
               .filter((i) => i < state.n_semesters)
@@ -357,7 +361,7 @@ export default function Timetable({
                     </div>
                     {codes.length === 0 && placedN === 0 && i === 0 && (
                       <div className="px-0.5 py-1.5 text-xs text-muted/70 italic">
-                        拖课到这里,或在左侧点课自动放
+                        {t('timetable.dropHere')}
                       </div>
                     )}
                     <AnimatePresence initial={false}>
@@ -393,7 +397,7 @@ export default function Timetable({
                               <span className="min-w-0 flex-1 truncate">{ctitle(c)}</span>
                               <button
                                 type="button"
-                                aria-label="Remove"
+                                aria-label={t('common.remove')}
                                 className="shrink-0 cursor-pointer px-0.5 text-[15px] leading-none text-muted transition-colors hover:text-danger"
                                 onClick={() => onRemove(c)}
                               >
@@ -420,7 +424,7 @@ export default function Timetable({
         <div className="mt-4 border-t border-border pt-4">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <h3 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
-              导出预览
+              {t('timetable.exportPreview')}
             </h3>
             <Switch
               isSelected={diff.enabled}
@@ -429,16 +433,16 @@ export default function Timetable({
               <Switch.Control>
                 <Switch.Thumb />
               </Switch.Control>
-              <Switch.Content>弥散背景</Switch.Content>
+              <Switch.Content>{t('timetable.diffusionBg')}</Switch.Content>
             </Switch>
             <Checkbox isSelected={coreOnly} onChange={setCoreOnly}>
               <Checkbox.Control>
                 <Checkbox.Indicator />
               </Checkbox.Control>
-              <Checkbox.Content>只显示必修</Checkbox.Content>
+              <Checkbox.Content>{t('timetable.coreOnly')}</Checkbox.Content>
             </Checkbox>
             <Button className="ml-auto" size="sm" onPress={downloadImage} isDisabled={downloading}>
-              {downloading ? '生成中…' : '下载 JPG'}
+              {downloading ? t('timetable.generating') : t('timetable.downloadJpg')}
             </Button>
           </div>
 

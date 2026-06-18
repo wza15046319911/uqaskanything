@@ -61,40 +61,11 @@ variable "deepinfra_api_key" {
   # no default: must be provided explicitly (TF_VAR_deepinfra_api_key or tfvars)
 }
 
-variable "db_name" {
-  type    = string
-  default = "uq_courses"
-}
-
-variable "db_username" {
-  type    = string
-  default = "postgres"
-}
-
-variable "db_instance_class" {
-  type    = string
-  default = "db.t4g.micro" # cheapest ARM burstable
-}
-
-variable "db_allocated_storage" {
-  type    = number
-  default = 20 # gp3 minimum
-}
-
-variable "engine_version" {
-  type    = string
-  default = "16"
-}
-
-variable "backup_retention_days" {
-  type    = number
-  default = 1 # 0 = disable automated backups; 1 is nearly free and keeps a safety net
-}
-
-variable "db_ingress_cidrs" {
-  type = list(string)
-  # no default: the security tradeoff is yours to make explicitly.
-  # In PUBLIC network mode the Runtime egress IPs are not fixed, so to reach RDS you usually need ["0.0.0.0/0"]
-  # (DB port open to the internet, protected by a strong random password; this DB is public course data).
-  # For a secure setup, use the VPC variant in the README.
+variable "database_url" {
+  type      = string
+  sensitive = true
+  # no default: the Supabase Postgres connection string (session pooler, port 5432 — supports prepared statements).
+  # postgresql://postgres.<ref>:<pwd>@aws-0-<region>.pooler.supabase.com:5432/postgres
+  # Injected into the Runtime as DATABASE_URL. The DB lives in Supabase (managed Postgres + pgvector);
+  # see README for the one-off data migration from the local dev DB.
 }

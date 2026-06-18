@@ -3,6 +3,7 @@
 // Chain: course code -> find the owning rule in selected_by_rule -> walk up child_of to the top group -> palette.
 // A boundary code that is in no rule and not in unattributed is explicitly put under "not counted", never silently.
 
+import i18n from '../i18n'
 import type { SimStateResponse } from '../api/sim'
 
 export interface Section {
@@ -16,11 +17,13 @@ const CORE_COLOR = '#3c3489'
 const UNATTRIBUTED_COLOR = '#9aa0ab'
 const ELECTIVE_PALETTE = ['#5b8ff0', '#3fa66a', '#e0852b', '#d64a3f', '#8c5bb0', '#1fa2a6']
 
-export const UNATTRIBUTED_SECTION: Section = {
-  ref: '__unattributed__',
-  title: '未计入',
-  color: UNATTRIBUTED_COLOR,
-  isCore: false,
+function unattributedSection(): Section {
+  return {
+    ref: '__unattributed__',
+    title: i18n.t('sim.notCounted'),
+    color: UNATTRIBUTED_COLOR,
+    isCore: false,
+  }
 }
 
 export interface SectionMap {
@@ -72,7 +75,7 @@ export function buildSectionMap(data: SimStateResponse, placed: string[]): Secti
       codeToSection[c] = sec
       usedTops.add(top)
     } else {
-      codeToSection[c] = UNATTRIBUTED_SECTION
+      codeToSection[c] = unattributedSection()
       usedUnatt = true
     }
   }
@@ -80,11 +83,11 @@ export function buildSectionMap(data: SimStateResponse, placed: string[]): Secti
   const legend: Section[] = data.rules
     .filter((r) => !r.child_of && usedTops.has(r.ref))
     .map((r) => sectionByTop[r.ref])
-  if (usedUnatt) legend.push(UNATTRIBUTED_SECTION)
+  if (usedUnatt) legend.push(unattributedSection())
 
   return { codeToSection, legend }
 }
 
 export function sectionOf(map: SectionMap, code: string): Section {
-  return map.codeToSection[code] || UNATTRIBUTED_SECTION
+  return map.codeToSection[code] || unattributedSection()
 }

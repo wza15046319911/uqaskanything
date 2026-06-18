@@ -2,6 +2,7 @@
 // The sim export preview and the cover generator share the same knobs; the enabled switch and fade level are kept by each container.
 
 import { Button, Label, Slider } from '@heroui/react'
+import { useTranslation } from 'react-i18next'
 
 export interface DiffusionParams {
   colorMix: number
@@ -45,29 +46,30 @@ interface DiffusionControlsProps {
 }
 
 export default function DiffusionControls({ value, onChange, disabled }: DiffusionControlsProps) {
+  const { t } = useTranslation()
   const reshuffle = () => onChange({ ...value, seed: Math.floor(Math.random() * 900000) })
   return (
     <div className="flex flex-col gap-3">
       <DiffRange
-        label="色相"
+        label={t('diffusion.hue')}
         value={value.colorMix}
         disabled={disabled}
         onChange={(v) => onChange({ ...value, colorMix: v })}
       />
       <DiffRange
-        label="柔度"
+        label={t('diffusion.softness')}
         value={value.softness}
         disabled={disabled}
         onChange={(v) => onChange({ ...value, softness: v })}
       />
       <DiffRange
-        label="颗粒"
+        label={t('diffusion.grain')}
         value={value.texture}
         disabled={disabled}
         onChange={(v) => onChange({ ...value, texture: v })}
       />
       <Button size="sm" variant="secondary" onPress={reshuffle} isDisabled={disabled}>
-        换一张
+        {t('diffusion.reshuffle')}
       </Button>
     </div>
   )

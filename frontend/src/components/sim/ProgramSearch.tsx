@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { ComboBox, Input, ListBox } from '@heroui/react'
+import { useTranslation } from 'react-i18next'
 import type { Program } from '../../api/sim'
 
 interface ProgramSearchProps {
@@ -9,6 +10,7 @@ interface ProgramSearchProps {
 }
 
 export default function ProgramSearch({ programs, current, onPick }: ProgramSearchProps) {
+  const { t } = useTranslation()
   const [q, setQ] = useState('')
 
   const ql = q.trim().toLowerCase()
@@ -21,7 +23,7 @@ export default function ProgramSearch({ programs, current, onPick }: ProgramSear
   return (
     <div className="mx-auto mt-4 max-w-md text-left">
       <ComboBox
-        aria-label="搜专业,如 Computer Science…"
+        aria-label={t('sim.searchProgram')}
         inputValue={q}
         onInputChange={setQ}
         selectedKey={null}
@@ -36,7 +38,7 @@ export default function ProgramSearch({ programs, current, onPick }: ProgramSear
         menuTrigger="input"
       >
         <ComboBox.InputGroup>
-          <Input placeholder="搜专业,如 Computer Science…" autoComplete="off" />
+          <Input placeholder={t('sim.searchProgram')} autoComplete="off" />
           <ComboBox.Trigger />
         </ComboBox.InputGroup>
         <ComboBox.Popover>
@@ -54,7 +56,7 @@ export default function ProgramSearch({ programs, current, onPick }: ProgramSear
       </ComboBox>
       {current && (
         <div className="mt-2.5 text-center text-[13px] text-muted">
-          当前:<b className="font-semibold text-foreground">{current.title}</b>{' '}
+          {t('sim.current')} <b className="font-semibold text-foreground">{current.title}</b>{' '}
           {/* <span className="text-xs">
             ({current.program_id} · {current.total_units}学分)
           </span> */}

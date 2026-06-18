@@ -11,6 +11,7 @@ import {
   Select,
   Switch,
 } from '@heroui/react'
+import { useTranslation } from 'react-i18next'
 import { type SimLocalState, setDragCode } from '../../lib/sim'
 import type { AdviseResponse, Rule, SimCourse, SimStateResponse } from '../../api/sim'
 
@@ -64,17 +65,18 @@ const stripSharedPrefix = (titles: string[]): string[] => {
 }
 
 export default function RulesPane(props: RulesPaneProps) {
+  const { t } = useTranslation()
   const { data, csQuery, csResults, offered } = props
   const { goal, advising, advice } = props
   const { onSetBranch, onSetPlan, onPick, onCsearch, onGoalChange, onAdvise } = props
 
-  const ctitle = (c: string) => data.courses[c]?.title || '(无开课信息)'
+  const ctitle = (c: string) => data.courses[c]?.title || t('sim.noOfferingParen')
 
   const titleNode = (c: string): ReactNode => {
-    const t = data.courses[c]?.title
+    const title = data.courses[c]?.title
     return (
-      <span className={`min-w-0 flex-1 truncate text-sm${t ? '' : ' text-muted/70 italic'}`}>
-        {t || '无开课信息'}
+      <span className={`min-w-0 flex-1 truncate text-sm${title ? '' : ' text-muted/70 italic'}`}>
+        {title || t('sim.noOffering')}
       </span>
     )
   }
@@ -194,10 +196,10 @@ export default function RulesPane(props: RulesPaneProps) {
     const l = data.locks?.[c]
     if (!l) return null
     if (l.state === 'unknown')
-      return <span className="shrink-0 text-[11px] text-muted">先修待核</span>
+      return <span className="shrink-0 text-[11px] text-muted">{t('rules.prereqUnchecked')}</span>
     return (
       <span className="shrink-0 text-[11px] text-warning/80" title={l.reason || ''}>
-        需先修
+        {t('rules.needPrereq')}
       </span>
     )
   }
@@ -234,7 +236,7 @@ export default function RulesPane(props: RulesPaneProps) {
             {i > 0 && (
               <div className="mb-2 flex items-center gap-2 text-[10px] font-bold tracking-wider text-muted">
                 <span className="h-px flex-1 bg-border" />
-                二选一
+                {t('rules.pickOne')}
                 <span className="h-px flex-1 bg-border" />
               </div>
             )}
@@ -270,7 +272,7 @@ export default function RulesPane(props: RulesPaneProps) {
       <Chip size="sm" color="accent" variant="soft" className="shrink-0 font-mono">
         {x.code}
       </Chip>
-      <span className="min-w-0 flex-1 truncate text-sm">{x.title || '(无信息)'}</span>
+      <span className="min-w-0 flex-1 truncate text-sm">{x.title || t('sim.noInfo')}</span>
       {x.offerings?.length ? (
         <Chip size="sm" variant="soft" className="shrink-0">
           {x.offerings.join('·')}
@@ -281,8 +283,7 @@ export default function RulesPane(props: RulesPaneProps) {
 
   const searchSection = (rule: Rule): ReactNode => {
     const picked = data.selected_by_rule?.[rule.ref] || []
-    const ph =
-      rule.open_scope === 'program' ? '搜程序课表内的课(码/课名)…' : '搜全校任意课程(码/课名)…'
+    const ph = rule.open_scope === 'program' ? t('rules.searchInProgram') : t('rules.searchAll')
     return (
       <div className="flex flex-col gap-2.5">
         {picked.length > 0 && <div className="flex flex-col gap-2">{picked.map(leftCard)}</div>}
@@ -341,8 +342,8 @@ export default function RulesPane(props: RulesPaneProps) {
           </Select.Trigger>
           <Select.Popover>
             <ListBox>
-              <ListBox.Item id={none} textValue="不选(可选)">
-                不选(可选)
+              <ListBox.Item id={none} textValue={t('rules.noneOptional')}>
+                {t('rules.noneOptional')}
                 <ListBox.ItemIndicator />
               </ListBox.Item>
               {opts.map((po) => {
@@ -378,7 +379,10 @@ export default function RulesPane(props: RulesPaneProps) {
       <Alert.Indicator />
       <Alert.Content>
         <Alert.Description>
-          {ov.unattributed!.length} 门课未计入任何规则:{ov.unattributed!.join('、')}
+          {t('rules.unattributed', {
+            n: ov.unattributed!.length,
+            list: ov.unattributed!.join(t('common.listSep')),
+          })}
         </Alert.Description>
       </Alert.Content>
     </Alert>
@@ -399,9 +403,9 @@ export default function RulesPane(props: RulesPaneProps) {
             className="my-4 flex min-w-0 flex-col items-start gap-2 rounded-xl border border-dashed border-border bg-surface px-3.5 py-3 text-xs"
             key={`br-${key}`}
           >
-            <span className="font-medium tracking-wide text-muted">二选一路径</span>
+            <span className="font-medium tracking-wide text-muted">{t('rules.branchPath')}</span>
             <Select
-              aria-label="二选一路径"
+              aria-label={t('rules.branchPath')}
               className="w-full min-w-0"
               selectedKey={cur || g[0]}
               onSelectionChange={(k) => k != null && onSetBranch(String(k))}
@@ -432,7 +436,7 @@ export default function RulesPane(props: RulesPaneProps) {
     if (rule.inactive) continue
 
     const slots = data.available_by_rule?.[rule.ref] || []
-    const typeTag = rule.select_type === 'all' ? '必修' : '选修'
+    const typeTag = rule.select_type === 'all' ? t('common.core') : t('common.elective')
     const hasMax = rule.units_max != null
     const cnt = rule.units_counted
     const mn = rule.units_required
@@ -445,10 +449,13 @@ export default function RulesPane(props: RulesPaneProps) {
       pct = mn > 0 ? Math.min((cnt / mn) * 100, 100) : cnt > 0 ? 100 : 0
       if (rule.done) tail = ' ✓'
     } else {
-      label = mn > 0 ? `${cnt} · 需 ${mn}–${mx}` : `${cnt} · 可选 0–${mx}`
+      label =
+        mn > 0
+          ? t('rules.needRange', { cnt, min: mn, max: mx })
+          : t('rules.optRange', { cnt, max: mx })
       pct = mx > 0 ? Math.min((cnt / mx) * 100, 100) : 0
-      if (rule.over_max) tail = ' ·超上限'
-      else if (mn > 0 && cnt >= mn) tail = ' ·达下限'
+      if (rule.over_max) tail = t('rules.overMax')
+      else if (mn > 0 && cnt >= mn) tail = t('rules.atMin')
     }
 
     let body: ReactNode
@@ -463,17 +470,17 @@ export default function RulesPane(props: RulesPaneProps) {
     } else if (rule.children_refs) {
       body = (
         <div className="px-0.5 py-1.5 text-xs text-muted italic">
-          由 {rule.children_refs.join(' + ')} 组成,总量 {mn}–{mx} 学分
+          {t('rules.composedOf', { refs: rule.children_refs.join(' + '), min: mn, max: mx })}
         </div>
       )
     } else if (!rule.plan_options) {
       body = (
         <div className="px-0.5 py-1.5 text-xs text-muted italic">
           {hasMax && mx > 0
-            ? `可修任意课程,最多 ${mx} 学分,本表不逐一枚举`
+            ? t('rules.anyCourseMax', { max: mx })
             : rule.done
-              ? '已满足'
-              : '可修任意课程,不逐一枚举'}
+              ? t('rules.satisfied')
+              : t('rules.anyCourse')}
         </div>
       )
     }
@@ -544,20 +551,27 @@ export default function RulesPane(props: RulesPaneProps) {
       <section className="sticky top-4 z-10 min-w-0 rounded-2xl border border-border bg-surface px-5 py-4 shadow-surface sm:px-6">
         <div className="mb-3 flex items-center gap-2.5">
           <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
-            能修的课
+            {t('rules.availableCourses')}
           </h2>
-          <span className="ml-auto text-xs text-muted">拖到右侧 / 点一下自动放</span>
+          <span className="ml-auto text-xs text-muted">{t('rules.dragHint')}</span>
         </div>
         {topRules.length > 0 && (
           <>
             <div className="mb-2 flex items-center gap-2">
-              <span className="text-xs font-semibold tracking-wide text-muted">学位完成度</span>
+              <span className="text-xs font-semibold tracking-wide text-muted">
+                {t('rules.degreeProgress')}
+              </span>
               <span className="ml-auto font-mono text-sm tabular-nums">
                 <span className="font-semibold text-accent">{counted}</span>
-                <span className="text-muted"> / {totUnits} 学分</span>
+                <span className="text-muted">{t('rules.ofUnits', { n: totUnits })}</span>
               </span>
             </div>
-            <ProgressBar aria-label="学位完成度" value={ovPct} size="sm" color="accent">
+            <ProgressBar
+              aria-label={t('rules.degreeProgress')}
+              value={ovPct}
+              size="sm"
+              color="accent"
+            >
               <ProgressBar.Track>
                 <ProgressBar.Fill />
               </ProgressBar.Track>
@@ -568,7 +582,7 @@ export default function RulesPane(props: RulesPaneProps) {
       {/* Search box */}
       <section className={cardCls}>
         <ComboBox
-          aria-label="跳到课程:输课程码或课名快速定位…"
+          aria-label={t('rules.jumpToCourse')}
           inputValue={jumpQ}
           onInputChange={setJumpQ}
           selectedKey={null}
@@ -580,7 +594,7 @@ export default function RulesPane(props: RulesPaneProps) {
           menuTrigger="input"
         >
           <ComboBox.InputGroup>
-            <Input placeholder="跳到课程:输课程码或课名快速定位…" autoComplete="off" />
+            <Input placeholder={t('rules.jumpToCourse')} autoComplete="off" />
             <ComboBox.Trigger />
           </ComboBox.InputGroup>
           <ComboBox.Popover>
@@ -601,13 +615,13 @@ export default function RulesPane(props: RulesPaneProps) {
       <section className={cardCls}>
         <div className="mb-3 flex items-center gap-2.5">
           <h2 className="m-0 text-[13px] font-bold tracking-wider text-accent uppercase">
-            AI 选课建议
+            {t('rules.aiAdvice')}
           </h2>
-          <span className="ml-auto text-xs text-muted">只在你能修的课里推荐</span>
+          <span className="ml-auto text-xs text-muted">{t('rules.aiAdviceHint')}</span>
         </div>
         <div className="flex flex-col gap-2.5">
           <Input
-            placeholder="说说你的方向或目标,如「我想做 AI 和机器学习」"
+            placeholder={t('rules.goalPlaceholder')}
             value={goal}
             onChange={(e) => onGoalChange(e.target.value)}
             onKeyDown={(e) => {
@@ -617,7 +631,7 @@ export default function RulesPane(props: RulesPaneProps) {
             className="w-full"
           />
           <Button isDisabled={advising || !goal.trim()} onPress={onAdvise} className="self-start">
-            {advising ? '思考中…' : '给我推荐'}
+            {advising ? t('rules.thinking') : t('rules.recommend')}
           </Button>
         </div>
         {advice && (
@@ -630,7 +644,7 @@ export default function RulesPane(props: RulesPaneProps) {
             {advice.candidates && advice.candidates.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <span className="text-xs font-semibold tracking-wide text-muted">
-                  候选(点一下放进计划)
+                  {t('rules.candidates')}
                 </span>
                 <div className="flex flex-wrap gap-1.5">
                   {advice.candidates.map((c) => (
@@ -650,8 +664,7 @@ export default function RulesPane(props: RulesPaneProps) {
             {advice.note && <div className="text-xs text-muted italic">{advice.note}</div>}
             {!!advice.unreachable_count && (
               <div className="text-xs text-muted italic">
-                另有 {advice.unreachable_count}{' '}
-                门可选课暂无开课/检索信息,未纳入推荐,可在官方课表核对。
+                {t('rules.unreachable', { n: advice.unreachable_count })}
               </div>
             )}
           </div>
@@ -660,14 +673,14 @@ export default function RulesPane(props: RulesPaneProps) {
       {/* Rule list */}
       <section className={cardCls}>
         {topRules.length === 0 ? (
-          <div className="py-5 text-center text-sm text-muted">没有可选课程。</div>
+          <div className="py-5 text-center text-sm text-muted">{t('rules.noAvailable')}</div>
         ) : (
           <>
             {unattNode}
             {topRules.length > 1 ? (
               <>
                 <Select
-                  aria-label="顶层规则"
+                  aria-label={t('rules.topRules')}
                   className="mb-4 w-full min-w-0"
                   selectedKey={curTab}
                   onSelectionChange={(k) => k != null && setActiveTab(String(k))}

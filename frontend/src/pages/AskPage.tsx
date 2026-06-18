@@ -1,20 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Alert, Button, InputGroup, Spinner, TextField } from '@heroui/react'
 import { motion, useReducedMotion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
 import Results from '../components/Results'
 import { fetchAskStream, type AskMeta, type AskResult } from '../api/ask'
 import { easeOut } from '../lib/motion'
-
-const EXAMPLES = [
-  '跟机器学习相关、没有考试的课',
-  '介绍一下 CSSE1001',
-  'CSSE1001是哪些专业的必修',
-  'census date 是什么时候',
-  '怎么申请缓考',
-  'St Lucia 校区停车怎么收费',
-]
-
-const PLACEHOLDER = '问点什么…比如:跟机器学习相关、没有考试的课'
 
 interface Turn {
   id: number
@@ -32,17 +22,19 @@ interface ExampleChipsProps {
 }
 
 function ExampleChips({ onPick, className = '' }: ExampleChipsProps) {
+  const { t } = useTranslation()
+  const examples = t('ask.examples', { returnObjects: true }) as string[]
   return (
     <div className={`flex flex-wrap gap-2.5 ${className}`}>
-      {EXAMPLES.map((t) => (
+      {examples.map((ex) => (
         <Button
-          key={t}
+          key={ex}
           size="sm"
           variant="tertiary"
           className="rounded-full font-normal"
-          onPress={() => onPick(t)}
+          onPress={() => onPick(ex)}
         >
-          {t}
+          {ex}
         </Button>
       ))}
     </div>
@@ -57,14 +49,15 @@ interface ComposerProps {
 }
 
 function Composer({ value, onChange, onSend, busy }: ComposerProps) {
+  const { t } = useTranslation()
   return (
-    <TextField aria-label={PLACEHOLDER} className="w-full">
+    <TextField aria-label={t('ask.placeholder')} className="w-full">
       <InputGroup className="rounded-full">
         <InputGroup.Input
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onSend()}
-          placeholder={PLACEHOLDER}
+          placeholder={t('ask.placeholder')}
           autoComplete="off"
           enterKeyHint="send"
         />
@@ -75,7 +68,7 @@ function Composer({ value, onChange, onSend, busy }: ComposerProps) {
             onPress={onSend}
             size="sm"
             className="rounded-full"
-            aria-label="提问"
+            aria-label={t('ask.send')}
           >
             {({ isPending }) =>
               isPending ? (
@@ -104,11 +97,12 @@ function Composer({ value, onChange, onSend, busy }: ComposerProps) {
 }
 
 function Thinking() {
+  const { t } = useTranslation()
   return (
     <div
       className="flex items-center gap-1.5 py-1.5 text-muted"
       role="status"
-      aria-label="正在生成回答"
+      aria-label={t('ask.generating')}
     >
       {[0, 1, 2].map((i) => (
         <span
@@ -126,6 +120,7 @@ interface ChatTurnProps {
 }
 
 function ChatTurn({ turn }: ChatTurnProps) {
+  const { t } = useTranslation()
   const reduce = useReducedMotion()
   const synth: AskResult = {
     mode: turn.meta?.mode,
@@ -153,7 +148,7 @@ function ChatTurn({ turn }: ChatTurnProps) {
           <Alert status="danger">
             <Alert.Indicator />
             <Alert.Content>
-              <Alert.Title>出错了</Alert.Title>
+              <Alert.Title>{t('common.errorTitle')}</Alert.Title>
               <Alert.Description>{turn.err}</Alert.Description>
             </Alert.Content>
           </Alert>
@@ -168,6 +163,7 @@ function ChatTurn({ turn }: ChatTurnProps) {
 }
 
 export default function AskPage() {
+  const { t } = useTranslation()
   const [q, setQ] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
   const idRef = useRef(0)
@@ -207,7 +203,7 @@ export default function AskPage() {
     return (
       <div className="mx-auto flex min-h-[calc(100dvh-64px)] w-full max-w-2xl flex-col justify-center px-5 pb-24">
         <h1 className="mb-20 text-center text-[clamp(26px,5vw,36px)] leading-tight font-semibold tracking-tight">
-          有什么想问 UQ 的?
+          {t('ask.heading')}
         </h1>
         <Composer value={q} onChange={setQ} onSend={() => ask()} busy={busy} />
         <ExampleChips onPick={(t) => ask(t)} className="mt-10" />

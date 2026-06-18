@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { Card, Chip, Disclosure } from '@heroui/react'
 import { motion, useReducedMotion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
 import type {
   AskResult,
   Course,
@@ -10,7 +11,7 @@ import type {
   ProgramAnswer,
   ProgramFact,
 } from '../api/ask'
-import { cnNum, collapseSlots, levelZh, type Slot } from '../lib/courses'
+import { collapseSlots, levelZh, type Slot } from '../lib/courses'
 import { easeOut, riseDelay, riseIn } from '../lib/motion'
 import AnswerMarkdown from './AnswerMarkdown'
 
@@ -18,12 +19,13 @@ const DISPLAY_CAP = 40
 const PROG_CAP = 24
 
 function PlanInSimLink({ programId, programName }: { programId: string; programName: string }) {
+  const { t } = useTranslation()
   return (
     <Link
       to={`/sim?program=${encodeURIComponent(programId)}`}
       className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-3.5 py-1.5 text-[13.5px] font-semibold text-accent-soft-foreground transition hover:opacity-90"
     >
-      用选课模拟器规划 {programName} →
+      {t('results.planInSim', { name: programName })}
     </Link>
   )
 }
@@ -60,15 +62,17 @@ function Rise({ i, children }: { i: number; children: ReactNode }) {
 }
 
 function MoreNote({ total, cap, unit }: { total: number; cap: number; unit: string }) {
+  const { t } = useTranslation()
   if (total <= cap) return null
   return (
     <div className="pt-5 pb-1 text-center text-[15px] text-muted">
-      还有 {total - cap} {unit}未显示 —— 缩小条件能得到更精确的结果
+      {t('results.moreNote', { n: total - cap, unit })}
     </div>
   )
 }
 
 function CourseTags({ c }: { c: Course }) {
+  const { t } = useTranslation()
   const tags: ReactNode[] = []
   if (c.level)
     tags.push(
@@ -79,7 +83,7 @@ function CourseTags({ c }: { c: Course }) {
   if (c.units != null)
     tags.push(
       <Chip size="sm" variant="soft" key="u">
-        {c.units} 学分
+        {t('common.units', { n: c.units })}
       </Chip>,
     )
   if (c.semester)
@@ -91,25 +95,25 @@ function CourseTags({ c }: { c: Course }) {
   if (c.has_exam === true)
     tags.push(
       <Chip size="sm" variant="soft" color="warning" key="e">
-        有考试
+        {t('common.hasExam')}
       </Chip>,
     )
   if (c.has_exam === false)
     tags.push(
       <Chip size="sm" variant="soft" key="ne">
-        无考试
+        {t('common.noExam')}
       </Chip>,
     )
   if (c.requirement_type === 'core')
     tags.push(
       <Chip size="sm" variant="primary" color="warning" key="r">
-        必修
+        {t('common.core')}
       </Chip>,
     )
   if (c.requirement_type === 'elective')
     tags.push(
       <Chip size="sm" variant="soft" key="el">
-        选修
+        {t('common.elective')}
       </Chip>,
     )
   if (!tags.length) return null
@@ -117,6 +121,7 @@ function CourseTags({ c }: { c: Course }) {
 }
 
 function CourseCard({ c, i }: { c: Course; i: number }) {
+  const { t } = useTranslation()
   return (
     <Rise i={i}>
       <Card className="flex-row items-start gap-3.5">
@@ -125,7 +130,7 @@ function CourseCard({ c, i }: { c: Course; i: number }) {
         </Chip>
         <div className="min-w-0 flex-1">
           <div className="text-[15.5px] leading-snug font-semibold">
-            {c.title || <span className="text-muted">(本学期无开课信息)</span>}
+            {c.title || <span className="text-muted">{t('results.noOfferingThisSem')}</span>}
           </div>
           <CourseTags c={c} />
           {c.profile_url && (
@@ -135,7 +140,7 @@ function CourseCard({ c, i }: { c: Course; i: number }) {
               rel="noopener noreferrer"
               className="mt-2 inline-block text-[13px] font-medium text-accent hover:underline"
             >
-              官方课程页 →
+              {t('results.officialPage')}
             </a>
           )}
         </div>
@@ -150,17 +155,19 @@ function CourseCard({ c, i }: { c: Course; i: number }) {
 }
 
 function OrLine() {
+  const { t } = useTranslation()
   return (
     <div className="my-2 flex items-center gap-2 text-[11.5px] font-semibold tracking-wider text-muted">
       <span className="h-px flex-1 bg-separator" />
-      或
+      {t('common.or')}
       <span className="h-px flex-1 bg-separator" />
     </div>
   )
 }
 
 function GroupCard({ slot, i }: { slot: Slot; i: number }) {
-  const choice = `${cnNum(slot.members.length)}选一`
+  const { t } = useTranslation()
+  const n = slot.members.length
   const isCore = slot.members[0].requirement_type === 'core'
   return (
     <Rise i={i}>
@@ -179,11 +186,11 @@ function GroupCard({ slot, i }: { slot: Slot; i: number }) {
         <div className="mt-2 flex flex-wrap gap-1.5">
           {isCore ? (
             <Chip size="sm" variant="soft" color="warning">
-              {choice}核心
+              {t('results.chooseOneCore', { n })}
             </Chip>
           ) : (
             <Chip size="sm" variant="soft">
-              选修·{choice}
+              {t('results.chooseOneElective', { n })}
             </Chip>
           )}
         </div>
@@ -193,23 +200,24 @@ function GroupCard({ slot, i }: { slot: Slot; i: number }) {
 }
 
 function ProgramRow({ p, i }: { p: ProgramFact; i: number }) {
+  const { t } = useTranslation()
   const req =
     p.requirement_type === 'core' ? (
       p.equiv_group ? (
         <Chip size="sm" variant="soft" color="warning" className="shrink-0">
-          {cnNum(p.equiv_group.split('|').length)}选一核心
+          {t('results.chooseOneCore', { n: p.equiv_group.split('|').length })}
         </Chip>
       ) : (
         <Chip size="sm" variant="primary" color="warning" className="shrink-0">
-          必修
+          {t('common.core')}
         </Chip>
       )
     ) : (
       <Chip size="sm" variant="soft" className="shrink-0">
-        选修
+        {t('common.elective')}
       </Chip>
     )
-  const via = p.via_plan ? ` · 经 ${p.plan_subtype || p.via_plan}` : ''
+  const via = p.via_plan ? t('results.viaPlan', { plan: p.plan_subtype || p.via_plan }) : ''
   return (
     <Rise i={i}>
       <Card className="flex-row items-center gap-3">
@@ -253,6 +261,7 @@ function KbSourceCard({ s, i }: { s: KbChunk; i: number }) {
 }
 
 function CourseDetailCard({ c }: { c: CourseDetail }) {
+  const { t } = useTranslation()
   const tags: ReactNode[] = []
   if (c.level)
     tags.push(
@@ -263,7 +272,7 @@ function CourseDetailCard({ c }: { c: CourseDetail }) {
   if (c.units != null)
     tags.push(
       <Chip size="sm" variant="soft" key="u">
-        {c.units} 学分
+        {t('common.units', { n: c.units })}
       </Chip>,
     )
   if (c.semesters && c.semesters.length > 0)
@@ -275,19 +284,19 @@ function CourseDetailCard({ c }: { c: CourseDetail }) {
   if (c.has_exam === true)
     tags.push(
       <Chip size="sm" variant="soft" color="warning" key="e">
-        有考试
+        {t('common.hasExam')}
       </Chip>,
     )
   if (c.has_exam === false)
     tags.push(
       <Chip size="sm" variant="soft" key="ne">
-        无考试
+        {t('common.noExam')}
       </Chip>,
     )
   if (c.has_hurdle === true)
     tags.push(
       <Chip size="sm" variant="soft" color="warning" key="h">
-        有 hurdle
+        {t('common.hasHurdle')}
       </Chip>,
     )
   return (
@@ -300,11 +309,13 @@ function CourseDetailCard({ c }: { c: CourseDetail }) {
       </div>
       {tags.length > 0 && <div className="mt-2.5 flex flex-wrap gap-1.5">{tags}</div>}
       <div className="mt-3 text-[14px]">
-        <span className="text-muted">先修:</span> {c.prerequisite_raw || '无先修要求'}
+        <span className="text-muted">{t('results.prereq')}</span>{' '}
+        {c.prerequisite_raw || t('results.noPrereq')}
       </div>
       {c.locations && c.locations.length > 0 && (
         <div className="mt-1 text-[14px]">
-          <span className="text-muted">校区:</span> {c.locations.join('、')}
+          <span className="text-muted">{t('results.campus')}</span>{' '}
+          {c.locations.join(t('common.listSep'))}
         </div>
       )}
       <a
@@ -313,7 +324,7 @@ function CourseDetailCard({ c }: { c: CourseDetail }) {
         rel="noopener noreferrer"
         className="mt-3 inline-block text-[13.5px] font-medium text-accent hover:underline"
       >
-        查看官方课程页 →
+        {t('results.viewOfficialPage')}
       </a>
     </Card>
   )
@@ -326,6 +337,7 @@ export default function Results({
   res: AskResult
   streaming?: boolean
 }) {
+  const { t } = useTranslation()
   const isCourseDetail = res.mode === 'course_detail'
   const isKb = res.mode === 'kb'
   const isProgList = res.mode === 'program' && Array.isArray(res.program_facts)
@@ -361,13 +373,13 @@ export default function Results({
 
       {isCourseDetail ? (
         res.course ? (
-          <Sources label="课程详情">
+          <Sources label={t('results.courseDetail')}>
             <CourseDetailCard c={res.course} />
           </Sources>
         ) : null
       ) : isKb ? (
         kbSources.length ? (
-          <Sources label={`${kbSources.length} 个来源`}>
+          <Sources label={t('results.sources', { n: kbSources.length })}>
             <div className="grid gap-3">
               {kbSources.map((s, i) => (
                 <KbSourceCard key={s.url} s={s} i={i} />
@@ -377,21 +389,21 @@ export default function Results({
         ) : null
       ) : isProgList ? (
         progFacts.length ? (
-          <Sources label={`${progFacts.length} 条结果`}>
+          <Sources label={t('results.resultsCount', { n: progFacts.length })}>
             <div className="grid gap-3">
               {progFacts.slice(0, PROG_CAP).map((p, i) => (
                 <ProgramRow key={`${p.title}-${i}`} p={p} i={i} />
               ))}
             </div>
-            <MoreNote total={progFacts.length} cap={PROG_CAP} unit="个专业" />
+            <MoreNote total={progFacts.length} cap={PROG_CAP} unit={t('results.unitProgram')} />
           </Sources>
         ) : (
           <div className="py-9 text-center text-[15px] text-muted">
-            这门课不在任何已收录专业的课表里。
+            {t('results.notInAnyProgram')}
           </div>
         )
       ) : answerOnly ? null : slots.length ? (
-        <Sources label={`${slots.length} 条结果`}>
+        <Sources label={t('results.resultsCount', { n: slots.length })}>
           <div className="grid gap-3">
             {slots
               .slice(0, DISPLAY_CAP)
@@ -403,12 +415,10 @@ export default function Results({
                 ),
               )}
           </div>
-          <MoreNote total={slots.length} cap={DISPLAY_CAP} unit="门" />
+          <MoreNote total={slots.length} cap={DISPLAY_CAP} unit={t('results.unitCourse')} />
         </Sources>
       ) : (
-        <div className="py-9 text-center text-[15px] text-muted">
-          没有命中课程。换个说法或放宽条件试试。
-        </div>
+        <div className="py-9 text-center text-[15px] text-muted">{t('results.noCourses')}</div>
       )}
     </>
   )

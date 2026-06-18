@@ -22,7 +22,7 @@ resource "aws_bedrockagentcore_agent_runtime" "qa" {
     EMBED_BASE     = var.embed_base
     EMBED_MODEL    = var.embed_model
     EMBED_API_KEY  = var.deepinfra_api_key
-    DATABASE_URL   = local.database_url
+    DATABASE_URL   = var.database_url
   }
 
   depends_on = [aws_iam_role_policy.runtime]

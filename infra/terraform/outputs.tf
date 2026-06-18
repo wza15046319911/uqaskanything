@@ -3,17 +3,6 @@ output "ecr_repository_url" {
   value       = aws_ecr_repository.qa.repository_url
 }
 
-output "rds_endpoint" {
-  description = "pg_restore target host"
-  value       = aws_db_instance.qa.address
-}
-
-output "database_url" {
-  description = "DATABASE_URL (injected into the Runtime; also used when migrating data)"
-  value       = local.database_url
-  sensitive   = true
-}
-
 output "agent_runtime_id" {
   description = "AgentCore Runtime id"
   value       = aws_bedrockagentcore_agent_runtime.qa.agent_runtime_id

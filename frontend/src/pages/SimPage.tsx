@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Alert, toast } from '@heroui/react'
+import { useTranslation } from 'react-i18next'
 import ProgramSearch from '../components/sim/ProgramSearch'
 import RulesPane from '../components/sim/RulesPane'
 import Timetable from '../components/sim/Timetable'
@@ -25,6 +26,7 @@ import {
 } from '../lib/sim'
 
 export default function SimPage() {
+  const { t } = useTranslation()
   const [state, setState] = useState<SimLocalState>(loadState)
   const [programs, setPrograms] = useState<Program[]>([])
   const [data, setData] = useState<SimStateResponse | null>(null)
@@ -65,7 +67,7 @@ export default function SimPage() {
       setData(d)
     } catch (e) {
       if (seq !== refreshSeq.current) return
-      setErr(`连不上服务:${e instanceof Error ? e.message : String(e)}`)
+      setErr(t('sim.connectFail', { msg: e instanceof Error ? e.message : String(e) }))
     }
   }
 
@@ -125,7 +127,7 @@ export default function SimPage() {
     const o = offered(code)
     const kind = semKind(state.start_sem, cell)
     if (o && !o.includes(kind)) {
-      showToast(`${code} 不在 ${kind} 开课(开:${o.join('/')})`)
+      showToast(t('sim.notOfferedIn', { code, kind, list: o.join('/') }))
       return
     }
     place(code, cell)
@@ -184,7 +186,7 @@ export default function SimPage() {
 
   const doAdvise = async () => {
     if (!goal.trim()) {
-      showToast('先写一句目标')
+      showToast(t('sim.writeGoalFirst'))
       return
     }
     setAdvising(true)
@@ -198,13 +200,13 @@ export default function SimPage() {
         goal: goal.trim(),
       })
       if (d.error) {
-        showToast('建议出错:' + d.error)
+        showToast(t('sim.adviseError', { msg: d.error }))
         return
       }
       setAdvice(d)
       setExtraOff((m) => ({ ...m, ...(d.offerings || {}) }))
     } catch (e) {
-      showToast('连不上服务:' + (e instanceof Error ? e.message : String(e)))
+      showToast(t('sim.connectFail', { msg: e instanceof Error ? e.message : String(e) }))
     } finally {
       setAdvising(false)
     }
@@ -213,7 +215,7 @@ export default function SimPage() {
   const doAuto = async () => {
     const sel = Object.keys(state.placement)
     if (!sel.length) {
-      showToast('先把课拖进来或点进来,再自动排')
+      showToast(t('sim.dragFirst'))
       return
     }
     const d = await postSimSchedule({
@@ -224,7 +226,7 @@ export default function SimPage() {
       start_sem: state.start_sem,
     })
     if (d.error) {
-      showToast('排课出错:' + d.error)
+      showToast(t('sim.scheduleError', { msg: d.error }))
       return
     }
     const np: Record<string, number> = {}
@@ -233,7 +235,7 @@ export default function SimPage() {
       if (!(u.code in np)) np[u.code] = 0
     })
     apply({ ...state, placement: np })
-    if (d.unplaced.length) showToast(`${d.unplaced.length} 门排不下(学期/上限不够),已置 Y1 待调`)
+    if (d.unplaced.length) showToast(t('sim.unplacedNote', { n: d.unplaced.length }))
   }
 
   const current = programs.find((p) => p.program_id === state.program_id)
@@ -251,13 +253,13 @@ export default function SimPage() {
         <Alert status="danger" className="mb-4">
           <Alert.Indicator />
           <Alert.Content>
-            <Alert.Title>出错</Alert.Title>
+            <Alert.Title>{t('common.error')}</Alert.Title>
             <Alert.Description>{err}</Alert.Description>
           </Alert.Content>
         </Alert>
       )}
       {!data && !err && (
-        <div className="py-6 text-center text-sm text-muted">先在上方搜一个专业开始。</div>
+        <div className="py-6 text-center text-sm text-muted">{t('sim.searchProgramToStart')}</div>
       )}
 
       {data && (

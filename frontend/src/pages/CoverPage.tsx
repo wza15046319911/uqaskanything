@@ -19,6 +19,7 @@ import {
   TextField,
   toast,
 } from '@heroui/react'
+import { useTranslation } from 'react-i18next'
 import { exportNodePng } from '../lib/export-image'
 import { renderDiffusionDataUrl, seedFromString } from '../lib/diffusion-bg'
 import DiffusionControls, { type DiffusionParams } from '../components/DiffusionControls'
@@ -27,7 +28,6 @@ import styles from './CoverPage.module.css'
 
 const PALETTES = {
   uqpurple: {
-    name: 'UQ 紫',
     deep: '#26215C',
     mid: '#3C3489',
     main: '#534AB7',
@@ -37,7 +37,6 @@ const PALETTES = {
     line: '#CECBF6',
   },
   blue: {
-    name: '科技蓝',
     deep: '#042C53',
     mid: '#0C447C',
     main: '#185FA5',
@@ -47,7 +46,6 @@ const PALETTES = {
     line: '#B5D4F4',
   },
   teal: {
-    name: '清新青',
     deep: '#04342C',
     mid: '#085041',
     main: '#0F6E56',
@@ -57,7 +55,6 @@ const PALETTES = {
     line: '#9FE1CB',
   },
   coral: {
-    name: '暖珊瑚',
     deep: '#4A1B0C',
     mid: '#712B13',
     main: '#993C1D',
@@ -67,7 +64,6 @@ const PALETTES = {
     line: '#F5C4B3',
   },
   pink: {
-    name: '莓粉',
     deep: '#4B1528',
     mid: '#72243E',
     main: '#993556',
@@ -77,7 +73,6 @@ const PALETTES = {
     line: '#F4C0D1',
   },
   green: {
-    name: '鲜绿',
     deep: '#173404',
     mid: '#27500A',
     main: '#3B6D11',
@@ -87,7 +82,6 @@ const PALETTES = {
     line: '#C0DD97',
   },
   amber: {
-    name: '琥珀',
     deep: '#412402',
     mid: '#633806',
     main: '#854F0B',
@@ -97,7 +91,6 @@ const PALETTES = {
     line: '#FAC775',
   },
   gray: {
-    name: '极简灰',
     deep: '#2C2C2A',
     mid: '#444441',
     main: '#5F5E5A',
@@ -111,28 +104,6 @@ const PALETTES = {
 type PaletteKey = keyof typeof PALETTES
 type BgType = 'uqphoto' | 'sketch' | 'diffusion' | 'none' | 'photo'
 type CoverType = 'review' | 'combo'
-
-const COVER_OPTIONS = [
-  { id: 'review', label: '课程攻略（单课程点评）' },
-  { id: 'combo', label: '选课搭配（一学期组合）' },
-]
-
-const STAR_OPTIONS = [
-  { id: '0', label: '不显示' },
-  { id: '1', label: '★' },
-  { id: '2', label: '★★' },
-  { id: '3', label: '★★★' },
-  { id: '4', label: '★★★★' },
-  { id: '5', label: '★★★★★' },
-]
-
-const BG_OPTIONS = [
-  { id: 'uqphoto', label: 'UQ Forgan Smith 钟楼（内置）' },
-  { id: 'sketch', label: '砂岩建筑线稿' },
-  { id: 'diffusion', label: '弥散渐变（生成）' },
-  { id: 'none', label: '纯白' },
-  { id: 'photo', label: '我自己的照片' },
-]
 
 const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
 
@@ -195,21 +166,38 @@ function FieldSelect({ label, value, options, onChange }: FieldSelectProps) {
 }
 
 export default function CoverPage() {
+  const { t } = useTranslation()
+  const coverOptions = [
+    { id: 'review', label: t('cover.coverTypeReview') },
+    { id: 'combo', label: t('cover.coverTypeCombo') },
+  ]
+  const starOptions = [
+    { id: '0', label: t('cover.starNone') },
+    { id: '1', label: '★' },
+    { id: '2', label: '★★' },
+    { id: '3', label: '★★★' },
+    { id: '4', label: '★★★★' },
+    { id: '5', label: '★★★★★' },
+  ]
+  const bgOptions = [
+    { id: 'uqphoto', label: t('cover.bgUqphoto') },
+    { id: 'sketch', label: t('cover.bgSketch') },
+    { id: 'diffusion', label: t('cover.bgDiffusion') },
+    { id: 'none', label: t('cover.bgNone') },
+    { id: 'photo', label: t('cover.bgPhoto') },
+  ]
+
   const [coverType, setCoverType] = useState<CoverType>('review')
-  const [eyebrow, setEyebrow] = useState('UQ选课笔记')
+  const [eyebrow, setEyebrow] = useState(() => t('cover.default.eyebrow'))
   const [code, setCode] = useState('INFS7410')
-  const [name, setName] = useState('信息检索')
-  const [quote, setQuote] = useState(
-    '难度中等，但逼你绕开 AI\n真正搞懂检索和 RAG 原理\n想入门 IR 的可以闭眼冲 ✅',
-  )
+  const [name, setName] = useState(() => t('cover.default.name'))
+  const [quote, setQuote] = useState(() => t('cover.default.quote'))
   const [difficulty, setDifficulty] = useState(3)
   const [recommend, setRecommend] = useState(5)
-  const [comboTerm, setComboTerm] = useState('2026 S2 选课搭配')
+  const [comboTerm, setComboTerm] = useState(() => t('cover.default.comboTerm'))
   const [comboSubtitle, setComboSubtitle] = useState('BACHELOR OF COMPUTER SCIENCE')
-  const [comboCourses, setComboCourses] = useState(
-    'INFS2200 数据库系统\nDECO2500 人机交互\nCSSE2310 C 与 Unix 编程\nCOMP3506 数据结构与算法',
-  )
-  const [comboNote, setComboNote] = useState('大二上的稳健搭配\n两门硬课配一门项目课，强度刚好')
+  const [comboCourses, setComboCourses] = useState(() => t('cover.default.comboCourses'))
+  const [comboNote, setComboNote] = useState(() => t('cover.default.comboNote'))
   const [cardId, setCardId] = useState('@nilobjectfound')
   const [tags, setTags] = useState('')
   const [palette, setPalette] = useState<PaletteKey>('uqpurple')
@@ -421,7 +409,7 @@ export default function CoverPage() {
         quality: 0.92,
       })
     } catch (e) {
-      toast(`导出失败：${e instanceof Error ? e.message : String(e)}`)
+      toast(t('cover.exportFail', { msg: e instanceof Error ? e.message : String(e) }))
     } finally {
       fitStage()
       setExporting(false)
@@ -459,59 +447,57 @@ export default function CoverPage() {
       <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
         <aside className="rounded-2xl border border-border bg-surface p-6 shadow-surface lg:sticky lg:top-6 lg:w-[360px] lg:shrink-0">
           <div className="mb-5">
-            <h1 className="text-lg font-semibold text-foreground">UQ 选课封面生成器</h1>
-            <p className="mt-1 text-[13px] text-muted">
-              课程攻略 / 选课搭配 → 实时预览 → 导出小红书竖版图（1080×1440）
-            </p>
+            <h1 className="text-lg font-semibold text-foreground">{t('cover.title')}</h1>
+            <p className="mt-1 text-[13px] text-muted">{t('cover.subtitle')}</p>
           </div>
 
           <div className="space-y-4">
             <FieldSelect
-              label="封面类型"
+              label={t('cover.coverTypeLabel')}
               value={coverType}
-              options={COVER_OPTIONS}
+              options={coverOptions}
               onChange={(v) => setCoverType(v as CoverType)}
             />
 
-            <FieldText label="顶部标签" value={eyebrow} onChange={setEyebrow} />
+            <FieldText label={t('cover.eyebrowLabel')} value={eyebrow} onChange={setEyebrow} />
 
             {coverType === 'review' ? (
               <>
                 <FieldText
-                  label="课程代码"
+                  label={t('cover.codeLabel')}
                   value={code}
                   onChange={setCode}
-                  placeholder="如 INFS7410"
+                  placeholder={t('cover.codePlaceholder')}
                 />
                 <FieldText
-                  label="课程名称"
+                  label={t('cover.nameLabel')}
                   value={name}
                   onChange={setName}
-                  placeholder="如 信息检索"
+                  placeholder={t('cover.namePlaceholder')}
                 />
 
                 <div>
                   <TextField value={quote} onChange={setQuote} className="w-full">
-                    <Label>一句话点评</Label>
-                    <TextArea placeholder="支持换行" rows={4} />
+                    <Label>{t('cover.quoteLabel')}</Label>
+                    <TextArea placeholder={t('cover.quotePlaceholder')} rows={4} />
                   </TextField>
-                  <p className="mt-1 text-xs text-muted">建议 2–3 行，每行别太长</p>
+                  <p className="mt-1 text-xs text-muted">{t('cover.quoteHint')}</p>
                 </div>
 
                 <div className="flex gap-3">
                   <div className="flex-1">
                     <FieldSelect
-                      label="难度"
+                      label={t('cover.difficulty')}
                       value={String(difficulty)}
-                      options={STAR_OPTIONS}
+                      options={starOptions}
                       onChange={(v) => setDifficulty(Number(v))}
                     />
                   </div>
                   <div className="flex-1">
                     <FieldSelect
-                      label="推荐"
+                      label={t('cover.recommend')}
                       value={String(recommend)}
-                      options={STAR_OPTIONS}
+                      options={starOptions}
                       onChange={(v) => setRecommend(Number(v))}
                     />
                   </div>
@@ -520,52 +506,50 @@ export default function CoverPage() {
             ) : (
               <>
                 <FieldText
-                  label="大标题"
+                  label={t('cover.comboTermLabel')}
                   value={comboTerm}
                   onChange={setComboTerm}
-                  placeholder="如 2026 S2 选课搭配"
+                  placeholder={t('cover.comboTermPlaceholder')}
                 />
                 <FieldText
-                  label="英文副标题"
+                  label={t('cover.comboSubtitleLabel')}
                   value={comboSubtitle}
                   onChange={setComboSubtitle}
-                  placeholder="如 BACHELOR OF COMPUTER SCIENCE"
+                  placeholder={t('cover.comboSubtitlePlaceholder')}
                 />
                 <div>
                   <TextField value={comboCourses} onChange={setComboCourses} className="w-full">
-                    <Label>课程清单</Label>
-                    <TextArea placeholder="每行一门：代码 + 空格 + 名称" rows={5} />
+                    <Label>{t('cover.comboCoursesLabel')}</Label>
+                    <TextArea placeholder={t('cover.comboCoursesPlaceholder')} rows={5} />
                   </TextField>
-                  <p className="mt-1 text-xs text-muted">
-                    每行一门，如「INFS2200 数据库系统」，建议 3–5 门
-                  </p>
+                  <p className="mt-1 text-xs text-muted">{t('cover.comboCoursesHint')}</p>
                 </div>
                 <div>
                   <TextField value={comboNote} onChange={setComboNote} className="w-full">
-                    <Label>底部说明（可选）</Label>
-                    <TextArea placeholder="支持换行" rows={2} />
+                    <Label>{t('cover.comboNoteLabel')}</Label>
+                    <TextArea placeholder={t('cover.comboNotePlaceholder')} rows={2} />
                   </TextField>
                 </div>
               </>
             )}
 
-            <FieldText label="右下角 ID" value={cardId} onChange={setCardId} />
+            <FieldText label={t('cover.cardIdLabel')} value={cardId} onChange={setCardId} />
             <FieldText
-              label="底部关键词标签（空格分隔）"
+              label={t('cover.tagsLabel')}
               value={tags}
               onChange={setTags}
-              hint="3–4 个最佳，带不带 # 都行"
+              hint={t('cover.tagsHint')}
             />
 
             <div>
-              <Label>配色（同骨架换色，方便区分学科）</Label>
+              <Label>{t('cover.paletteLabel')}</Label>
               <div className="mt-2 flex flex-wrap gap-2">
                 {(Object.keys(PALETTES) as PaletteKey[]).map((key) => (
                   <button
                     key={key}
                     type="button"
-                    title={PALETTES[key].name}
-                    aria-label={PALETTES[key].name}
+                    title={t(`cover.palette.${key}`)}
+                    aria-label={t(`cover.palette.${key}`)}
                     onClick={() => setPalette(key)}
                     className={`h-7 w-7 rounded-lg border-2 transition-transform hover:scale-110 ${
                       palette === key ? 'border-foreground' : 'border-transparent'
@@ -577,9 +561,9 @@ export default function CoverPage() {
             </div>
 
             <FieldSelect
-              label="背景"
+              label={t('cover.bgLabel')}
               value={bgType}
-              options={BG_OPTIONS}
+              options={bgOptions}
               onChange={(v) => handleBgChange(v as BgType)}
             />
 
@@ -587,16 +571,14 @@ export default function CoverPage() {
 
             {bgType === 'photo' ? (
               <div>
-                <Label>上传背景照片</Label>
+                <Label>{t('cover.uploadLabel')}</Label>
                 <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleUpload} />
                 <div className="mt-2">
                   <Button variant="tertiary" size="sm" onPress={() => fileRef.current?.click()}>
-                    {photo ? '已选择，点击更换' : '选择图片'}
+                    {photo ? t('cover.photoChosen') : t('cover.photoChoose')}
                   </Button>
                 </div>
-                <p className="mt-1 text-xs text-muted">
-                  建议用你自己拍的 UQ 照片（竖图最佳）。仅在本机处理，不会上传到任何服务器。
-                </p>
+                <p className="mt-1 text-xs text-muted">{t('cover.photoHint')}</p>
               </div>
             ) : null}
 
@@ -609,7 +591,7 @@ export default function CoverPage() {
               className="w-full"
             >
               <div className="mb-1.5 flex items-center justify-between">
-                <Label>背景淡化浓度</Label>
+                <Label>{t('cover.fadeLabel')}</Label>
                 <span className="text-xs text-muted">{fade}%</span>
               </div>
               <Slider.Track>
@@ -620,10 +602,10 @@ export default function CoverPage() {
 
             <div className="space-y-2.5 pt-1">
               <Button className="w-full" isDisabled={exporting} onPress={handleExport}>
-                {exporting ? '导出中…' : '导出 JPG（2× 高清 · 约 0.5MB）'}
+                {exporting ? t('cover.exporting') : t('cover.exportJpg')}
               </Button>
               <Button className="w-full" variant="ghost" onPress={handleCopy}>
-                {copied ? '已复制 ✓' : '复制当前配置'}
+                {copied ? t('cover.copied') : t('cover.copyConfig')}
               </Button>
             </div>
           </div>
@@ -705,13 +687,13 @@ export default function CoverPage() {
                   >
                     {difficulty > 0 ? (
                       <div>
-                        <div className={styles.rlabel}>难度</div>
+                        <div className={styles.rlabel}>{t('cover.difficulty')}</div>
                         <div className={styles.rstars}>{stars(difficulty)}</div>
                       </div>
                     ) : null}
                     {recommend > 0 ? (
                       <div>
-                        <div className={styles.rlabel}>推荐</div>
+                        <div className={styles.rlabel}>{t('cover.recommend')}</div>
                         <div className={styles.rstars}>{stars(recommend)}</div>
                       </div>
                     ) : null}
@@ -764,9 +746,7 @@ export default function CoverPage() {
               </div>
             </div>
           </div>
-          <p className="max-w-[540px] text-center text-xs text-muted">
-            预览是等比缩小图，导出的是 2160×2880 高清 JPG（约 0.5MB）。换色、改字都会实时更新。
-          </p>
+          <p className="max-w-[540px] text-center text-xs text-muted">{t('cover.previewNote')}</p>
         </section>
       </div>
     </div>
