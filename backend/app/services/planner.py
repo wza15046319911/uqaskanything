@@ -966,6 +966,12 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             out["semantic_query"] = ""
             return out
 
+    # A course_detail reaching here is an LLM misroute: the valid course_detail returns early above
+    # with a regex-validated code, so any course_detail left at this point has no real code (e.g. "介绍一下 cs se").
+    # Demote it to "" so the fallback chain below re-routes by topic, instead of qa calling course_detail with an empty code (500).
+    if out["mode"] == "course_detail":
+        out["mode"] = ""
+
     # Non-program: clear program-related fields
     out["course_code"] = ""
     out["program_name"] = ""

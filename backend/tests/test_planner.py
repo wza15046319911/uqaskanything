@@ -187,3 +187,16 @@ def test_validate_coord_unit_accepts_only_real_enum(monkeypatch):
     # 空/None 安全
     assert _validate_coord_unit("") == ""
     assert _validate_coord_unit(None) == ""
+
+
+def test_course_detail_without_real_code_demoted(monkeypatch):
+    # LLM 误把无课程码的问题(如「介绍一下 cs se」)判成 course_detail,course_code 为空。
+    # 问题里没有可匹配的课程码,确定性 override 不触发 -> 必须降级重路由,
+    # 绝不返回 course_detail + 空 code(否则 qa 调 retrieval.course_detail 空码 500)。
+    fake = ('{"mode":"course_detail","semantic_query":"","filters":{},'
+            '"course_code":"","program_name":"","direction":"","kb_query":""}')
+    monkeypatch.setattr(planner, "_call_llm", lambda prompt: fake)
+    p = plan("给我介绍一下cs se", schema_doc="x")
+    assert p["mode"] != "course_detail"
+    # 有主题词 -> 降级到 semantic 并兜底语义词,而不是直接 500
+    assert p["mode"] == "semantic" and p["semantic_query"]

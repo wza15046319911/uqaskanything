@@ -1,0 +1,14 @@
+{"q": "What is the census date and why does it matter?", "mode": "kb", "answer_has": ["census date", "fee liability"], "source_has": "Sources"}
+{"q": "What are the prerequisites for MATH1051", "mode": "course_detail", "answer_has": ["MATH1051", "prerequisites", "MATH1050", "ECP"]}
+{"q": "Does CSSE1001 have a quiz", "mode": "course_detail", "answer_has": ["CSSE1001", "quiz"]}
+{"q": "Which programs have CSSE1001 as a compulsory course", "mode": "program", "answer_has": ["CSSE1001", "compulsory"]}
+{"q": "Can the Bachelor of Computer Science take CSSE1001", "mode": "program", "answer_has": ["CSSE1001"]}
+{"q": "What are the core courses of the Master of Data Science", "mode": "program", "answer_has": ["DATA7001"], "answer_hasnt": ["CSSE1001"]}
+{"q": "What are the elective courses of the Bachelor of Computer Science", "mode": "program", "answer_has": ["direction]", "STAT3006"], "answer_hasnt": ["CSSE1001"]}
+{"q": "Which courses in the Bachelor of Computer Science have no exam", "mode": "program", "answer_has": ["matching the filter"]}
+{"q": "undergraduate courses with no exam", "mode": "filter", "courses_satisfy": {"has_exam": false, "level": "Undergraduate"}}
+{"q": "2-unit courses", "mode": "filter", "courses_satisfy": {"units": 2}}
+{"q": "courses related to machine learning", "mode": "semantic"}
+{"q": "AI courses at the St Lucia campus", "mode": "hybrid"}
+{"q": "How do I apply for UQ's Mars exchange program?", "refuse": true}
+{"q": "How do I enrol in the UQ dragon riding course?", "refuse": true}
