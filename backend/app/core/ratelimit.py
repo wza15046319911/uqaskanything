@@ -55,7 +55,10 @@ def _verify_turnstile(token: str, ip: str) -> bool:
             timeout=5,
         )
         r.raise_for_status()
-        return bool(r.json().get("success"))
+        data = r.json()
+        if not data.get("success"):
+            print(f"turnstile siteverify failed: {data.get('error-codes')}", flush=True)
+        return bool(data.get("success"))
     except requests.RequestException:
         return True
 
