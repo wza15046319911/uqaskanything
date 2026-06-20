@@ -444,7 +444,7 @@ export default function CoverPage() {
   const [contentPages, setContentPages] = useState<string[]>([''])
   const [cardId, setCardId] = useState('@nilobjectfound')
   const [noteTitle, setNoteTitle] = useState(() => t('cover.default.noteTitle'))
-  const [decoScheme, setDecoScheme] = useState<SchemeId>('auto')
+  const [decoScheme] = useState<SchemeId>('auto')
   // Keep the picked color as an HSB Color: hex drops hue/saturation at zero brightness/saturation, which froze the hue slider on black. Downstream still reads a hex via textColor.
   const [textColorObj, setTextColorObj] = useState(() => parseColor(DEFAULT_TEXT).toFormat('hsb'))
   const textColor = textColorObj.toString('hex')
