@@ -100,6 +100,12 @@ npm run build    # tsc -b && vite build
 
 The backend expects Postgres + pgvector on port **5433**, database `uq_courses`.
 
+Or bring up the whole stack (pgvector db + backend + frontend) at once:
+
+```bash
+docker compose up        # db :5433, backend :8077, frontend :5173
+```
+
 ## Data pipeline (offline, ordered)
 
 Scrapers produce JSONL in `data/`, pipelines load it into Postgres:
@@ -121,7 +127,7 @@ Before serving real students, run the evals (not just "it didn't crash"):
 - **Self-hosted (e.g. a Hong Kong VPS for users in China):** Postgres + pgvector
   in Docker, DeepSeek for generation, SiliconFlow bge-m3 for embeddings, nginx
   serving the built frontend and reverse-proxying `/api`. No blocked dependency.
-  See [DEPLOY.md](DEPLOY.md).
+  `docker compose up` brings up the full stack locally (see `docker-compose.yml`).
 - **AWS (QA only):** the QA logic runs on Amazon Bedrock AgentCore Runtime
   (`app.agent` entrypoint, [backend/Dockerfile.agentcore](backend/Dockerfile.agentcore)),
   with Bedrock `gpt-oss` for generation, DeepInfra bge-m3 for embeddings, and RDS
@@ -132,9 +138,19 @@ Before serving real students, run the evals (not just "it didn't crash"):
 ## Repository layout
 
 ```
-backend/    FastAPI service: api / services / core, plus scrapers + pipelines (offline CLIs)
-frontend/   Vite + React 19 + TS app
-infra/      Terraform for the AWS Bedrock AgentCore deployment
-DEPLOY.md   self-hosted (VPS) deployment guide
-CLAUDE.md   architecture notes and the deterministic-vs-LLM design rule
+backend/             FastAPI service: api / services / core, plus scrapers + pipelines (offline CLIs)
+frontend/            Vite + React 19 + TS app
+eval/                RAG eval harness (RAGAS + DeepEval LLM-as-judge over /api/ask)
+infra/               Terraform for the AWS Bedrock AgentCore deployment
+aidlc-docs/          AIDLC workflow state and audit docs
+docker-compose.yml   local stack: pgvector db + backend + frontend
+core-workflow.md     the AIDLC workflow definition (followed for development)
+CLAUDE.md            architecture notes and the deterministic-vs-LLM design rule
 ```
+
+The `eval/` harness runs LLM-as-judge metrics (RAGAS + DeepEval) over the live
+`/api/ask` endpoint and complements the **deterministic** evals under
+`backend/app/pipelines/`: the pipeline evals assert sources / course-code sets /
+refusal, while `eval/` quantifies faithfulness, relevancy and context precision.
+The two judge frameworks need conflicting dependencies, so each runs in its own
+venv — see [eval/README.md](eval/README.md).
