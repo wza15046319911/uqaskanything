@@ -97,6 +97,13 @@ def check(request: Request) -> JSONResponse | None:
 
     if TURNSTILE_SECRET:
         token = request.headers.get("x-turnstile-response", "")
+        print(
+            "turnstile debug: incoming headers="
+            + str(sorted(request.headers.keys()))
+            + f" x-len={len(token)}"
+            + f" cf-len={len(request.headers.get('cf-turnstile-response', ''))}",
+            flush=True,
+        )
         if not _verify_turnstile(token, ip):
             return _refuse("verification_required: 需要完成人机验证后再试", 403)
 
