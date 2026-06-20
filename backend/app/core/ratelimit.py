@@ -97,7 +97,7 @@ def check(request: Request) -> JSONResponse | None:
 
     if TURNSTILE_SECRET:
         token = request.headers.get("cf-turnstile-response", "")
-        if not token or not _verify_turnstile(token, ip):
+        if not _verify_turnstile(token, ip):
             return _refuse("verification_required: 需要完成人机验证后再试", 403)
 
     if not _rate_ok(ip, time.time()):
