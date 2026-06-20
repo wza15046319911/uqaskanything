@@ -35,13 +35,15 @@ from app.core.config import DSN, DATA_DIR
 from app.services import qa, answer, program_lookup
 
 _CODE_RE = re.compile(r"\b[A-Z]{4}\d{4}\b")
+# guard_citations' warning line marker, either language (zh "[警告]" / en "[Warning]")
+_WARN_SPLIT = re.compile(r"\[警告\]|\[Warning\]")
 
 
 def _leaked_codes(ans: str, courses: list[dict]) -> set[str]:
     """Course codes appearing in the answer body (warning line removed) but not in the retrieval result
     set -- they must never leak to the user."""
     allowed = {c.get("code") for c in courses if c.get("code")}
-    body = ans.split("[警告]")[0]              # guard_citations' warning line lists the removed out-of-bounds codes; exclude it
+    body = _WARN_SPLIT.split(ans)[0]          # guard_citations' warning line lists the removed out-of-bounds codes; exclude it
     return {m for m in _CODE_RE.findall(body) if m not in allowed}
 
 
@@ -59,7 +61,7 @@ def _program_scope_leak(conn, res: dict) -> set[str]:
     member = {r[0] for r in conn.execute(
         "SELECT course_code FROM program_course WHERE program_id = %s", (pid,)).fetchall()}
     allowed = member | set(program_lookup.excluded_courses(conn, pid))
-    body = (res.get("answer") or "").split("[警告]")[0]
+    body = _WARN_SPLIT.split(res.get("answer") or "")[0]
     return {m for m in _CODE_RE.findall(body) if m not in allowed}
 
 
@@ -73,7 +75,7 @@ def _check(exp: dict, res: dict, conn) -> list[str]:
         fails.append(f"mode {mode}≠{exp['mode']}")
 
     if exp.get("refuse"):
-        if not (ans == answer.KB_REFUSE or mode == "empty"):
+        if not (answer.is_kb_refuse(ans) or mode == "empty"):
             fails.append(f"应拒答但给了答案(mode={mode}):{ans[:40]}…")
 
     if exp.get("source_has") and exp["source_has"] not in ans:

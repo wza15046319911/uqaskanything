@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 ## ALWAYS USE AIDLC.
-see ./core-workflow.md
+@`/Users/lewisan/Desktop/uq_course_rag/core-workflow.md`
 
 ## Repo-specific rule
 

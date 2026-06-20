@@ -97,7 +97,7 @@ def main():
             q = c["q"]
             res = qa.run(conn, q, generate=True)
             ans = res.get("answer") or ""
-            if not ans or ans == answer.KB_REFUSE or res.get("mode") == "empty":
+            if not ans or answer.is_kb_refuse(ans) or res.get("mode") == "empty":
                 skipped += 1
                 continue
             v = _judge(q, ans, _context_str(res))

@@ -25,7 +25,7 @@ import { type SimLocalState, semKind, semYear, getDragCode, setDragCode } from '
 import { buildSectionMap, sectionOf } from '../../lib/sim-sections'
 import { exportNodePng } from '../../lib/export-image'
 import { renderDiffusionDataUrl, seedFromString } from '../../lib/diffusion-bg'
-import DiffusionControls from '../DiffusionControls'
+import DiffusionControls, { type DiffusionParams } from '../DiffusionControls'
 import TimetableExport from './TimetableExport'
 import type { SimStateResponse } from '../../api/sim'
 
@@ -81,13 +81,19 @@ export default function Timetable({
   const [downloading, setDownloading] = useState(false)
   const [scale, setScale] = useState(0.5)
   const [boxH, setBoxH] = useState(0)
-  const [diff, setDiff] = useState({
+  const [diff, setDiff] = useState<DiffusionParams & { enabled: boolean }>(() => ({
     enabled: true,
+    preset: 'diffusion',
+    frame: 'square',
     colorMix: 12,
     softness: 78,
     texture: 36,
+    materialDepth: 28,
+    bands: 0,
+    brush: 24,
+    vignette: 20,
     seed: seedFromString(state.program_id),
-  })
+  }))
 
   // The diffusion background is heavy (1.8M pixels getImageData + PNG encoding). Drive generation with a deferred value so the slider responds at once
   // and skips intermediate values while dragging; the two export nodes (preview + offscreen) share this one image to avoid recomputing.
@@ -96,17 +102,27 @@ export default function Timetable({
     () =>
       deferredDiff.enabled
         ? renderDiffusionDataUrl(1200, 1500, {
+            preset: deferredDiff.preset,
             colorMix: deferredDiff.colorMix,
             softness: deferredDiff.softness,
             texture: deferredDiff.texture,
+            materialDepth: deferredDiff.materialDepth,
+            bands: deferredDiff.bands,
+            brush: deferredDiff.brush,
+            vignette: deferredDiff.vignette,
             seed: deferredDiff.seed,
           })
         : '',
     [
       deferredDiff.enabled,
+      deferredDiff.preset,
       deferredDiff.colorMix,
       deferredDiff.softness,
       deferredDiff.texture,
+      deferredDiff.materialDepth,
+      deferredDiff.bands,
+      deferredDiff.brush,
+      deferredDiff.vignette,
       deferredDiff.seed,
     ],
   )

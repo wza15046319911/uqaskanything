@@ -38,7 +38,10 @@ def _has_no_match_caveat(ans: str) -> bool:
     please verify yourself / semantically closest"."""
     if "请自行甄别" in ans or "语义最接近" in ans:
         return True
-    return "强相关" in ans and ("未找到" in ans or "未能找到" in ans or "没有找到" in ans)
+    if "强相关" in ans and ("未找到" in ans or "未能找到" in ans or "没有找到" in ans):
+        return True
+    a = ans.lower()
+    return "strongly matching" in a or "closest semantic matches" in a
 
 
 def _top_sim(res: dict) -> float | None:
@@ -66,7 +69,7 @@ def _check(exp: dict, res: dict) -> list[str]:
     if exp["expect"] == "relevant":
         if mode not in ("semantic", "hybrid"):
             fails.append(f"真实主题路由到 {mode}(期望 semantic/hybrid)")
-        if not ans or ans == answer.EMPTY_ANSWER or mode == "empty":
+        if not ans or answer.is_empty_answer(ans) or mode == "empty":
             fails.append("真实主题却空答/empty")
         if caveat:
             fails.append("真实主题被误判「无强相关」(诚实声明误触发)")
@@ -77,7 +80,7 @@ def _check(exp: dict, res: dict) -> list[str]:
         listed = bool(res.get("courses"))
         confidently_listed = (mode in ("semantic", "hybrid")
                               and listed and not caveat
-                              and ans and ans != answer.EMPTY_ANSWER)
+                              and ans and not answer.is_empty_answer(ans))
         if confidently_listed:
             fails.append("空主题被自信当成「X 课」列出(无诚实声明)")
     return fails
