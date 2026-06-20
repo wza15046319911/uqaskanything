@@ -1,4 +1,4 @@
-import { NavLink, Route, Routes } from 'react-router-dom'
+import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { Button, ListBox, Select, Toast, useTheme } from '@heroui/react'
 import { useTranslation } from 'react-i18next'
 import AskPage from './pages/AskPage'
@@ -18,20 +18,25 @@ export default function App() {
   const dark = resolvedTheme === 'dark'
   const { t, i18n } = useTranslation()
   const lang = i18n.language === 'en' ? 'en' : 'zh'
+  const isProd = import.meta.env.PROD
 
   return (
     <div className="min-h-dvh bg-background font-sans text-foreground">
       <Toast.Provider />
       <nav className="relative flex items-center justify-center gap-1 px-5 pt-4">
-        <NavLink to="/" end className={navCls}>
-          {t('nav.ask')}
-        </NavLink>
-        <NavLink to="/sim" className={navCls}>
-          {t('nav.sim')}
-        </NavLink>
-        <NavLink to="/cover" className={navCls}>
-          {t('nav.cover')}
-        </NavLink>
+        {!isProd && (
+          <>
+            <NavLink to="/" end className={navCls}>
+              {t('nav.ask')}
+            </NavLink>
+            <NavLink to="/sim" className={navCls}>
+              {t('nav.sim')}
+            </NavLink>
+            <NavLink to="/cover" className={navCls}>
+              {t('nav.cover')}
+            </NavLink>
+          </>
+        )}
         <div className="absolute right-5 flex items-center gap-1.5">
           <Select
             className="w-28"
@@ -96,8 +101,9 @@ export default function App() {
       </nav>
       <Routes>
         <Route path="/" element={<AskPage />} />
-        <Route path="/sim" element={<SimPage />} />
-        <Route path="/cover" element={<CoverPage />} />
+        {!isProd && <Route path="/sim" element={<SimPage />} />}
+        {!isProd && <Route path="/cover" element={<CoverPage />} />}
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </div>
   )
