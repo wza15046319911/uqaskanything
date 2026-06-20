@@ -21,9 +21,17 @@ export async function onRequest(context: {
   const method = request.method
   const body = method === 'GET' || method === 'HEAD' ? undefined : await request.text()
 
+  const fwdHeaders: Record<string, string> = {
+    'content-type': request.headers.get('content-type') || 'application/json',
+  }
+  const turnstileToken = request.headers.get('x-turnstile-response')
+  if (turnstileToken) fwdHeaders['x-turnstile-response'] = turnstileToken
+  const clientIp = request.headers.get('cf-connecting-ip')
+  if (clientIp) fwdHeaders['cf-connecting-ip'] = clientIp
+
   const upstream = await fetch(target, {
     method,
-    headers: { 'content-type': request.headers.get('content-type') || 'application/json' },
+    headers: fwdHeaders,
     body,
   })
 
