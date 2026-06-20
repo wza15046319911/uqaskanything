@@ -7,11 +7,12 @@ from __future__ import annotations
 import json
 
 import psycopg
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
 from app.core.config import DSN
+from app.core import ratelimit
 from app.services import qa
 
 router = APIRouter()
@@ -23,7 +24,10 @@ class Ask(BaseModel):
 
 
 @router.post("/api/ask")
-def ask(body: Ask):
+def ask(body: Ask, request: Request):
+    blocked = ratelimit.check(request)
+    if blocked is not None:
+        return blocked
     q = body.question.strip()
     if not q:
         return JSONResponse({"error": "问题不能为空"}, status_code=400)
@@ -37,9 +41,12 @@ def ask(body: Ask):
 
 
 @router.post("/api/ask/stream")
-def ask_stream(body: Ask):
+def ask_stream(body: Ask, request: Request):
     """SSE streaming QA: first send meta (structured courses), then stream the answer token by token, finally done (full text after guards).
     Each line is `data: {"type": meta|token|done|error, "data": ...}\\n\\n`."""
+    blocked = ratelimit.check(request)
+    if blocked is not None:
+        return blocked
     q = body.question.strip()
     if not q:
         return JSONResponse({"error": "问题不能为空"}, status_code=400)

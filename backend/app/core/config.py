@@ -15,3 +15,11 @@ DSN = os.environ.get("DATABASE_URL", "postgresql://postgres:uqrag@localhost:5433
 # S2 offering codes: appearing on the 2026:2 search page means the course runs in S2 (see docs/s2_progress.md). Empty set if the file is missing.
 _S2_FILE = DATA_DIR / "s2_course_codes.txt"
 S2_CODES = set(_S2_FILE.read_text().split()) if _S2_FILE.exists() else set()
+
+# Rate limiting / cost guard knobs (see app/core/ratelimit.py). All read once at import.
+# LLM_DAILY_CAP: global cap on paid-endpoint requests per UTC day (bill circuit breaker). 0 disables.
+LLM_DAILY_CAP = int(os.environ.get("LLM_DAILY_CAP", "3000"))
+# RL_PER_MIN: per-IP fixed-window limit per 60s on the paid endpoints. 0 disables.
+RL_PER_MIN = int(os.environ.get("RL_PER_MIN", "20"))
+# TURNSTILE_SECRET: Cloudflare Turnstile secret. Empty = Turnstile check off (local dev / tests).
+TURNSTILE_SECRET = os.environ.get("TURNSTILE_SECRET", "").strip()

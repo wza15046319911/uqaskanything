@@ -59,6 +59,27 @@ ambiguity. It never decides a high-risk fact.
   `DEEPSEEK_API_KEY` to route through DeepSeek, or `LLM_BACKEND=bedrock` for
   Amazon Bedrock `gpt-oss`
 
+## Cost & abuse protection
+
+The three endpoints that call a paid LLM / embedding API — `/api/ask`,
+`/api/ask/stream`, `/api/sim/advise` — sit behind one deterministic front gate
+([backend/app/core/ratelimit.py](backend/app/core/ratelimit.py)). The LLM plays
+no part in any allow/deny decision. Three layers, in order:
+
+1. **Cloudflare Turnstile** human check — on only when `TURNSTILE_SECRET` is set.
+   The frontend mints a fresh single-use token per request
+   ([frontend/src/lib/turnstile.ts](frontend/src/lib/turnstile.ts), invisible
+   widget) and sends it as `cf-turnstile-response`. Network errors fail open so a
+   Cloudflare hiccup can't take the whole site down; the rate limit and daily cap
+   still backstop the bill.
+2. **Per-IP rate limit** — fixed 60s window, `RL_PER_MIN` requests per IP. Behind
+   the Cloudflare proxy the real client IP is read from `CF-Connecting-IP`.
+3. **Daily budget circuit breaker** — global `LLM_DAILY_CAP` paid requests per
+   UTC day; once hit, the batch returns a "busy, try the official site" message.
+
+Set each knob to `0` (or leave `TURNSTILE_SECRET` empty) to disable that layer —
+that is the default for local dev and tests. See `backend/.env.example`.
+
 ## Quick start
 
 Backend (from `backend/`):

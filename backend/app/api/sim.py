@@ -8,11 +8,12 @@ and explains + dual guardrails.)
 from __future__ import annotations
 
 import psycopg
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.config import DSN, S2_CODES
+from app.core import ratelimit
 from app.services import simulator, scheduler, sim_advise
 
 router = APIRouter(prefix="/api/sim")
@@ -301,8 +302,11 @@ class SimAdvise(BaseModel):
 
 
 @router.post("/advise")
-def sim_advise_ep(body: SimAdvise):
+def sim_advise_ep(body: SimAdvise, request: Request):
     """AI course advice: deterministic candidate pool (enumerated available ∪ countable E/F), LLM only ranks and explains + dual guardrails."""
+    blocked = ratelimit.check(request)
+    if blocked is not None:
+        return blocked
     try:
         with psycopg.connect(DSN) as conn:
             conn.read_only = True

@@ -1,4 +1,5 @@
 import i18n from '../i18n'
+import { turnstileHeaders } from '../lib/turnstile'
 
 export interface Course {
   code: string
@@ -79,7 +80,7 @@ export interface AskResult {
 export async function fetchAsk(question: string): Promise<AskResult> {
   const r = await fetch('/api/ask', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...(await turnstileHeaders()) },
     body: JSON.stringify({ question, generate: true }),
   })
   return r.json()
@@ -107,7 +108,7 @@ export async function fetchAskStream(question: string, h: AskStreamHandlers): Pr
   try {
     r = await fetch('/api/ask/stream', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...(await turnstileHeaders()) },
       body: JSON.stringify({ question, generate: true }),
     })
   } catch (e) {

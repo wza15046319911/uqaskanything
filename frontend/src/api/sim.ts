@@ -1,5 +1,7 @@
 // Course planning simulator API layer. Types match the return shape of backend/app/api/sim.py.
 
+import { turnstileHeaders } from '../lib/turnstile'
+
 export interface Program {
   program_id: string
   title: string
@@ -144,10 +146,14 @@ export interface SimStateReq {
   start_sem: string
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+  headers?: Record<string, string>,
+): Promise<T> {
   const r = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(body),
   })
   return r.json()
@@ -189,5 +195,5 @@ export async function postSimAdvise(req: {
   branch: string[]
   goal: string
 }): Promise<AdviseResponse> {
-  return postJson<AdviseResponse>('/api/sim/advise', req)
+  return postJson<AdviseResponse>('/api/sim/advise', req, await turnstileHeaders())
 }
