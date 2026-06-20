@@ -99,5 +99,5 @@ const getToken = async (): Promise<string | null> => {
 
 export async function turnstileHeaders(): Promise<Record<string, string>> {
   const token = await getToken()
-  return token ? { 'cf-turnstile-response': token } : {}
+  return token ? { 'x-turnstile-response': token } : {}
 }
