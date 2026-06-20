@@ -42,3 +42,9 @@ backend/backup/
 
 # watch_s2 运行时产物:日志 + 已处理 id 状态 + 抓取缓存(每次运行重新生成,不入 git)
 backend/data/watch/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example
+!.env.example
