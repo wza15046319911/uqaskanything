@@ -7,105 +7,192 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { ChangeEvent, CSSProperties } from 'react'
+import type { ChangeEvent, CSSProperties, Ref } from 'react'
 import {
   Button,
+  ColorArea,
+  ColorField,
+  ColorPicker,
+  ColorSlider,
+  ColorSwatch,
   Input,
   Label,
   ListBox,
+  parseColor,
   Select,
-  Slider,
   TextArea,
   TextField,
   toast,
 } from '@heroui/react'
 import { useTranslation } from 'react-i18next'
 import { exportNodePng } from '../lib/export-image'
-import { renderDiffusionDataUrl, seedFromString } from '../lib/diffusion-bg'
+import { dominantHex, renderDiffusionDataUrl, seedFromString } from '../lib/diffusion-bg'
 import DiffusionControls, { type DiffusionParams } from '../components/DiffusionControls'
+import XhsFeedPreview, { XHS_THUMB_W } from '../components/XhsFeedPreview'
 import bgUrl from '../assets/uq-cover-bg.jpg'
 import styles from './CoverPage.module.css'
 
-const PALETTES = {
-  uqpurple: {
-    deep: '#26215C',
-    mid: '#3C3489',
-    main: '#534AB7',
-    light: '#7F77DD',
-    pale: '#AFA9EC',
-    card: '#EEEDFE',
-    line: '#CECBF6',
-  },
-  blue: {
-    deep: '#042C53',
-    mid: '#0C447C',
-    main: '#185FA5',
-    light: '#378ADD',
-    pale: '#85B7EB',
-    card: '#E6F1FB',
-    line: '#B5D4F4',
-  },
-  teal: {
-    deep: '#04342C',
-    mid: '#085041',
-    main: '#0F6E56',
-    light: '#1D9E75',
-    pale: '#5DCAA5',
-    card: '#E1F5EE',
-    line: '#9FE1CB',
-  },
-  coral: {
-    deep: '#4A1B0C',
-    mid: '#712B13',
-    main: '#993C1D',
-    light: '#D85A30',
-    pale: '#F0997B',
-    card: '#FAECE7',
-    line: '#F5C4B3',
-  },
-  pink: {
-    deep: '#4B1528',
-    mid: '#72243E',
-    main: '#993556',
-    light: '#D4537E',
-    pale: '#ED93B1',
-    card: '#FBEAF0',
-    line: '#F4C0D1',
-  },
-  green: {
-    deep: '#173404',
-    mid: '#27500A',
-    main: '#3B6D11',
-    light: '#639922',
-    pale: '#97C459',
-    card: '#EAF3DE',
-    line: '#C0DD97',
-  },
-  amber: {
-    deep: '#412402',
-    mid: '#633806',
-    main: '#854F0B',
-    light: '#BA7517',
-    pale: '#EF9F27',
-    card: '#FAEEDA',
-    line: '#FAC775',
-  },
-  gray: {
-    deep: '#2C2C2A',
-    mid: '#444441',
-    main: '#5F5E5A',
-    light: '#888780',
-    pale: '#B4B2A9',
-    card: '#F1EFE8',
-    line: '#D3D1C7',
-  },
-} as const
-
-type PaletteKey = keyof typeof PALETTES
 type BgType = 'uqphoto' | 'sketch' | 'diffusion' | 'none' | 'photo'
-type CoverType = 'review' | 'combo'
+type CoverType = 'review' | 'combo' | 'content'
 
-const stars = (n: number) => '★'.repeat(n) + '☆'.repeat(5 - n)
+const DEFAULT_BASE = '#534AB7'
+
+// Long-text pagination geometry, in the 1080×1440 export canvas. The measuring element below must
+// match .contentBody exactly (width / font / spacing / wrap), or the page breaks drift from render.
+const CONTENT_W = 900
+const CONTENT_MAX_H = 1130
+const CONTENT_FONT =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif"
+const CONTENT_PREVIEW_SCALE = 0.28
+
+// Split a paragraph into sentences, keeping the trailing punctuation on each piece.
+const splitSentences = (s: string) => s.match(/[^。！？!?]+[。！？!?]*/g) ?? [s]
+
+// Greedily pack units into pages: keep appending while it still fits; when a unit overflows on its
+// own, fall back to splitOversize to break it down further. fits() measures the candidate string.
+const packUnits = (
+  units: string[],
+  join: string,
+  fits: (s: string) => boolean,
+  splitOversize: (u: string) => string[],
+): string[] => {
+  const pages: string[] = []
+  let cur = ''
+  for (const u of units) {
+    const candidate = cur ? cur + join + u : u
+    if (fits(candidate)) {
+      cur = candidate
+      continue
+    }
+    if (cur) {
+      pages.push(cur)
+      cur = ''
+    }
+    if (fits(u)) {
+      cur = u
+      continue
+    }
+    const sub = splitOversize(u)
+    for (let i = 0; i < sub.length - 1; i++) pages.push(sub[i])
+    cur = sub[sub.length - 1] ?? ''
+  }
+  if (cur) pages.push(cur)
+  return pages
+}
+
+// Sentence-level pagination: flatten the text into sentence atoms (remembering where a new line/
+// paragraph begins so the original line structure survives), then greedily fill each page to the
+// brim. Paragraphs only break at a page boundary; a sentence longer than a page falls back to chars.
+const paginateText = (text: string, fits: (s: string) => boolean): string[] => {
+  const atoms: { text: string; newLine: boolean }[] = []
+  text.split('\n').forEach((line, li) => {
+    splitSentences(line).forEach((s, si) => atoms.push({ text: s, newLine: li > 0 && si === 0 }))
+  })
+
+  const splitChars = (u: string) => packUnits(Array.from(u), '', fits, (c) => [c])
+  const pages: string[] = []
+  let cur = ''
+  for (const a of atoms) {
+    if (cur === '' && a.text === '') continue
+    const candidate = cur === '' ? a.text : cur + (a.newLine ? '\n' : '') + a.text
+    if (fits(candidate)) {
+      cur = candidate
+      continue
+    }
+    if (cur) {
+      pages.push(cur)
+      cur = ''
+    }
+    if (a.text === '') continue
+    if (fits(a.text)) {
+      cur = a.text
+      continue
+    }
+    const sub = splitChars(a.text)
+    for (let i = 0; i < sub.length - 1; i++) pages.push(sub[i])
+    cur = sub[sub.length - 1] ?? ''
+  }
+  if (cur) pages.push(cur)
+  return pages.length ? pages : ['']
+}
+
+// Decoration scheme = the base hex that drives the accent / line / chip ramp. 'auto' is special: it
+// follows the diffusion background's dominant hue. The rest are fixed presets spanning the bg palettes.
+type SchemeId = 'auto' | 'blue' | 'violet' | 'magenta' | 'teal' | 'amber' | 'slate'
+const DECO_SCHEMES: { id: SchemeId; base: string }[] = [
+  { id: 'auto', base: DEFAULT_BASE },
+  { id: 'blue', base: '#2F6FD0' },
+  { id: 'violet', base: '#6B55D8' },
+  { id: 'magenta', base: '#C2479E' },
+  { id: 'teal', base: '#15A8D8' },
+  { id: 'amber', base: '#E0902B' },
+  { id: 'slate', base: '#5C6675' },
+]
+const DEFAULT_TEXT = '#29245B'
+
+// Text hierarchy is alpha steps off the picked font color, so the chosen color is used directly
+// (white stays white) instead of being flattened into a fixed-lightness ramp like the palette.
+const TEXT_ALPHA = { deep: 'ff', mid: 'd9', light: '94', pale: '73' }
+const withAlpha = (hex: string, a: string) => `${hex.slice(0, 7)}${a}`
+
+// The card needs a full 7-step shade ramp (deep→card); derive it from one base hex by keeping
+// the base hue/saturation and stepping lightness, so any picked color drives the whole layout.
+const RAMP_L = { deep: 0.25, mid: 0.37, main: 0.5, light: 0.67, pale: 0.79, line: 0.88, card: 0.96 }
+
+const hexToHsl = (hex: string) => {
+  const r = parseInt(hex.slice(1, 3), 16) / 255
+  const g = parseInt(hex.slice(3, 5), 16) / 255
+  const b = parseInt(hex.slice(5, 7), 16) / 255
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+  const l = (max + min) / 2
+  const d = max - min
+  let h = 0
+  let s = 0
+  if (d !== 0) {
+    s = d / (1 - Math.abs(2 * l - 1))
+    if (max === r) h = ((g - b) / d) % 6
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+    if (h < 0) h += 360
+  }
+  return { h, s, l }
+}
+
+const hslToHex = (h: number, s: number, l: number) => {
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1))
+  const m = l - c / 2
+  let r = 0
+  let g = 0
+  let b = 0
+  if (h < 60) [r, g, b] = [c, x, 0]
+  else if (h < 120) [r, g, b] = [x, c, 0]
+  else if (h < 180) [r, g, b] = [0, c, x]
+  else if (h < 240) [r, g, b] = [0, x, c]
+  else if (h < 300) [r, g, b] = [x, 0, c]
+  else [r, g, b] = [c, 0, x]
+  const to = (v: number) =>
+    Math.round((v + m) * 255)
+      .toString(16)
+      .padStart(2, '0')
+  return `#${to(r)}${to(g)}${to(b)}`
+}
+
+const deriveRamp = (base: string) => {
+  const { h, s } = hexToHsl(base)
+  const at = (l: number) => hslToHex(h, s, l)
+  return {
+    deep: at(RAMP_L.deep),
+    mid: at(RAMP_L.mid),
+    main: at(RAMP_L.main),
+    light: at(RAMP_L.light),
+    pale: at(RAMP_L.pale),
+    card: at(RAMP_L.card),
+    line: at(RAMP_L.line),
+  }
+}
 
 interface FieldTextProps {
   label: string
@@ -165,19 +252,179 @@ function FieldSelect({ label, value, options, onChange }: FieldSelectProps) {
   )
 }
 
+interface CoverCardProps {
+  cardVars: CSSProperties
+  showBgImage: boolean
+  bgSrc: string | null
+  showSketch: boolean
+  coverType: CoverType
+  code: string
+  name: string
+  quote: string
+  comboTerm: string
+  comboSubtitle: string
+  cardId: string
+  contentText?: string
+  pageNum?: number
+  pageTotal?: number
+  scale?: number
+  rootRef?: Ref<HTMLDivElement>
+}
+
+function CoverCard({
+  cardVars,
+  showBgImage,
+  bgSrc,
+  showSketch,
+  coverType,
+  code,
+  name,
+  quote,
+  comboTerm,
+  comboSubtitle,
+  cardId,
+  contentText,
+  pageNum,
+  pageTotal,
+  scale,
+  rootRef,
+}: CoverCardProps) {
+  const codeRef = useRef<HTMLDivElement>(null)
+  const nameRef = useRef<HTMLDivElement>(null)
+  const quoteCardRef = useRef<HTMLDivElement>(null)
+
+  // Vertical layout: measure the real height of each block, center the whole thing and shift it up a little, so it does not look top-heavy.
+  useLayoutEffect(() => {
+    const codeEl = codeRef.current
+    const nameEl = nameRef.current
+    const quoteCardEl = quoteCardRef.current
+    if (!codeEl || !nameEl || !quoteCardEl) return
+
+    // Shrink the font size when the course code is too long, to avoid overflowing the right edge
+    const codeBase = 160
+    const codeMaxW = 900
+    codeEl.style.fontSize = `${codeBase}px`
+    const codeW = codeEl.offsetWidth
+    if (codeW > codeMaxW) {
+      codeEl.style.fontSize = `${Math.floor((codeBase * codeMaxW) / codeW)}px`
+    }
+
+    const GAP = {
+      codeName: 18,
+      nameQuote: 130,
+    }
+    const codeH = codeEl.offsetHeight
+    const nameH = nameEl.offsetHeight
+    const quoteH = quoteCardEl.offsetHeight
+
+    const total = codeH + GAP.codeName + nameH + GAP.nameQuote + quoteH
+
+    let cy = Math.max(110, (1440 - total) / 2 - 100)
+    codeEl.style.top = `${cy}px`
+    cy += codeH + GAP.codeName
+    nameEl.style.top = `${cy}px`
+    cy += nameH + GAP.nameQuote
+    quoteCardEl.style.top = `${cy}px`
+    // No dependency array: re-layout by the real DOM size after each render (longer text changes the height, which a static dependency cannot express)
+  })
+
+  const rootStyle = scale != null ? { ...cardVars, transform: `scale(${scale})` } : cardVars
+
+  return (
+    <div ref={rootRef} className={styles.cardRoot} style={rootStyle}>
+      {showBgImage && bgSrc ? (
+        <img className={styles.bgPhoto} src={bgSrc} alt="" style={{ display: 'block' }} />
+      ) : null}
+      {showSketch ? (
+        <div className={styles.bgSketch}>
+          <svg
+            viewBox="0 0 1080 700"
+            xmlns="http://www.w3.org/2000/svg"
+            preserveAspectRatio="xMidYMax meet"
+          >
+            <g
+              fill="none"
+              stroke="var(--c-main)"
+              strokeWidth="2.4"
+              strokeLinejoin="round"
+              strokeLinecap="round"
+            >
+              <line x1="40" y1="650" x2="1040" y2="650" />
+              <rect x="120" y="120" width="150" height="530" />
+              <rect x="120" y="120" width="150" height="46" />
+              <path d="M112 120 L195 58 L278 120 Z" />
+              <line x1="195" y1="58" x2="195" y2="32" />
+              <circle cx="195" cy="210" r="34" />
+              <line x1="195" y1="210" x2="195" y2="188" />
+              <line x1="195" y1="210" x2="212" y2="216" />
+              <rect x="150" y="300" width="40" height="92" rx="20" />
+              <rect x="200" y="300" width="40" height="92" rx="20" />
+              <rect x="150" y="430" width="40" height="92" rx="20" />
+              <rect x="200" y="430" width="40" height="92" rx="20" />
+              <g>
+                <rect x="300" y="360" width="700" height="290" />
+                <line x1="300" y1="360" x2="1000" y2="360" />
+                <path d="M330 650 L330 470 Q330 430 372 430 Q414 430 414 470 L414 650" />
+                <path d="M444 650 L444 470 Q444 430 486 430 Q528 430 528 470 L528 650" />
+                <path d="M558 650 L558 470 Q558 430 600 430 Q642 430 642 470 L642 650" />
+                <path d="M672 650 L672 470 Q672 430 714 430 Q756 430 756 470 L756 650" />
+                <path d="M786 650 L786 470 Q786 430 828 430 Q870 430 870 470 L870 650" />
+                <path d="M900 650 L900 470 Q900 430 942 430 Q970 430 970 470 L970 650" />
+                {Array.from({ length: 15 }, (_, i) => 300 + i * 50).map((x) => (
+                  <line key={x} x1={x} y1={360} x2={x} y2={338} />
+                ))}
+              </g>
+            </g>
+          </svg>
+        </div>
+      ) : null}
+      <div className={styles.scrim} />
+      <div className={styles.frameBorder} />
+      {coverType === 'content' ? (
+        <div className={styles.contentBody}>{contentText}</div>
+      ) : coverType === 'review' ? (
+        <>
+          <div ref={codeRef} className={styles.code}>
+            {code}
+          </div>
+          <div ref={nameRef} className={styles.cname}>
+            {name}
+          </div>
+          <div ref={quoteCardRef} className={styles.quoteCard}>
+            <div className={styles.qtext}>{quote}</div>
+          </div>
+        </>
+      ) : (
+        <div className={styles.comboWrap}>
+          <div className={styles.comboAccent} />
+          <div className={styles.comboTitle}>{comboTerm}</div>
+          {comboSubtitle ? <div className={styles.comboSub}>{comboSubtitle}</div> : null}
+        </div>
+      )}
+      {coverType === 'content' ? (
+        <div className={styles.footer} style={{ justifyContent: 'space-between' }}>
+          {cardId ? <div className={styles.right}>{cardId}</div> : <span />}
+          {pageTotal && pageTotal > 1 ? (
+            <div className={styles.right}>
+              {pageNum} / {pageTotal}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className={styles.footer}>
+          <div className={styles.right}>{cardId}</div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CoverPage() {
   const { t } = useTranslation()
   const coverOptions = [
     { id: 'review', label: t('cover.coverTypeReview') },
     { id: 'combo', label: t('cover.coverTypeCombo') },
-  ]
-  const starOptions = [
-    { id: '0', label: t('cover.starNone') },
-    { id: '1', label: '★' },
-    { id: '2', label: '★★' },
-    { id: '3', label: '★★★' },
-    { id: '4', label: '★★★★' },
-    { id: '5', label: '★★★★★' },
+    { id: 'content', label: t('cover.coverTypeContent') },
   ]
   const bgOptions = [
     { id: 'uqphoto', label: t('cover.bgUqphoto') },
@@ -188,67 +435,60 @@ export default function CoverPage() {
   ]
 
   const [coverType, setCoverType] = useState<CoverType>('review')
-  const [eyebrow, setEyebrow] = useState(() => t('cover.default.eyebrow'))
   const [code, setCode] = useState('INFS7410')
   const [name, setName] = useState(() => t('cover.default.name'))
   const [quote, setQuote] = useState(() => t('cover.default.quote'))
-  const [difficulty, setDifficulty] = useState(3)
-  const [recommend, setRecommend] = useState(5)
   const [comboTerm, setComboTerm] = useState(() => t('cover.default.comboTerm'))
   const [comboSubtitle, setComboSubtitle] = useState('BACHELOR OF COMPUTER SCIENCE')
-  const [comboCourses, setComboCourses] = useState(() => t('cover.default.comboCourses'))
-  const [comboNote, setComboNote] = useState(() => t('cover.default.comboNote'))
+  const [contentText, setContentText] = useState(() => t('cover.default.content'))
+  const [contentPages, setContentPages] = useState<string[]>([''])
   const [cardId, setCardId] = useState('@nilobjectfound')
-  const [tags, setTags] = useState('')
-  const [palette, setPalette] = useState<PaletteKey>('uqpurple')
+  const [noteTitle, setNoteTitle] = useState(() => t('cover.default.noteTitle'))
+  const [decoScheme, setDecoScheme] = useState<SchemeId>('auto')
+  // Keep the picked color as an HSB Color: hex drops hue/saturation at zero brightness/saturation, which froze the hue slider on black. Downstream still reads a hex via textColor.
+  const [textColorObj, setTextColorObj] = useState(() => parseColor(DEFAULT_TEXT).toFormat('hsb'))
+  const textColor = textColorObj.toString('hex')
   const [bgType, setBgType] = useState<BgType>('diffusion')
   const [diff, setDiff] = useState<DiffusionParams>(() => ({
+    preset: 'diffusion',
+    frame: 'square',
     colorMix: 18,
     softness: 78,
     texture: 30,
+    materialDepth: 28,
+    bands: 0,
+    brush: 24,
+    vignette: 20,
     seed: seedFromString('uq-cover'),
   }))
-  const [fade, setFade] = useState(90)
   const [photo, setPhoto] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
   const [copied, setCopied] = useState(false)
 
   const stageRef = useRef<HTMLDivElement>(null)
   const cardRef = useRef<HTMLDivElement>(null)
-  const accentRef = useRef<HTMLDivElement>(null)
-  const eyebrowRef = useRef<HTMLDivElement>(null)
-  const codeRef = useRef<HTMLDivElement>(null)
-  const nameRef = useRef<HTMLDivElement>(null)
-  const dividerRef = useRef<HTMLDivElement>(null)
-  const ratingsRef = useRef<HTMLDivElement>(null)
-  const quoteCardRef = useRef<HTMLDivElement>(null)
-  const tagsRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const measureRef = useRef<HTMLDivElement>(null)
+  const contentCardRefs = useRef<(HTMLDivElement | null)[]>([])
 
-  const pal = PALETTES[palette]
+  // 'auto' follows the diffusion background's dominant hue; for other backgrounds it falls back to the default.
+  const autoBase = bgType === 'diffusion' ? dominantHex(diff.colorMix) : DEFAULT_BASE
+  const decoBase =
+    decoScheme === 'auto'
+      ? autoBase
+      : (DECO_SCHEMES.find((s) => s.id === decoScheme)?.base ?? DEFAULT_BASE)
+  const pal = useMemo(() => deriveRamp(decoBase), [decoBase])
   const cardVars = {
-    '--c-deep': pal.deep,
-    '--c-mid': pal.mid,
+    '--c-deep': withAlpha(textColor, TEXT_ALPHA.deep),
+    '--c-mid': withAlpha(textColor, TEXT_ALPHA.mid),
+    '--c-light': withAlpha(textColor, TEXT_ALPHA.light),
+    '--c-pale': withAlpha(textColor, TEXT_ALPHA.pale),
     '--c-main': pal.main,
-    '--c-light': pal.light,
-    '--c-pale': pal.pale,
     '--c-card': pal.card,
     '--c-line': pal.line,
   } as CSSProperties
 
-  const tagTokens = tags.split(/\s+/).filter(Boolean)
-  const showTags = tagTokens.length > 0
-  const showRatings = difficulty > 0 || recommend > 0
   const showSketch = bgType === 'sketch'
-
-  const courseRows = comboCourses
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => {
-      const m = line.match(/^(\S+)\s+([\s\S]+)$/)
-      return m ? { code: m[1], name: m[2] } : { code: line, name: '' }
-    })
 
   // The diffusion background is heavy (1.55M pixels getImageData + PNG encoding). Drive it with a deferred value so the slider responds at once,
   // skips intermediate values while dragging, and produces the final image once dragging stops.
@@ -256,18 +496,42 @@ export default function CoverPage() {
   const diffusionUrl = useMemo(() => {
     if (bgType !== 'diffusion') return null
     return renderDiffusionDataUrl(1080, 1440, {
+      preset: deferredDiff.preset,
       colorMix: deferredDiff.colorMix,
       softness: deferredDiff.softness,
       texture: deferredDiff.texture,
+      materialDepth: deferredDiff.materialDepth,
+      bands: deferredDiff.bands,
+      brush: deferredDiff.brush,
+      vignette: deferredDiff.vignette,
       seed: deferredDiff.seed,
     })
   }, [
     bgType,
+    deferredDiff.preset,
     deferredDiff.colorMix,
     deferredDiff.softness,
     deferredDiff.texture,
+    deferredDiff.materialDepth,
+    deferredDiff.bands,
+    deferredDiff.brush,
+    deferredDiff.vignette,
     deferredDiff.seed,
   ])
+
+  // Re-paginate when the text or type changes. Deferred so typing stays responsive while the
+  // measure-and-pack loop runs. Measurement uses the hidden element styled like .contentBody.
+  const deferredContent = useDeferredValue(contentText)
+  useLayoutEffect(() => {
+    if (coverType !== 'content') return
+    const el = measureRef.current
+    if (!el) return
+    const fits = (s: string) => {
+      el.textContent = s
+      return el.scrollHeight <= CONTENT_MAX_H
+    }
+    setContentPages(paginateText(deferredContent, fits))
+  }, [coverType, deferredContent])
 
   const bgSrc =
     bgType === 'uqphoto'
@@ -281,93 +545,6 @@ export default function CoverPage() {
     bgType === 'uqphoto' ||
     (bgType === 'photo' && !!photo) ||
     (bgType === 'diffusion' && !!diffusionUrl)
-
-  // The diffusion background needs a higher opacity under the white mask to show color; switching into/out of diffusion moves the fade value into a suitable range.
-  const handleBgChange = (v: BgType) => {
-    setBgType(v)
-    if (v === 'diffusion') setFade((f) => (f <= 45 ? 90 : f))
-    else setFade((f) => (f > 45 ? 45 : f))
-  }
-  const fadeMax = bgType === 'diffusion' ? 100 : 45
-
-  // Vertical layout: measure the real height of each block, center the whole thing and shift it up a little, so it does not look top-heavy.
-  useLayoutEffect(() => {
-    const accent = accentRef.current
-    const eyebrowEl = eyebrowRef.current
-    const codeEl = codeRef.current
-    const nameEl = nameRef.current
-    const divider = dividerRef.current
-    const ratings = ratingsRef.current
-    const quoteCardEl = quoteCardRef.current
-    const tagsEl = tagsRef.current
-    if (!accent || !eyebrowEl || !codeEl || !nameEl || !divider || !quoteCardEl) return
-
-    // Shrink the font size when the course code is too long, to avoid overflowing the right edge
-    const codeBase = 160
-    const codeMaxW = 900
-    codeEl.style.fontSize = `${codeBase}px`
-    const codeW = codeEl.offsetWidth
-    if (codeW > codeMaxW) {
-      codeEl.style.fontSize = `${Math.floor((codeBase * codeMaxW) / codeW)}px`
-    }
-
-    const GAP = {
-      accentEb: 38,
-      ebCode: 28,
-      codeName: 18,
-      nameDiv: 34,
-      divRate: 40,
-      rateQuote: 96,
-      quoteTags: 54,
-    }
-    const Haccent = 10
-    const Hdivider = 3
-    const ebH = eyebrowEl.offsetHeight
-    const codeH = codeEl.offsetHeight
-    const nameH = nameEl.offsetHeight
-    const rateH = showRatings && ratings ? ratings.offsetHeight : 0
-    const quoteH = quoteCardEl.offsetHeight
-    const tagsH = showTags && tagsEl ? tagsEl.offsetHeight : 0
-
-    let total =
-      Haccent +
-      GAP.accentEb +
-      ebH +
-      GAP.ebCode +
-      codeH +
-      GAP.codeName +
-      nameH +
-      GAP.nameDiv +
-      Hdivider
-    if (showRatings) total += GAP.divRate + rateH
-    total += GAP.rateQuote + quoteH
-    if (showTags) total += GAP.quoteTags + tagsH
-
-    let cy = Math.max(110, (1440 - total) / 2 - 100)
-    accent.style.top = `${cy}px`
-    cy += Haccent + GAP.accentEb
-    eyebrowEl.style.top = `${cy}px`
-    cy += ebH + GAP.ebCode
-    codeEl.style.top = `${cy}px`
-    cy += codeH + GAP.codeName
-    nameEl.style.top = `${cy}px`
-    cy += nameH + GAP.nameDiv
-    divider.style.top = `${cy}px`
-    cy += Hdivider
-    if (showRatings && ratings) {
-      cy += GAP.divRate
-      ratings.style.top = `${cy}px`
-      cy += rateH
-    }
-    cy += GAP.rateQuote
-    quoteCardEl.style.top = `${cy}px`
-    cy += quoteH
-    if (showTags && tagsEl) {
-      cy += GAP.quoteTags
-      tagsEl.style.top = `${cy}px`
-    }
-    // No dependency array: re-layout by the real DOM size after each render (longer text changes the height, which a static dependency cannot express)
-  })
 
   // Scale the preview stage proportionally: fit the 1080-wide card into the stage width
   const fitStage = useCallback(() => {
@@ -384,7 +561,7 @@ export default function CoverPage() {
     const ro = new ResizeObserver(() => fitStage())
     ro.observe(stage)
     return () => ro.disconnect()
-  }, [fitStage])
+  }, [fitStage, coverType])
 
   const handleUpload = (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -398,11 +575,22 @@ export default function CoverPage() {
   }
 
   const handleExport = async () => {
-    const card = cardRef.current
-    if (!card || exporting) return
+    if (exporting) return
     setExporting(true)
-    card.style.transform = 'scale(1)'
     try {
+      if (coverType === 'content') {
+        const base = (noteTitle || 'note').replace(/[\\/:*?"<>|\s]+/g, '_').slice(0, 40)
+        const cards = contentCardRefs.current.filter(Boolean) as HTMLDivElement[]
+        for (let i = 0; i < cards.length; i++) {
+          cards[i].style.transform = 'scale(1)'
+          await exportNodePng(cards[i], `${base}-${i + 1}.jpg`, { format: 'jpg', quality: 0.92 })
+          cards[i].style.transform = `scale(${CONTENT_PREVIEW_SCALE})`
+        }
+        return
+      }
+      const card = cardRef.current
+      if (!card) return
+      card.style.transform = 'scale(1)'
       const base = coverType === 'combo' ? comboTerm || 'combo' : code || 'course'
       await exportNodePng(card, `${base}-xiaohongshu.jpg`, {
         format: 'jpg',
@@ -419,22 +607,18 @@ export default function CoverPage() {
   const handleCopy = () => {
     const cfg = {
       coverType,
-      eyebrow,
       code,
       name,
       quote,
-      difficulty,
-      recommend,
       comboTerm,
       comboSubtitle,
-      comboCourses,
-      comboNote,
+      contentText,
       id: cardId,
-      tags,
+      noteTitle,
       bgType,
       diffusion: diff,
-      fade,
-      palette,
+      decoScheme,
+      textColor,
     }
     navigator.clipboard.writeText(JSON.stringify(cfg, null, 2)).then(() => {
       setCopied(true)
@@ -442,15 +626,162 @@ export default function CoverPage() {
     })
   }
 
-  return (
-    <div className="mx-auto w-full max-w-[1400px] px-5 py-8">
-      <div className="flex flex-col gap-8 lg:flex-row lg:items-start">
-        <aside className="rounded-2xl border border-border bg-surface p-6 shadow-surface lg:sticky lg:top-6 lg:w-[360px] lg:shrink-0">
-          <div className="mb-5">
-            <h1 className="text-lg font-semibold text-foreground">{t('cover.title')}</h1>
-            <p className="mt-1 text-[13px] text-muted">{t('cover.subtitle')}</p>
-          </div>
+  const cardProps = {
+    cardVars,
+    showBgImage,
+    bgSrc,
+    showSketch,
+    coverType,
+    code,
+    name,
+    quote,
+    comboTerm,
+    comboSubtitle,
+    cardId,
+  }
 
+  return (
+    <div className="mx-auto w-full max-w-[1760px] px-5 py-8">
+      <div className="mb-6">
+        <h1 className="text-lg font-semibold text-foreground">{t('cover.title')}</h1>
+        <p className="mt-1 text-[13px] text-muted">{t('cover.subtitle')}</p>
+      </div>
+
+      <div
+        ref={measureRef}
+        aria-hidden
+        style={{
+          position: 'absolute',
+          left: -99999,
+          top: 0,
+          visibility: 'hidden',
+          pointerEvents: 'none',
+          width: CONTENT_W,
+          fontFamily: CONTENT_FONT,
+          fontSize: 46,
+          fontWeight: 600,
+          lineHeight: 1.6,
+          letterSpacing: '1px',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+        }}
+      />
+
+      <div className="flex flex-col gap-6 xl:flex-row xl:items-start">
+        <aside className="rounded-2xl border border-border bg-surface p-6 shadow-surface xl:sticky xl:top-6 xl:w-[320px] xl:shrink-0">
+          <div className="space-y-4">
+            <FieldSelect
+              label={t('cover.bgLabel')}
+              value={bgType}
+              options={bgOptions}
+              onChange={(v) => setBgType(v as BgType)}
+            />
+
+            {bgType === 'diffusion' ? (
+              <DiffusionControls value={diff} onChange={setDiff} previewAspect={1080 / 1440} />
+            ) : null}
+
+            {bgType === 'photo' ? (
+              <div>
+                <Label>{t('cover.uploadLabel')}</Label>
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleUpload} />
+                <div className="mt-2">
+                  <Button variant="tertiary" size="sm" onPress={() => fileRef.current?.click()}>
+                    {photo ? t('cover.photoChosen') : t('cover.photoChoose')}
+                  </Button>
+                </div>
+                <p className="mt-1 text-xs text-muted">{t('cover.photoHint')}</p>
+              </div>
+            ) : null}
+            <div>
+              <Label>{t('cover.textColorLabel')}</Label>
+              <ColorPicker
+                value={textColorObj}
+                onChange={(c) => setTextColorObj(c.toFormat('hsb'))}
+              >
+                <ColorPicker.Trigger className="mt-2 flex w-full items-center gap-2.5 rounded-lg border border-border bg-background px-3 py-2 text-sm">
+                  <ColorSwatch className="h-6 w-6 rounded-md" />
+                  <span className="font-mono uppercase tracking-wider">{textColor}</span>
+                </ColorPicker.Trigger>
+                <ColorPicker.Popover>
+                  <div className="flex w-56 flex-col gap-3 p-3">
+                    <ColorArea colorSpace="hsb" xChannel="saturation" yChannel="brightness">
+                      <ColorArea.Thumb />
+                    </ColorArea>
+                    <ColorSlider channel="hue" colorSpace="hsb">
+                      <ColorSlider.Track>
+                        <ColorSlider.Thumb />
+                      </ColorSlider.Track>
+                    </ColorSlider>
+                    <ColorField>
+                      <ColorField.Group>
+                        <ColorField.Prefix>#</ColorField.Prefix>
+                        <ColorField.Input />
+                      </ColorField.Group>
+                    </ColorField>
+                  </div>
+                </ColorPicker.Popover>
+              </ColorPicker>
+            </div>
+          </div>
+        </aside>
+
+        <section className="order-first flex min-w-0 flex-1 flex-wrap items-start justify-center gap-6 xl:order-none xl:sticky xl:top-6">
+          {coverType === 'content' ? (
+            <div className="flex flex-col items-center gap-3.5">
+              <div className="flex flex-wrap justify-center gap-3">
+                {contentPages.map((p, i) => (
+                  <div
+                    key={i}
+                    className={styles.stage}
+                    style={{
+                      width: 1080 * CONTENT_PREVIEW_SCALE,
+                      height: 1440 * CONTENT_PREVIEW_SCALE,
+                    }}
+                  >
+                    <CoverCard
+                      {...cardProps}
+                      contentText={p}
+                      pageNum={i + 1}
+                      pageTotal={contentPages.length}
+                      scale={CONTENT_PREVIEW_SCALE}
+                      rootRef={(el) => {
+                        contentCardRefs.current[i] = el
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="max-w-[540px] text-center text-xs text-muted">
+                {t('cover.contentPages', { n: contentPages.length })}
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3.5">
+              <div ref={stageRef} className={styles.stage}>
+                <CoverCard {...cardProps} rootRef={cardRef} />
+              </div>
+              <p className="max-w-[540px] text-center text-xs text-muted">
+                {t('cover.previewNote')}
+              </p>
+            </div>
+          )}
+          <XhsFeedPreview
+            title={noteTitle}
+            author={cardId}
+            cover={
+              <CoverCard
+                {...cardProps}
+                contentText={contentPages[0]}
+                pageNum={1}
+                pageTotal={contentPages.length}
+                scale={XHS_THUMB_W / 1080}
+              />
+            }
+          />
+        </section>
+
+        <aside className="rounded-2xl border border-border bg-surface p-6 shadow-surface xl:sticky xl:top-6 xl:w-[340px] xl:shrink-0">
           <div className="space-y-4">
             <FieldSelect
               label={t('cover.coverTypeLabel')}
@@ -459,9 +790,15 @@ export default function CoverPage() {
               onChange={(v) => setCoverType(v as CoverType)}
             />
 
-            <FieldText label={t('cover.eyebrowLabel')} value={eyebrow} onChange={setEyebrow} />
-
-            {coverType === 'review' ? (
+            {coverType === 'content' ? (
+              <div>
+                <TextField value={contentText} onChange={setContentText} className="w-full">
+                  <Label>{t('cover.contentLabel')}</Label>
+                  <TextArea placeholder={t('cover.contentPlaceholder')} rows={12} />
+                </TextField>
+                <p className="mt-1 text-xs text-muted">{t('cover.contentHint')}</p>
+              </div>
+            ) : coverType === 'review' ? (
               <>
                 <FieldText
                   label={t('cover.codeLabel')}
@@ -483,25 +820,6 @@ export default function CoverPage() {
                   </TextField>
                   <p className="mt-1 text-xs text-muted">{t('cover.quoteHint')}</p>
                 </div>
-
-                <div className="flex gap-3">
-                  <div className="flex-1">
-                    <FieldSelect
-                      label={t('cover.difficulty')}
-                      value={String(difficulty)}
-                      options={starOptions}
-                      onChange={(v) => setDifficulty(Number(v))}
-                    />
-                  </div>
-                  <div className="flex-1">
-                    <FieldSelect
-                      label={t('cover.recommend')}
-                      value={String(recommend)}
-                      options={starOptions}
-                      onChange={(v) => setRecommend(Number(v))}
-                    />
-                  </div>
-                </div>
               </>
             ) : (
               <>
@@ -517,88 +835,18 @@ export default function CoverPage() {
                   onChange={setComboSubtitle}
                   placeholder={t('cover.comboSubtitlePlaceholder')}
                 />
-                <div>
-                  <TextField value={comboCourses} onChange={setComboCourses} className="w-full">
-                    <Label>{t('cover.comboCoursesLabel')}</Label>
-                    <TextArea placeholder={t('cover.comboCoursesPlaceholder')} rows={5} />
-                  </TextField>
-                  <p className="mt-1 text-xs text-muted">{t('cover.comboCoursesHint')}</p>
-                </div>
-                <div>
-                  <TextField value={comboNote} onChange={setComboNote} className="w-full">
-                    <Label>{t('cover.comboNoteLabel')}</Label>
-                    <TextArea placeholder={t('cover.comboNotePlaceholder')} rows={2} />
-                  </TextField>
-                </div>
               </>
             )}
 
             <FieldText label={t('cover.cardIdLabel')} value={cardId} onChange={setCardId} />
+
             <FieldText
-              label={t('cover.tagsLabel')}
-              value={tags}
-              onChange={setTags}
-              hint={t('cover.tagsHint')}
+              label={t('cover.noteTitleLabel')}
+              value={noteTitle}
+              onChange={setNoteTitle}
+              placeholder={t('cover.noteTitlePlaceholder')}
+              hint={t('cover.noteTitleHint')}
             />
-
-            <div>
-              <Label>{t('cover.paletteLabel')}</Label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {(Object.keys(PALETTES) as PaletteKey[]).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    title={t(`cover.palette.${key}`)}
-                    aria-label={t(`cover.palette.${key}`)}
-                    onClick={() => setPalette(key)}
-                    className={`h-7 w-7 rounded-lg border-2 transition-transform hover:scale-110 ${
-                      palette === key ? 'border-foreground' : 'border-transparent'
-                    }`}
-                    style={{ background: PALETTES[key].main }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            <FieldSelect
-              label={t('cover.bgLabel')}
-              value={bgType}
-              options={bgOptions}
-              onChange={(v) => handleBgChange(v as BgType)}
-            />
-
-            {bgType === 'diffusion' ? <DiffusionControls value={diff} onChange={setDiff} /> : null}
-
-            {bgType === 'photo' ? (
-              <div>
-                <Label>{t('cover.uploadLabel')}</Label>
-                <input ref={fileRef} type="file" accept="image/*" hidden onChange={handleUpload} />
-                <div className="mt-2">
-                  <Button variant="tertiary" size="sm" onPress={() => fileRef.current?.click()}>
-                    {photo ? t('cover.photoChosen') : t('cover.photoChoose')}
-                  </Button>
-                </div>
-                <p className="mt-1 text-xs text-muted">{t('cover.photoHint')}</p>
-              </div>
-            ) : null}
-
-            <Slider
-              value={fade}
-              onChange={(v) => setFade(Array.isArray(v) ? v[0] : v)}
-              minValue={3}
-              maxValue={fadeMax}
-              step={1}
-              className="w-full"
-            >
-              <div className="mb-1.5 flex items-center justify-between">
-                <Label>{t('cover.fadeLabel')}</Label>
-                <span className="text-xs text-muted">{fade}%</span>
-              </div>
-              <Slider.Track>
-                <Slider.Fill />
-                <Slider.Thumb />
-              </Slider.Track>
-            </Slider>
 
             <div className="space-y-2.5 pt-1">
               <Button className="w-full" isDisabled={exporting} onPress={handleExport}>
@@ -610,144 +858,6 @@ export default function CoverPage() {
             </div>
           </div>
         </aside>
-
-        <section className="flex min-w-0 flex-1 flex-col items-center gap-3.5">
-          <div ref={stageRef} className={styles.stage}>
-            <div ref={cardRef} className={styles.cardRoot} style={cardVars}>
-              {showBgImage && bgSrc ? (
-                <img
-                  className={styles.bgPhoto}
-                  src={bgSrc}
-                  alt=""
-                  style={{ display: 'block', opacity: fade / 100 }}
-                />
-              ) : null}
-              {showSketch ? (
-                <div className={styles.bgSketch} style={{ opacity: fade / 100 }}>
-                  <svg
-                    viewBox="0 0 1080 700"
-                    xmlns="http://www.w3.org/2000/svg"
-                    preserveAspectRatio="xMidYMax meet"
-                  >
-                    <g
-                      fill="none"
-                      stroke="var(--c-main)"
-                      strokeWidth="2.4"
-                      strokeLinejoin="round"
-                      strokeLinecap="round"
-                    >
-                      <line x1="40" y1="650" x2="1040" y2="650" />
-                      <rect x="120" y="120" width="150" height="530" />
-                      <rect x="120" y="120" width="150" height="46" />
-                      <path d="M112 120 L195 58 L278 120 Z" />
-                      <line x1="195" y1="58" x2="195" y2="32" />
-                      <circle cx="195" cy="210" r="34" />
-                      <line x1="195" y1="210" x2="195" y2="188" />
-                      <line x1="195" y1="210" x2="212" y2="216" />
-                      <rect x="150" y="300" width="40" height="92" rx="20" />
-                      <rect x="200" y="300" width="40" height="92" rx="20" />
-                      <rect x="150" y="430" width="40" height="92" rx="20" />
-                      <rect x="200" y="430" width="40" height="92" rx="20" />
-                      <g>
-                        <rect x="300" y="360" width="700" height="290" />
-                        <line x1="300" y1="360" x2="1000" y2="360" />
-                        <path d="M330 650 L330 470 Q330 430 372 430 Q414 430 414 470 L414 650" />
-                        <path d="M444 650 L444 470 Q444 430 486 430 Q528 430 528 470 L528 650" />
-                        <path d="M558 650 L558 470 Q558 430 600 430 Q642 430 642 470 L642 650" />
-                        <path d="M672 650 L672 470 Q672 430 714 430 Q756 430 756 470 L756 650" />
-                        <path d="M786 650 L786 470 Q786 430 828 430 Q870 430 870 470 L870 650" />
-                        <path d="M900 650 L900 470 Q900 430 942 430 Q970 430 970 470 L970 650" />
-                        {Array.from({ length: 15 }, (_, i) => 300 + i * 50).map((x) => (
-                          <line key={x} x1={x} y1={360} x2={x} y2={338} />
-                        ))}
-                      </g>
-                    </g>
-                  </svg>
-                </div>
-              ) : null}
-              <div className={styles.scrim} />
-              <div className={styles.frameBorder} />
-              {coverType === 'review' ? (
-                <>
-                  <div ref={accentRef} className={styles.accentBar} />
-                  <div ref={eyebrowRef} className={styles.eyebrow}>
-                    {eyebrow}
-                  </div>
-                  <div ref={codeRef} className={styles.code}>
-                    {code}
-                  </div>
-                  <div ref={nameRef} className={styles.cname}>
-                    {name}
-                  </div>
-                  <div ref={dividerRef} className={styles.divider} />
-                  <div
-                    ref={ratingsRef}
-                    className={styles.ratings}
-                    style={{ display: showRatings ? 'flex' : 'none' }}
-                  >
-                    {difficulty > 0 ? (
-                      <div>
-                        <div className={styles.rlabel}>{t('cover.difficulty')}</div>
-                        <div className={styles.rstars}>{stars(difficulty)}</div>
-                      </div>
-                    ) : null}
-                    {recommend > 0 ? (
-                      <div>
-                        <div className={styles.rlabel}>{t('cover.recommend')}</div>
-                        <div className={styles.rstars}>{stars(recommend)}</div>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div ref={quoteCardRef} className={styles.quoteCard}>
-                    <div className={styles.qtext}>{quote}</div>
-                  </div>
-                  <div
-                    ref={tagsRef}
-                    className={styles.tags}
-                    style={{ display: showTags ? 'flex' : 'none' }}
-                  >
-                    {tagTokens.map((t, i) => (
-                      <div key={i} className={styles.chip}>
-                        {t}
-                      </div>
-                    ))}
-                  </div>
-                </>
-              ) : (
-                <div className={styles.comboWrap}>
-                  <div className={styles.comboAccent} />
-                  {eyebrow ? <div className={styles.comboEyebrow}>{eyebrow}</div> : null}
-                  <div className={styles.comboTitle}>{comboTerm}</div>
-                  {comboSubtitle ? <div className={styles.comboSub}>{comboSubtitle}</div> : null}
-                  <div className={styles.comboDivider} />
-                  <div className={styles.comboList}>
-                    {courseRows.map((c, i) => (
-                      <div key={i} className={styles.comboRow}>
-                        <span className={styles.cidx}>{String(i + 1).padStart(2, '0')}</span>
-                        <span className={styles.ccode}>{c.code}</span>
-                        <span className={styles.cname2}>{c.name}</span>
-                      </div>
-                    ))}
-                  </div>
-                  {comboNote ? <div className={styles.comboNote}>{comboNote}</div> : null}
-                  {showTags ? (
-                    <div className={styles.comboTags}>
-                      {tagTokens.map((t, i) => (
-                        <div key={i} className={styles.chip}>
-                          {t}
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              )}
-              <div className={styles.footer}>
-                <div className={styles.right}>{cardId}</div>
-              </div>
-            </div>
-          </div>
-          <p className="max-w-[540px] text-center text-xs text-muted">{t('cover.previewNote')}</p>
-        </section>
       </div>
     </div>
   )

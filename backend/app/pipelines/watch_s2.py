@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import ssl
 import sys
+import json
 import smtplib
 import argparse
 import subprocess
@@ -32,6 +33,8 @@ import psycopg
 
 from app.core.config import DSN, DATA_DIR
 from app.services.llm import _load_dotenv
+
+PROFILE_URL = "https://course-profiles.uq.edu.au/course-profiles/{}"
 
 
 def run(cmd: list[str]) -> None:
@@ -105,11 +108,21 @@ def main() -> None:
             new_ids_file.write_text("\n".join(new) + "\n")
             run([py, "-m", "app.scrapers.scraper",
                  "--file", str(new_ids_file), "--out", str(new_jsonl), "--delay", str(args.delay)])
-            scraped = sum(1 for ln in new_jsonl.read_text().splitlines() if ln.strip())
+            records = [json.loads(ln) for ln in new_jsonl.read_text().splitlines() if ln.strip()]
+            scraped = len(records)
             run([py, "-m", "app.pipelines.build_db", "--in", str(new_jsonl)])
             run([py, "-m", "app.pipelines.embed"])
             lines.append(f"新增 {len(new)} 门:成功抓取入库 {scraped} 门,"
                          f"失败 {len(new) - scraped} 门(下轮自动重试)。")
+            lines.append("")
+            lines.append("本轮开课明细:")
+            for r in records:
+                lines.append(f"  {r['code']} {r['title']}")
+                lines.append(f"    {PROFILE_URL.format(r['offering_id'])}")
+            failed = sorted(set(new) - {r["offering_id"] for r in records})
+            if failed:
+                lines.append("")
+                lines.append(f"抓取失败(下轮自动重试):{', '.join(failed)}")
 
         notify(f"[UQ-RAG watch] {args.semester} 新增 {len(new)}", "\n".join(lines))
         print("\n[watch] 完成。", flush=True)

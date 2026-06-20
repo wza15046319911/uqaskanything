@@ -61,41 +61,6 @@
   pointer-events: none;
 }
 
-.scrim {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.93) 0%,
-    rgba(255, 255, 255, 0.82) 34%,
-    rgba(255, 255, 255, 0.58) 62%,
-    rgba(255, 255, 255, 0.42) 100%
-  );
-}
-
-.accentBar {
-  position: absolute;
-  left: 90px;
-  top: 90px;
-  width: 76px;
-  height: 10px;
-  border-radius: 5px;
-  background: var(--c-main);
-  z-index: 2;
-}
-
-.eyebrow {
-  position: absolute;
-  left: 90px;
-  top: 150px;
-  font-size: 40px;
-  letter-spacing: 4px;
-  color: var(--c-light);
-  z-index: 2;
-}
-
 .code {
   position: absolute;
   left: 90px;
@@ -117,39 +82,7 @@
   color: var(--c-deep);
   line-height: 1.12;
   max-width: 900px;
-  width: fit-content;
-  padding: 2px 14px 2px 0;
-  background: linear-gradient(180deg, transparent 0 46%, var(--c-line) 46% 92%, transparent 92%);
   z-index: 2;
-}
-
-.divider {
-  position: absolute;
-  left: 90px;
-  width: 190px;
-  height: 3px;
-  background: var(--c-line);
-  z-index: 2;
-}
-
-.ratings {
-  position: absolute;
-  left: 90px;
-  display: flex;
-  gap: 48px;
-  z-index: 2;
-}
-
-.rlabel {
-  font-size: 32px;
-  color: var(--c-light);
-  margin-bottom: 4px;
-}
-
-.rstars {
-  font-size: 48px;
-  color: var(--c-main);
-  letter-spacing: 2px;
 }
 
 .quoteCard {
@@ -167,22 +100,20 @@
   letter-spacing: 3px;
 }
 
-.tags {
+/* 长文正文:绝对定位铺满内容区(left 90 / top 150 / 宽 900),换行保留,与隐藏测量元素同样式以保证分页准确。 */
+.contentBody {
   position: absolute;
   left: 90px;
-  right: 90px;
-  flex-wrap: wrap;
-  gap: 14px;
+  top: 150px;
+  width: 900px;
   z-index: 2;
-}
-
-.chip {
-  font-size: 36px;
-  font-weight: 700;
-  color: var(--c-mid);
-  background: var(--c-card);
-  padding: 9px 22px;
-  border-radius: 999px;
+  font-size: 46px;
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 1px;
+  color: var(--c-deep);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .footer {
@@ -202,7 +133,7 @@
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.55);
 }
 
-/* 选课搭配封面:整块用流式布局垂直居中,课程清单行数可变,不走绝对定位测量。 */
+/* 选课搭配封面:整块用流式布局垂直居中,只显示大标题与英文副标题。 */
 .comboWrap {
   position: absolute;
   inset: 0;
@@ -222,13 +153,6 @@
   margin-bottom: 34px;
 }
 
-.comboEyebrow {
-  font-size: 40px;
-  letter-spacing: 4px;
-  color: var(--c-light);
-  margin-bottom: 20px;
-}
-
 .comboTitle {
   font-size: 110px;
   font-weight: 800;
@@ -244,68 +168,4 @@
   letter-spacing: 6px;
   text-transform: uppercase;
   color: var(--c-light);
-}
-
-.comboDivider {
-  width: 190px;
-  height: 3px;
-  margin: 40px 0 4px;
-  background: var(--c-line);
-}
-
-.comboList {
-  display: flex;
-  flex-direction: column;
-  margin-top: 22px;
-}
-
-.comboRow {
-  display: flex;
-  align-items: baseline;
-  gap: 26px;
-  padding: 22px 2px;
-  border-bottom: 1px solid var(--c-line);
-}
-
-.cidx {
-  flex: 0 0 56px;
-  font-size: 30px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--c-pale);
-}
-
-.ccode {
-  flex-shrink: 0;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 50px;
-  font-weight: 800;
-  letter-spacing: 1px;
-  color: var(--c-deep);
-}
-
-.cname2 {
-  flex: 1;
-  min-width: 0;
-  font-size: 40px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--c-mid);
-}
-
-.comboNote {
-  margin-top: 36px;
-  font-size: 38px;
-  font-weight: 700;
-  line-height: 1.32;
-  letter-spacing: 2px;
-  white-space: pre-line;
-  color: var(--c-deep);
-}
-
-.comboTags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 30px;
 }

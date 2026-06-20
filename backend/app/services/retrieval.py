@@ -27,8 +27,10 @@ import psycopg
 from app.services import reranker
 
 EMBED_BASE = os.environ.get("EMBED_BASE", "https://api.deepinfra.com/v1/openai")
-EMBED_API_KEY = os.environ.get("EMBED_API_KEY", "")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "BAAI/bge-m3")
+# Local default embedding: Ollama (the same bge-m3 that built the DB vectors). DeepInfra is used only when EMBED_API_KEY is present.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_EMBED_MODEL = os.environ.get("OLLAMA_EMBED_MODEL", "bge-m3")
 
 # Fixed output columns, fixed order; this is the key set used when making dicts
 SELECT_COLS = "code, title, semester, level, units, has_exam, has_hurdle, midterm_status, group_status"
@@ -50,16 +52,28 @@ RRF_K = 60  # RRF constant, industry default 60
 SEMANTIC_MIN_SIM = 0.50
 
 def _embed(text: str) -> str:
-    """Get the bge-m3 vector and turn it into a pgvector literal (DeepInfra OpenAI-compatible API).
-    Same model, same 1024 dims, compatible with existing vectors in the DB; raise on failure, do not swallow."""
-    r = requests.post(
-        f"{EMBED_BASE}/embeddings",
-        headers={"Authorization": f"Bearer {EMBED_API_KEY}"},
-        json={"model": EMBED_MODEL, "input": text[:8000], "encoding_format": "float"},
-        timeout=60,
-    )
-    r.raise_for_status()
-    v = r.json()["data"][0]["embedding"]
+    """Get the bge-m3 vector and turn it into a pgvector literal. Same model, same 1024 dims, compatible with existing DB vectors; raise on failure, do not swallow.
+    Local default: Ollama (bge-m3, the same model that built the DB vectors). When EMBED_API_KEY is set (cloud/production, injected by Terraform) it switches to the DeepInfra OpenAI-compatible API.
+    The key is read live each call, so .env loaded after import (and runtime env changes) take effect."""
+    text = text[:8000]
+    key = os.environ.get("EMBED_API_KEY", "")
+    if key:
+        r = requests.post(
+            f"{EMBED_BASE}/embeddings",
+            headers={"Authorization": f"Bearer {key}"},
+            json={"model": EMBED_MODEL, "input": text, "encoding_format": "float"},
+            timeout=60,
+        )
+        r.raise_for_status()
+        v = r.json()["data"][0]["embedding"]
+    else:
+        r = requests.post(
+            f"{OLLAMA_URL}/api/embeddings",
+            json={"model": OLLAMA_EMBED_MODEL, "prompt": text},
+            timeout=60,
+        )
+        r.raise_for_status()
+        v = r.json()["embedding"]
     return "[" + ",".join(f"{x:.6f}" for x in v) + "]"
 
 
