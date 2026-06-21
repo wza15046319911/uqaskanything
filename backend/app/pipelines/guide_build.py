@@ -1,0 +1,143 @@
+"""
+guide_build.py — 攻略入库管线(建表 + 对账闸门 + 切块 + embedding + upsert)
+
+落地顺序:遍历 data/guides/*.md,逐篇先跑 guide_check(不过则 skip + 计数 + 报原因,规则 19);
+通过的按 `##` 小节切块(复用 kb_parse.sections_from_markdown),每块用本地 Ollama bge-m3 embedding
+(复用 embed.embed,与 courses / kb_chunks 同一 1024 维向量空间,Risk 5),upsert 进 course_guides。
+id = `{code}_{year}-{idx}`,可重复跑;重灌一篇前先删该 (course_code, year) 的旧块,避免残留。
+
+本地与 Supabase 都用本表:跑哪个库由 DATABASE_URL 决定(默认本地 :5433)。两边用同一 Ollama 向量,
+和 courses 迁移口径一致。**输出不打印含密码的 DSN**(只显示 host/db),避免日志泄密。
+
+用法(从 backend/ 跑,需 :5433 pgvector + Ollama bge-m3):
+    python -m app.pipelines.guide_build
+    python -m app.pipelines.guide_build --dir data/guides
+    DATABASE_URL=<supabase-dsn> python -m app.pipelines.guide_build   # 灌云端
+"""
+from __future__ import annotations
+import os
+import glob
+import argparse
+from datetime import date
+from urllib.parse import urlsplit
+
+import psycopg
+
+from app.services import retrieval
+from app.pipelines import guide_check, kb_parse, embed
+from app.core.config import DSN, DATA_DIR
+EMBED_DIM = 1024  # bge-m3
+
+DDL = f"""
+CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE IF NOT EXISTS course_guides (
+    id            TEXT PRIMARY KEY,
+    course_code   TEXT NOT NULL,
+    year          INTEGER NOT NULL,
+    semester      TEXT,
+    section       TEXT,
+    text          TEXT NOT NULL,
+    source        TEXT,
+    profile_url   TEXT,
+    checked_at    TEXT,
+    embedding     VECTOR({EMBED_DIM})
+);
+CREATE INDEX IF NOT EXISTS idx_course_guides_code ON course_guides(course_code);
+CREATE INDEX IF NOT EXISTS idx_course_guides_emb  ON course_guides USING hnsw (embedding vector_cosine_ops);
+"""
+
+COLS = ["id", "course_code", "year", "semester", "section", "text", "source",
+        "profile_url", "checked_at"]
+
+
+def _safe_dsn(dsn: str) -> str:
+    """脱敏 DSN:只回显 host:port/dbname,绝不带用户名密码(防 Supabase 串泄进日志)。"""
+    try:
+        u = urlsplit(dsn)
+        return f"{u.hostname}:{u.port or ''}{u.path}"
+    except Exception:
+        return "(dsn hidden)"
+
+
+def _sections(body: str) -> list[tuple[str, str]]:
+    """body -> [(section_title, chunk_text)];按 ## 切块,无小节则整篇一块。embedding 输入带上小节标题做主题锚。"""
+    secs = kb_parse.sections_from_markdown(body)
+    out: list[tuple[str, str]] = []
+    for h2, h3, text in secs:
+        title = " ".join(t for t in (h2, h3) if t).strip()
+        out.append((title, text.strip()))
+    if not out and body.strip():
+        out.append(("", body.strip()))
+    return out
+
+
+def build(conn, paths: list[str]) -> tuple[int, list[tuple[str, str]], dict]:
+    """对账通过的攻略切块入库;返回 (入库块数, [(path, skip原因)], {code: checked_at})。"""
+    placeholders = ",".join(["%s"] * len(COLS)) + ",%s::vector"
+    updates = ",".join(f"{c}=EXCLUDED.{c}" for c in COLS if c != "id") + ",embedding=EXCLUDED.embedding"
+    sql = (f"INSERT INTO course_guides ({','.join(COLS)},embedding) VALUES ({placeholders}) "
+           f"ON CONFLICT (id) DO UPDATE SET {updates}")
+
+    today = date.today().isoformat()
+    inserted = 0
+    skipped: list[tuple[str, str]] = []
+    checked: dict[str, str] = {}
+    with conn.cursor() as cur:
+        cur.execute(DDL)
+        conn.commit()
+        for path in paths:
+            res = guide_check.check_file(conn, path)
+            if not res["ok"]:
+                skipped.append((path, "; ".join(res["conflicts"])))
+                continue
+            fm, body = res["frontmatter"], res["body"]
+            code = res["code"]
+            year = int(fm.get("year"))
+            semester = str(fm.get("semester") or "") or None
+            source = str(fm.get("source") or "") or None
+            profile_url = retrieval.COURSE_PROFILE_URL.format(code)
+            secs = _sections(body)
+            # 重灌一篇前先清掉该 (code, year) 的旧块,避免改短后残留陈旧块
+            cur.execute("DELETE FROM course_guides WHERE course_code=%s AND year=%s", (code, year))
+            for idx, (section, text) in enumerate(secs):
+                vec = embed.to_vec(embed.embed(f"{section}\n{text}".strip()))
+                vals = [f"{code}_{year}-{idx}", code, year, semester, section or None,
+                        text, source, profile_url, today, vec]
+                cur.execute(sql, vals)
+                inserted += 1
+            checked[code] = today
+            conn.commit()
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_course_guides_emb "
+                    "ON course_guides USING hnsw (embedding vector_cosine_ops)")
+        conn.commit()
+    return inserted, skipped, checked
+
+
+def _expand(directory: str) -> list[str]:
+    """目录里所有符合 <CODE>_<YEAR>.md 的攻略文件(滤掉 README 等)。"""
+    return [p for p in sorted(glob.glob(os.path.join(directory, "*.md")))
+            if guide_check._GUIDE_FILE_RE.match(os.path.basename(p))]
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dir", default=str(DATA_DIR / "guides"), help="攻略目录(默认 data/guides)")
+    args = ap.parse_args()
+    paths = _expand(args.dir)
+    if not paths:
+        print(f"{args.dir} 下没有 <CODE>_<YEAR>.md 攻略文件")
+        return 1
+    print(f"待处理 {len(paths)} 篇 -> course_guides({_safe_dsn(DSN)})")
+    with psycopg.connect(DSN) as conn:
+        inserted, skipped, checked = build(conn, paths)
+    print(f"\n入库 {inserted} 块;对账通过 {len(checked)} 篇" + (f",跳过 {len(skipped)} 篇" if skipped else ""))
+    for code, d in sorted(checked.items()):
+        print(f"  ✓ {code}  checked_at={d}")
+    for path, why in skipped:
+        print(f"  ✗ SKIP {path}:{why}")
+    return 1 if skipped else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

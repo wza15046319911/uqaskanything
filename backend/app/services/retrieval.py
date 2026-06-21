@@ -446,6 +446,40 @@ def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.62,
     return out[:k]
 
 
+# ---------- Course guides (subjective experience corpus) semantic search ----------
+# 物理隔离(案 A):攻略只在 course_guides,事实查询(kb_search / course_detail)物理上不可能命中它(student-facing 红线 1/3)。
+GUIDE_COLS = "id, course_code, year, semester, section, text, source, profile_url, checked_at"
+GUIDE_KEYS = ("id", "course_code", "year", "semester", "section", "text", "source",
+              "profile_url", "checked_at")
+
+
+def guide_search(conn, course_code: str, query: str, k: int = 4,
+                 min_sim: float = 0.55) -> list[dict]:
+    """攻略经验块语义检索:bge-m3 向量近邻,强制 WHERE course_code=%s(攻略是课程范围内的,跨课不召回),返回 top-k。
+
+    与 kb_search 同一向量空间(同 _embed 选路:本地 Ollama / 有 EMBED_API_KEY 时 DeepInfra),低于 min_sim 一律滤掉
+    —— 弱召回宁可空(红线 3:别拿沾边的经验糊弄)。**只查 course_guides**,绝不触碰 courses / kb_chunks(案 A 物理隔离)。
+    min_sim 初值 0.55,上线前用真实问题扫一遍再定,别拍脑袋。"""
+    code = (course_code or "").strip().upper()
+    if not code:
+        raise ValueError("course_code 不能为空")
+    if not query or not query.strip():
+        raise ValueError("query 不能为空")
+    vec = _embed(query)
+    sql = (f"SELECT {GUIDE_COLS}, 1-(embedding<=>%s::vector) AS sim FROM course_guides "
+           f"WHERE course_code=%s ORDER BY embedding<=>%s::vector LIMIT %s")
+    rows = conn.execute(sql, (vec, code, vec, k * 2)).fetchall()
+    out: list[dict] = []
+    for r in rows:
+        sim = float(r[-1])
+        if sim < min_sim:
+            continue
+        d = dict(zip(GUIDE_KEYS, r[:len(GUIDE_KEYS)]))
+        d["sim"] = sim
+        out.append(d)
+    return out[:k]
+
+
 # ---------- Single-course detail (course intro / prereq / assessment) ----------
 DETAIL_COLS = ("code, title, units, level, description, prerequisite_raw, "
                "incompatible, assessments, learning_outcomes, topics, "

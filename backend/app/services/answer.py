@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import re
 import json
+from datetime import date
 from collections.abc import Iterator
 
 import requests
@@ -779,6 +780,94 @@ def answer_course_detail_stream(question: str, course: dict | None, lang: Lang =
         yield "\n\n" + _detail_assessment(course, lang)
 
 
+# ---------- Course guide (subjective experience) answer ----------
+# 攻略只当经验层:LLM 只转述召回块里的主观经验,事实口径由代码拼的强制前缀 + 官方链接兜底(红线 1/2)。
+GUIDE_SYSTEM_ZH = """你是 UQ 选课助手。下面是学长写的【个人经验】(非 UQ 官方)。只转述其中的主观经验与建议(体验、避坑、怎么准备),用简洁中文。
+硬性规则:
+- 只用【经验】里的内容,绝不编造;不要把经验里提到的先修/考核占比/日期当权威事实陈述(这些一律以官方课程大纲为准)。
+- 不寒暄、不重复问题、不写网址(系统已在开头给出官方链接与年份口径)。
+- 简短:不超过 6 句或要点列表。"""
+
+GUIDE_SYSTEM_EN = """You are the UQ course assistant. Below is one student's [Personal experience] (not official UQ). Retell only the subjective experience and advice (what it's like, pitfalls, how to prepare), in clear English.
+Hard rules:
+- Use only what is in [Personal experience]; never invent. Do not state any prerequisite / assessment weight / date in it as authoritative fact (those follow the official course profile).
+- No greetings, do not repeat the question, do not write URLs (the system already prepends the official link and the year framing).
+- Be short: at most 6 sentences or a bullet list."""
+
+_GUIDE_SYSTEM = {"zh": GUIDE_SYSTEM_ZH, "en": GUIDE_SYSTEM_EN}
+
+GUIDE_USER_TMPL = {
+    "zh": "问题:{q}\n\n【经验】(学长个人经验,非官方)\n{facts}\n\n请只依据上面的【经验】用中文转述,别把它当官方事实。",
+    "en": "Question: {q}\n\n[Personal experience] (one student's experience, unofficial)\n{facts}\n\nRetell based only on the [Personal experience] above; do not treat it as official fact.",
+}
+
+# 强制年份/非官方口径前缀(代码拼,非 LLM,确定性,红线 2:每个答案可一键回官方核验)。
+_GUIDE_PREFIX = {
+    "zh": "> 以下为学长个人经验({year} 年),非 UQ 官方;先修、考核占比、考试日期等请以官方课程大纲为准:{url}",
+    "en": "> The following is one student's personal experience ({year}), not official UQ; for prerequisites, assessment weights, exam dates etc. rely on the official course profile: {url}",
+}
+# checked_at 距今超约一个学期(180 天)再追加过期提醒;新鲜的就不加。
+_GUIDE_STALE = {
+    "zh": "\n\n注:该经验可能已过期,务必核对当年课程大纲。",
+    "en": "\n\nNote: this experience may be out of date; be sure to check the current year's course profile.",
+}
+_GUIDE_STALE_DAYS = 180
+
+
+def _guide_facts(chunks: list[dict]) -> str:
+    """攻略块 -> 编号事实列表,带小节名做锚。"""
+    out: list[str] = []
+    for i, c in enumerate(chunks, 1):
+        sec = (c.get("section") or "").strip()
+        head = f"[{i}] {sec}" if sec else f"[{i}]"
+        out.append(f"{head}\n{(c.get('text') or '').strip()}")
+    return "\n\n".join(out)
+
+
+def _guide_prefix(chunks: list[dict], lang: Lang = "zh") -> str:
+    """确定性前缀:经验年份 + 非官方口径 + 官方课程页链接(取首块的 year/profile_url)。"""
+    c = chunks[0]
+    year = c.get("year") or "?"
+    url = c.get("profile_url") or ""
+    return _GUIDE_PREFIX[lang].format(year=year, url=url)
+
+
+def _guide_staleness(chunks: list[dict], lang: Lang = "zh") -> str:
+    """checked_at 距今超一个学期 -> 过期提醒;解析失败/缺失则不加(软防护,不拦)。"""
+    raw = (chunks[0].get("checked_at") or "").strip()
+    try:
+        delta = (date.today() - date.fromisoformat(raw)).days
+    except ValueError:
+        return ""
+    return _GUIDE_STALE[lang] if delta > _GUIDE_STALE_DAYS else ""
+
+
+def answer_guide(question: str, chunks: list[dict], lang: Lang = "zh") -> str:
+    """攻略经验问答:强制非官方/年份前缀(确定性)+ LLM 转述经验层 + 过期提醒(若旧)。chunks 由调用方保证非空(空则 qa 已回退 course_detail)。"""
+    if not chunks:
+        return i18n.t("course_not_found", lang)
+    body = llm.call([
+        {"role": "system", "content": _GUIDE_SYSTEM[lang]},
+        {"role": "user", "content": GUIDE_USER_TMPL[lang].format(q=question, facts=_guide_facts(chunks))},
+    ]).strip()
+    return _guide_prefix(chunks, lang) + "\n\n" + body + _guide_staleness(chunks, lang)
+
+
+def answer_guide_stream(question: str, chunks: list[dict], lang: Lang = "zh") -> Iterator[str]:
+    """流式攻略问答:先发确定性前缀,再 token 级流式转述经验,最后追加过期提醒(若旧)。"""
+    if not chunks:
+        yield i18n.t("course_not_found", lang)
+        return
+    yield _guide_prefix(chunks, lang) + "\n\n"
+    yield from llm.call_stream([
+        {"role": "system", "content": _GUIDE_SYSTEM[lang]},
+        {"role": "user", "content": GUIDE_USER_TMPL[lang].format(q=question, facts=_guide_facts(chunks))},
+    ])
+    stale = _guide_staleness(chunks, lang)
+    if stale:
+        yield stale
+
+
 def gen_contexts(mode: str, courses: list[dict] | None = None, program_facts=None,
                  chunks: list[dict] | None = None, course: dict | None = None,
                  question: str | None = None, lang: Lang = "zh") -> list[str]:
@@ -788,7 +877,7 @@ def gen_contexts(mode: str, courses: list[dict] | None = None, program_facts=Non
     retrieved_contexts; modes with no LLM context such as program/empty return an empty list.
     When course_detail matches a sub-question, return the structured-field basis (the answer is deterministic, not LLM), same as program.
     """
-    if mode == "kb":
+    if mode in ("kb", "guide"):
         return [(c.get("text") or "").strip() for c in (chunks or []) if c.get("text")]
     if mode == "course_detail":
         intents = _detail_intents(question or "")

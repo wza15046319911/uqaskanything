@@ -151,7 +151,18 @@ _FACULTY_KW = [
     (re.compile(r"文科|人文|humanities|liberal\s*arts|(?<![A-Za-z])arts(?![A-Za-z])", re.I), "arts"),
 ]
 
-MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail")
+MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail", "guide")
+
+# 攻略经验意图(确定性,规则 12):课程码 + 这些词 = 想问「主观经验/避坑/怎么准备」,走 mode=guide。
+_GUIDE_INTENT = re.compile(r"难不难|好过吗|水不水|怎么样|体验|值不值|踩坑|避坑|怎么准备|给点建议|经验|攻略|心得", re.I)
+# 事实意图(日期/先修/考核占比/Hurdle/学分):优先级高于 guide —— 同一句命中这些就走 course_detail/kb,绝不进攻略(student-facing 红线 1/3:事实问题永不召回攻略)。
+_FACT_INTENT = re.compile(
+    r"什么时候|何时|哪天|几号|日期|开学|开课|放假|截止|"
+    r"先修|先决|前置|前导|修读要求|"
+    r"考核|考评|评估|评分|成绩构成|占比|权重|考试|"
+    r"学分|"
+    r"\b(?:census|deadline|when|start\s*date|prerequisite|prereq|exam|assessment|weight|hurdle|units?)\b",
+    re.I)
 
 # Course code: 4 letters + 4 digits. When Chinese is adjacent the ASCII \b fails, so use lookaround boundaries;
 # forbid a trailing letter/digit to avoid mistaking CSSE10012 (5 digits) for CSSE1001.
@@ -170,7 +181,7 @@ TOPIC_HINT = re.compile(
     r"心理|生物|化学|物理|数学|统计|电子|电气|通信|机械|土木|商科|管理|市场|营销|"
     r"写作|护理|艺术|法律|医学|教育|建筑|环境|机器人|"
     r"(?<![A-Za-z])(cs|ai|ml|it|ee)(?![A-Za-z])|"
-    r"computer|software|machine\s*learning|"
+    r"computer|software|machine[\s-]*learning|"
     r"data|security|finance|account|psycholog|biolog|chemis|physic|statistic|"
     r"electric|mechanic|civil|business|market|"
     r"writing|nursing|\bart\b|\blaw\b|medic|education|architect|environment|robotic|engineer)", re.I)
@@ -820,6 +831,19 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             "filters": _enforce_level_hint(base, question),
             "semantic_query": "", "course_code": "", "program_name": "",
             "direction": "", "coord_units": [], "order": "assessments_asc"}
+
+    # 攻略经验意图快速通道(确定性,规则 12,不调 LLM):课程码 + 经验词 + 非事实意图 + 非专业问题 -> mode=guide。
+    # 事实意图优先短路:先修/考核占比/日期/Hurdle/学分等命中时不进攻略(红线:事实问题永不召回攻略,由 course_detail/kb 处理)。
+    _gm = COURSE_CODE_RE.search(question)
+    if (_gm and _GUIDE_INTENT.search(question)
+            and not _FACT_INTENT.search(question)
+            and not PROGRAM_NAME_RE.search(question)
+            and not PROG_REL_KW_RE.search(question)):
+        return {
+            "mode": "guide", "filters": {}, "semantic_query": "",
+            "course_code": _gm.group(1).upper(), "program_name": "", "direction": "",
+            "coord_units": [], "order": "", "kb_query": "",
+            "both_semesters": False, "exclude_title": []}
 
     raw = _call_llm(PROMPT.format(schema=schema_doc, q=question))
     try:

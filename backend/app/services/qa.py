@@ -8,6 +8,7 @@ mode routing:
   hybrid   -> retrieval.hybrid_search (structured + semantic)
   program  -> program_lookup (course_to_programs / program_to_courses)
   kb       -> retrieval.kb_search (knowledge base FAQ/date/policy, decided up front by planner classification)
+  guide    -> retrieval.guide_search (单课主观经验/攻略,经验意图触发;事实意图优先短路,库内无攻略回退 course_detail)
   empty    -> question too broad / cannot form a retrieval condition (graceful fallback when planner raises ValueError)
 
 Usage:
@@ -408,6 +409,23 @@ def _retrieve(conn, question: str, lang: Lang = "zh") -> dict:
                 "program_facts": None, "prog_answer": None,
                 "chunks": _kb_or_none(conn, question, p.get("kb_query"))}
 
+    # Course guide: planner judged it a single-course subjective-experience question (经验意图 + 课程码,事实意图已被优先短路掉)。
+    # 物理隔离:只查 course_guides;库内该课无攻略 -> 优雅回退 course_detail(不报错、不空答,红线 3 / Risk 4)。
+    if mode == "guide":
+        code = p["course_code"]
+        chunks = retrieval.guide_search(conn, code, question)
+        if chunks:
+            return {"plan": p, "mode": "guide", "meta": f"guide {code}({len(chunks)} 块)",
+                    "courses": [], "program_facts": None, "prog_answer": None,
+                    "chunks": chunks, "course": None}
+        course = retrieval.course_detail(conn, code)
+        if not course:
+            return {"plan": p, "mode": "empty", "meta": f"guide 无攻略且未找到课程 {code}",
+                    "courses": [], "program_facts": None, "prog_answer": None, "chunks": []}
+        return {"plan": p, "mode": "course_detail", "meta": f"guide 无攻略,回退 course_detail {code}",
+                "courses": [], "program_facts": None, "prog_answer": None,
+                "chunks": [], "course": course}
+
     # Single-course detail: planner already judged it "intro/prereq/assessment of one course" -> fetch that course's full info.
     if mode == "course_detail":
         course = retrieval.course_detail(conn, p["course_code"])
@@ -692,6 +710,8 @@ def run(conn, question: str, generate: bool = True, lang: Lang | None = None) ->
     if generate:
         if r["mode"] == "kb":
             ans = answer.answer_kb(question, r["chunks"], lang=lang)
+        elif r["mode"] == "guide":
+            ans = answer.answer_guide(question, r["chunks"], lang=lang)
         elif r["mode"] == "course_detail":
             ans = answer.answer_course_detail(question, r.get("course"), lang=lang)
         elif r["mode"] == "program":
@@ -706,7 +726,7 @@ def run(conn, question: str, generate: bool = True, lang: Lang | None = None) ->
                 ans += r["status_note"]
     if r["mode"] == "program":                  # deterministic answer, not fed to the LLM, no retrieval context
         gen_ctx: list[str] = []
-    elif r["mode"] in ("kb", "course_detail"):
+    elif r["mode"] in ("kb", "guide", "course_detail"):
         gen_ctx = answer.gen_contexts(r["mode"], chunks=r.get("chunks"), course=r.get("course"),
                                       question=question, lang=lang)
     else:                                       # filter/semantic/hybrid: align with the actual production input (capped + _gen_facts)
@@ -765,6 +785,13 @@ def run_stream(conn, question: str, lang: Lang | None = None):
         if answer.is_empty_kb_answer(full):     # streaming empty-answer fallback: override done with the same retry+degrade as the non-streaming path
             full = answer.kb_answer_body(question, chunks, lang=lang)
         yield ("done", full)
+        return
+    if mode == "guide":                         # 攻略经验:先发确定性年份/非官方前缀,再流式转述经验层(无攻略已在 _retrieve 回退为 course_detail)
+        acc: list[str] = []
+        for delta in answer.answer_guide_stream(question, r["chunks"], lang=lang):
+            acc.append(delta)
+            yield ("token", delta)
+        yield ("done", "".join(acc))
         return
     if mode == "course_detail":                 # single-course intro: stream the summary (structured facts go through meta.course frontend card)
         acc: list[str] = []
