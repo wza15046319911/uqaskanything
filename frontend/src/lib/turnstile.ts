@@ -3,9 +3,9 @@
 // any deploy without the key behave exactly as before. Backend matches this (TURNSTILE_SECRET
 // unset -> verification skipped).
 //
-// Invisible execute mode: the widget renders once hidden, and every getToken() call runs
-// turnstile.execute() to mint a fresh single-use token (Turnstile tokens are single-use; reusing
-// one makes siteverify fail).
+// Invisible execute mode: the widget renders once hidden, and every getToken() call resets it then
+// runs turnstile.execute() to mint a fresh single-use token (Turnstile tokens are single-use; a
+// finished widget refuses to re-execute without a reset first, so reset before each execute).
 
 const SITEKEY = import.meta.env.VITE_TURNSTILE_SITEKEY
 const SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js'
@@ -14,6 +14,7 @@ const TOKEN_TIMEOUT_MS = 10000
 interface TurnstileApi {
   render: (el: HTMLElement, opts: Record<string, unknown>) => string
   execute: (idOrEl: string | HTMLElement, opts?: Record<string, unknown>) => void
+  reset: (idOrEl: string | HTMLElement) => void
 }
 
 declare global {
@@ -90,6 +91,7 @@ const getToken = async (): Promise<string | null> => {
       resolve(token)
     }
     try {
+      turnstile.reset(id)
       turnstile.execute(id, { action: 'ask' })
     } catch {
       settle(null)
