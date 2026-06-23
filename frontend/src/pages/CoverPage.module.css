@@ -1,6 +1,8 @@
-/* 封面卡片样式:1080×1440 导出画布及其内部元素。
-   保持十六进制/rgba 取色,与屏幕预览一致,modern-screenshot 导出时不漂色。
-   --c-* 调色板变量由组件按当前配色 inline 注入到 .cardRoot 上,子元素继承。 */
+/* Cover card styles: the 1080x1440 export canvas and its inner elements.
+   Use hex/rgba colors to match the on-screen preview, so modern-screenshot does
+   not shift colors on export.
+   The --c-* palette variables are injected inline onto .cardRoot by the component
+   based on the current color scheme, and child elements inherit them. */
 
 .stage {
   width: 540px;
@@ -100,7 +102,7 @@
   letter-spacing: 3px;
 }
 
-/* 长文正文:绝对定位铺满内容区(left 90 / top 150 / 宽 900),换行保留,与隐藏测量元素同样式以保证分页准确。 */
+/* Long body text: absolutely positioned to fill the content area (left 90 / top 150 / width 900), line breaks preserved, and uses the same style as the hidden measuring element to keep pagination accurate. */
 .contentBody {
   position: absolute;
   left: 90px;
@@ -133,7 +135,7 @@
   text-shadow: 0 1px 3px rgba(255, 255, 255, 0.55);
 }
 
-/* 选课搭配封面:整块用流式布局垂直居中,只显示大标题与英文副标题。 */
+/* Course-combo cover: the whole block uses flow layout centered vertically, showing only the large title and the English subtitle. */
 .comboWrap {
   position: absolute;
   inset: 0;

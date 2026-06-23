@@ -116,8 +116,10 @@ Eval (run before serving real students — not just "didn't crash"):
 - Deployment notes: `DEPLOY.md`
 
 ## Conventions
-- Backend keeps Chinese module-level docstrings (purpose + 用法). Keep that style;
-  do not add per-line comments. Code identifiers stay English.
+- All comments and docstrings are written in English. Do not add per-line
+  comments unless asked. Code identifiers stay English. Chinese may remain only
+  in non-comment data: LLM prompt strings, i18n message tables, test fixtures,
+  and example queries / regex tokens quoted inside an otherwise-English comment.
 - Never swallow errors: routers return
   `JSONResponse({"error": f"{type(e).__name__}: {e}"}, status_code=...)` with the
   real message. Surface skip counts and reasons in pipeline output, never silent

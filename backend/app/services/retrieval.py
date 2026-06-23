@@ -447,7 +447,7 @@ def kb_search(conn, query: str, k: int = 5, min_sim: float = 0.62,
 
 
 # ---------- Course guides (subjective experience corpus) semantic search ----------
-# 物理隔离(案 A):攻略只在 course_guides,事实查询(kb_search / course_detail)物理上不可能命中它(student-facing 红线 1/3)。
+# Physical isolation (option A): guides live only in course_guides, so factual queries (kb_search / course_detail) physically cannot hit them (student-facing red line 1/3).
 GUIDE_COLS = "id, course_code, year, semester, section, text, source, profile_url, checked_at"
 GUIDE_KEYS = ("id", "course_code", "year", "semester", "section", "text", "source",
               "profile_url", "checked_at")
@@ -455,11 +455,11 @@ GUIDE_KEYS = ("id", "course_code", "year", "semester", "section", "text", "sourc
 
 def guide_search(conn, course_code: str, query: str, k: int = 4,
                  min_sim: float = 0.55) -> list[dict]:
-    """攻略经验块语义检索:bge-m3 向量近邻,强制 WHERE course_code=%s(攻略是课程范围内的,跨课不召回),返回 top-k。
+    """Course-guide experience chunk semantic search: bge-m3 vector nearest neighbor, forced WHERE course_code=%s (guides are within a single course's scope, cross-course is not recalled), returns top-k.
 
-    与 kb_search 同一向量空间(同 _embed 选路:本地 Ollama / 有 EMBED_API_KEY 时 DeepInfra),低于 min_sim 一律滤掉
-    —— 弱召回宁可空(红线 3:别拿沾边的经验糊弄)。**只查 course_guides**,绝不触碰 courses / kb_chunks(案 A 物理隔离)。
-    min_sim 初值 0.55,上线前用真实问题扫一遍再定,别拍脑袋。"""
+    Same vector space as kb_search (same _embed routing: local Ollama / DeepInfra when EMBED_API_KEY is set); anything below min_sim is filtered out
+    -- rather return nothing than give weakly related results (red line 3: do not fob the student off with loosely related experience). **Queries only course_guides**, never touches courses / kb_chunks (option A physical isolation).
+    min_sim starts at 0.55; scan it with real questions before going live to set it, do not just guess."""
     code = (course_code or "").strip().upper()
     if not code:
         raise ValueError("course_code 不能为空")

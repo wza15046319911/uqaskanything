@@ -1,4 +1,4 @@
-"""单课子问题(先修/考核/学分/开课)确定性作答:意图判定 + 结构化字段渲染。无 DB / 无 LLM。"""
+"""Deterministic answers to single-course sub-questions (prereq/assessment/units/offering): intent detection + structured field rendering. No DB / no LLM."""
 from app.services import answer as answer_mod
 from app.services.answer import (
     _detail_intents,
@@ -7,7 +7,7 @@ from app.services.answer import (
     _detail_struct_context,
 )
 
-# 仿真实 course_detail 返回:CSSE1001 无先修(空串),MATH1051 有先修。
+# Mock real course_detail returns: CSSE1001 has no prereq (empty string), MATH1051 has a prereq.
 CSSE1001 = {
     "code": "CSSE1001",
     "title": "Introduction to Software Engineering",
@@ -32,7 +32,7 @@ MATH1051 = {
 
 
 def test_intent_general_intro_is_empty():
-    # 「讲什么 / 介绍」不命中任何结构化子问题 -> 交回 LLM 简介
+    # "what does it cover / introduce" matches no structured sub-question -> hand back to LLM intro
     assert _detail_intents("CSSE1001 讲什么") == []
     assert _detail_intents("介绍一下 CSSE1001 这门课") == []
 
@@ -45,7 +45,7 @@ def test_intent_single_match():
 
 
 def test_intent_compound_preserves_order():
-    # 复合问题按 prereq -> assessment -> units -> semester 固定顺序
+    # Compound questions follow the fixed order prereq -> assessment -> units -> semester
     assert _detail_intents("CSSE1001 的先修和考核分别是什么") == ["prereq", "assessment"]
 
 
@@ -58,7 +58,7 @@ def test_prereq_empty_says_no_prereq():
 
 def test_prereq_present_quotes_raw_verbatim():
     ans = detail_structured_answer("MATH1051 的先修课是什么", MATH1051)
-    # 高成本事实:先修逻辑原文逐字给出(仅去尾句号),不交 LLM 改写
+    # High-cost fact: the prereq logic is given verbatim (only trailing period removed), not rewritten by the LLM
     assert MATH1051["prerequisite_raw"].rstrip("。.") in ans
     assert "MATH1051" in ans
 
@@ -67,7 +67,7 @@ def test_assessment_lists_tasks_with_weight_and_hurdle():
     ans = detail_structured_answer("CSSE1001 怎么考核", CSSE1001)
     assert "Assignment 1" in ans and "15%" in ans
     assert "In-semester exam" in ans and "25%" in ans
-    assert "hurdle" in ans          # In-semester exam 是 hurdle
+    assert "hurdle" in ans          # In-semester exam is a hurdle
 
 
 def test_assessment_missing_data_is_explicit_not_intro():
@@ -91,7 +91,7 @@ def test_general_question_returns_none_for_llm_path():
     assert detail_structured_answer("CSSE1001 讲什么", CSSE1001) is None
 
 
-# 仿真实:DECO3800 含 presentation 考核;CSSE1001 无;DECO_NO_DATA 无结构化考核。
+# Mock real data: DECO3800 has a presentation assessment; CSSE1001 does not; DECO_NO_DATA has no structured assessment.
 DECO3800 = {
     "code": "DECO3800",
     "title": "Design Computing Studio 3 - Build",
@@ -108,7 +108,7 @@ def test_assessment_type_present_lists_matched_items():
     assert ans is not None
     assert "有演讲/展示类考核" in ans
     assert "Final Oral Presentation" in ans and "30%" in ans
-    assert "Studio Portfolio" not in ans          # 只列命中项,不混入其他考核
+    assert "Studio Portfolio" not in ans          # only list the matched item, do not mix in other assessments
 
 
 def test_assessment_type_present_chinese_question():
@@ -123,14 +123,14 @@ def test_assessment_type_absent_says_no():
 
 
 def test_assessment_type_no_data_is_unknown_not_no():
-    # 无结构化考核数据时归 unknown,绝不静默当「没有」(refuse over wrong)
+    # When there is no structured assessment data, treat as unknown, never silently say "no" (refuse over wrong)
     ans = detail_structured_answer("DECO9999 有 presentation 吗", DECO_NO_DATA)
     assert ans is not None
     assert "无法确认" in ans and "没有" not in ans
 
 
 def test_assessment_type_takes_precedence_over_generic_list():
-    # 同时含类型词与「占比」时,先答具体类型而非列全部考核
+    # When both a type word and "weight" appear, answer the specific type first instead of listing all assessments
     ans = detail_structured_answer("DECO3800 presentation 占比多少", DECO3800)
     assert "有演讲/展示类考核" in ans
     assert "Studio Portfolio" not in ans
@@ -147,7 +147,7 @@ def test_seeded_type_quiz_absent():
 
 
 def test_catchall_feeds_question_and_full_record_to_llm(monkeypatch):
-    # 非关键词长尾问题 -> 走 LLM 兜底,且学生问题 + 完整记录(考核/先修)都进 prompt
+    # A long-tail non-keyword question -> falls back to the LLM, and the student question + full record (assessment/prereq) both go into the prompt
     captured = {}
 
     def fake_call(messages):
@@ -158,9 +158,9 @@ def test_catchall_feeds_question_and_full_record_to_llm(monkeypatch):
     course = {**CSSE1001, "description": "Intro course.", "prerequisite_raw": "MATH1051"}
     ans = answer_course_detail("CSSE1001 这门课难吗", course)
     u = captured["user"]
-    assert "这门课难吗" in u                                   # 学生问题进 prompt
-    assert "Assignment 1" in u and "In-semester exam" in u      # 完整考核进上下文
-    assert "MATH1051" in u                                      # 先修原文进上下文
+    assert "这门课难吗" in u                                   # student question goes into the prompt
+    assert "Assignment 1" in u and "In-semester exam" in u      # full assessment goes into the context
+    assert "MATH1051" in u                                      # raw prereq text goes into the context
     assert "这门课的难度因人而异。" in ans
 
 
@@ -169,7 +169,7 @@ def test_answer_course_detail_missing_course():
 
 
 def test_general_intro_appends_assessment(monkeypatch):
-    # 通用「介绍这门课」要在简介末尾追加确定性考核组成(考核字段直出,不经 LLM)
+    # A general "introduce this course" should append the deterministic assessment breakdown at the end of the intro (assessment fields output directly, not via the LLM)
     monkeypatch.setattr(answer_mod.llm, "call", lambda messages: "这是一门软件工程入门课。")
     course = {**CSSE1001, "description": "Intro to software engineering."}
     ans = answer_course_detail("详细介绍 CSSE1001", course)
@@ -180,7 +180,7 @@ def test_general_intro_appends_assessment(monkeypatch):
 
 
 def test_general_intro_no_assessment_data_no_appendix(monkeypatch):
-    # 无结构化考核数据时通用简介不追加,也不出「暂无」占位
+    # When there is no structured assessment data, the general intro appends nothing and shows no "none yet" placeholder
     monkeypatch.setattr(answer_mod.llm, "call", lambda messages: "微积分与线性代数入门。")
     course = {**MATH1051, "description": "Calculus and linear algebra."}
     ans = answer_course_detail("介绍一下 MATH1051", course)
@@ -189,7 +189,7 @@ def test_general_intro_no_assessment_data_no_appendix(monkeypatch):
 
 
 def test_struct_context_carries_answer_fields():
-    # llm_judge faithfulness 依据须含答案引用的字段值
+    # The llm_judge faithfulness basis must include the field values cited in the answer
     ctx = _detail_struct_context(MATH1051, ["prereq", "assessment"])
     joined = "\n".join(ctx)
     assert "prerequisite_raw=" in joined and "MATH1050" in joined

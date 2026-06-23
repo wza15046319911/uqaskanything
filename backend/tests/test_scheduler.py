@@ -1,4 +1,4 @@
-"""排课回归:拓扑序 / cap / offering 钉死 / 环 / 零静默丢。无 DB 依赖。"""
+"""Scheduling regression: topological order / cap / offering pinning / cycle / zero silent drop. No DB dependency."""
 from app.services import scheduler
 
 
@@ -63,7 +63,7 @@ def test_incompatible_warns():
 
 
 def test_intake_s2_flips_offering():
-    # S2 入学:格 0=S2,故 S2-only 课落偶数格、S1-only 落奇数格(与 S1 入学相反)
+    # S2 intake: slot 0 = S2, so S2-only courses land on even slots and S1-only on odd slots (opposite of S1 intake)
     res = scheduler.schedule(
         ["AAAA1001", "BBBB1001"],
         offering_map={"AAAA1001": {"S2"}, "BBBB1001": {"S1"}},
@@ -77,7 +77,7 @@ def test_intake_s2_flips_offering():
 
 
 def test_year_long_spans_two_consecutive_semesters():
-    # 16u 年课占 [S1, S2] 两格,学分平摊各 8;起始格为 S1(偶数格)
+    # A 16u year-long course takes the two slots [S1, S2], units split 8 each; the start slot is S1 (even slot)
     res = scheduler.schedule(
         ["THES7001"], units_map={"THES7001": 16.0},
         offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},
@@ -96,7 +96,7 @@ def test_year_long_spans_two_consecutive_semesters():
 
 
 def test_year_long_per_semester_load_respects_cap():
-    # 平摊后每格 8u,叠加普通课不得超 cap
+    # After splitting it is 8u per slot; adding a normal course must not exceed the cap
     res = scheduler.schedule(
         ["THES7001", "CSSE1001"],
         units_map={"THES7001": 16.0, "CSSE1001": 4.0},
@@ -107,7 +107,7 @@ def test_year_long_per_semester_load_respects_cap():
 
 
 def test_year_long_unplaced_when_half_exceeds_cap():
-    # 16u 年课平摊后每格 8u,cap=4 容不下 -> 整门 unplaced(不静默)
+    # A 16u year-long course is 8u per slot after splitting; cap=4 cannot fit -> the whole course is unplaced (not silent)
     res = scheduler.schedule(
         ["THES7001"], units_map={"THES7001": 16.0},
         offering_map={"THES7001": {"S1"}}, year_long={"THES7001"},

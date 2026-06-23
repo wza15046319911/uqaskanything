@@ -1,13 +1,13 @@
-"""generate.py — 调被评测后端 /api/ask,把每道题的「答案 + 检索上下文」落成 RAGAS 样本。
+"""generate.py — calls the backend under evaluation at /api/ask and writes each question's "answer + retrieval context" into RAGAS samples.
 
-走 HTTP 调 backend(像前端那样),不 import backend,保持 eval 与后端进程/依赖解耦。
-contexts 按 mode 取(与 qa.run 返回结构对齐):
+Calls the backend over HTTP (like the frontend does), does not import backend, keeping eval decoupled from the backend process/dependencies.
+contexts are taken by mode (aligned with the structure qa.run returns):
   - kb               -> chunks[].text
-  - course_detail    -> 单门课结构化拼文本
-  - filter/semantic/hybrid -> courses[] 每行拼文本
-  - program/empty    -> 无检索上下文(确定性答案,RAGAS 不适用)-> contexts 置空,下游会跳过并计数
+  - course_detail    -> structured text joined for a single course
+  - filter/semantic/hybrid -> text joined per row from courses[]
+  - program/empty    -> no retrieval context (deterministic answer, RAGAS does not apply) -> contexts left empty, downstream skips and counts it
 
-用法(后端需在 BACKEND_URL 上跑;从仓库根):
+Usage (the backend must be running at BACKEND_URL; from the repo root):
     python eval/generate.py
     python eval/generate.py --questions eval/data/questions.jsonl --out eval/data/generated.jsonl
 """
@@ -28,7 +28,7 @@ BACKEND_URL = os.environ.get("BACKEND_URL", "http://127.0.0.1:8077").rstrip("/")
 
 
 def contexts_from(res: dict) -> list[str]:
-    """直接用后端 gen_context:与生产实际喂给 LLM 的检索上下文同源,零漂移。"""
+    """Use the backend's gen_context directly: same source as the retrieval context actually fed to the LLM in production, zero drift."""
     return [c for c in (res.get("gen_context") or []) if c]
 
 
@@ -72,7 +72,7 @@ def main() -> None:
             }
             if "reference" in row:
                 sample["reference"] = row["reference"]
-            for k in ("tier", "refuse", "broad"):   # 透传题面标注,供下游分层 / 拒答判定
+            for k in ("tier", "refuse", "broad"):   # pass through question annotations for downstream tiering / refusal checks
                 if k in row:
                     sample[k] = row[k]
             if not ctxs:

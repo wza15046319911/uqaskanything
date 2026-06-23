@@ -1,7 +1,7 @@
 # Code Style — Backend (Python / FastAPI)
 
-Python 3.13. Layered package under `app/`. Keep the existing Chinese docstring
-style — do not strip or translate it.
+Python 3.13. Layered package under `app/`. Comments and docstrings are written
+in English.
 
 ## Imports
 
@@ -37,8 +37,11 @@ style — do not strip or translate it.
 
 ## Docstrings & comments
 
-- The norm here is a module-level docstring describing purpose + 用法 (in
-  Chinese). Keep it. Do not add per-line comments unless asked.
+- Comments and docstrings must be in English. The norm is a module-level
+  docstring describing the purpose and usage. Do not add per-line comments
+  unless asked. Chinese stays only in non-comment data (LLM prompt strings,
+  i18n tables, test fixtures, or example queries / regex tokens quoted inside an
+  English comment).
 
 ## Tests
 

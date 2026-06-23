@@ -1,18 +1,18 @@
 """
-guide_build.py — 攻略入库管线(建表 + 对账闸门 + 切块 + embedding + upsert)
+guide_build.py — guide loading pipeline (create table + check gate + chunk + embedding + upsert)
 
-落地顺序:遍历 data/guides/*.md,逐篇先跑 guide_check(不过则 skip + 计数 + 报原因,规则 19);
-通过的按 `##` 小节切块(复用 kb_parse.sections_from_markdown),每块用本地 Ollama bge-m3 embedding
-(复用 embed.embed,与 courses / kb_chunks 同一 1024 维向量空间,Risk 5),upsert 进 course_guides。
-id = `{code}_{year}-{idx}`,可重复跑;重灌一篇前先删该 (course_code, year) 的旧块,避免残留。
+Order of work: walk data/guides/*.md, run guide_check on each file first (if it fails, skip + count + report the reason, rule 19);
+for the ones that pass, chunk by `##` section (reuse kb_parse.sections_from_markdown), embed each chunk with local Ollama bge-m3
+(reuse embed.embed, the same 1024-dim vector space as courses / kb_chunks, Risk 5), and upsert into course_guides.
+id = `{code}_{year}-{idx}`, safe to re-run; before reloading a file, delete the old chunks for that (course_code, year) first, to avoid leftovers.
 
-本地与 Supabase 都用本表:跑哪个库由 DATABASE_URL 决定(默认本地 :5433)。两边用同一 Ollama 向量,
-和 courses 迁移口径一致。**输出不打印含密码的 DSN**(只显示 host/db),避免日志泄密。
+Both the local DB and Supabase use this table: which DB to run against is decided by DATABASE_URL (default local :5433). Both sides use the same Ollama vectors,
+matching the courses migration. **The output does not print a DSN that contains a password** (only host/db is shown), to avoid leaking it into the logs.
 
-用法(从 backend/ 跑,需 :5433 pgvector + Ollama bge-m3):
+Usage (run from backend/, needs :5433 pgvector + Ollama bge-m3):
     python -m app.pipelines.guide_build
     python -m app.pipelines.guide_build --dir data/guides
-    DATABASE_URL=<supabase-dsn> python -m app.pipelines.guide_build   # 灌云端
+    DATABASE_URL=<supabase-dsn> python -m app.pipelines.guide_build   # load the cloud DB
 """
 from __future__ import annotations
 import os
@@ -52,7 +52,7 @@ COLS = ["id", "course_code", "year", "semester", "section", "text", "source",
 
 
 def _safe_dsn(dsn: str) -> str:
-    """脱敏 DSN:只回显 host:port/dbname,绝不带用户名密码(防 Supabase 串泄进日志)。"""
+    """Mask the DSN: only echo host:port/dbname, never include the username or password (to stop the Supabase string leaking into the logs)."""
     try:
         u = urlsplit(dsn)
         return f"{u.hostname}:{u.port or ''}{u.path}"
@@ -61,7 +61,7 @@ def _safe_dsn(dsn: str) -> str:
 
 
 def _sections(body: str) -> list[tuple[str, str]]:
-    """body -> [(section_title, chunk_text)];按 ## 切块,无小节则整篇一块。embedding 输入带上小节标题做主题锚。"""
+    """body -> [(section_title, chunk_text)]; chunk by ##, or the whole text as one chunk if there is no section. The embedding input carries the section title as a topic anchor."""
     secs = kb_parse.sections_from_markdown(body)
     out: list[tuple[str, str]] = []
     for h2, h3, text in secs:
@@ -73,7 +73,7 @@ def _sections(body: str) -> list[tuple[str, str]]:
 
 
 def build(conn, paths: list[str]) -> tuple[int, list[tuple[str, str]], dict]:
-    """对账通过的攻略切块入库;返回 (入库块数, [(path, skip原因)], {code: checked_at})。"""
+    """Chunk and load the guides that pass the check; return (number of chunks loaded, [(path, skip reason)], {code: checked_at})."""
     placeholders = ",".join(["%s"] * len(COLS)) + ",%s::vector"
     updates = ",".join(f"{c}=EXCLUDED.{c}" for c in COLS if c != "id") + ",embedding=EXCLUDED.embedding"
     sql = (f"INSERT INTO course_guides ({','.join(COLS)},embedding) VALUES ({placeholders}) "
@@ -98,7 +98,7 @@ def build(conn, paths: list[str]) -> tuple[int, list[tuple[str, str]], dict]:
             source = str(fm.get("source") or "") or None
             profile_url = retrieval.COURSE_PROFILE_URL.format(code)
             secs = _sections(body)
-            # 重灌一篇前先清掉该 (code, year) 的旧块,避免改短后残留陈旧块
+            # before reloading a file, clear the old chunks for this (code, year) first, to avoid stale leftover chunks after the text is shortened
             cur.execute("DELETE FROM course_guides WHERE course_code=%s AND year=%s", (code, year))
             for idx, (section, text) in enumerate(secs):
                 vec = embed.to_vec(embed.embed(f"{section}\n{text}".strip()))
@@ -115,7 +115,7 @@ def build(conn, paths: list[str]) -> tuple[int, list[tuple[str, str]], dict]:
 
 
 def _expand(directory: str) -> list[str]:
-    """目录里所有符合 <CODE>_<YEAR>.md 的攻略文件(滤掉 README 等)。"""
+    """All guide files in the directory that match <CODE>_<YEAR>.md (filtering out README and the like)."""
     return [p for p in sorted(glob.glob(os.path.join(directory, "*.md")))
             if guide_check._GUIDE_FILE_RE.match(os.path.basename(p))]
 

@@ -1,10 +1,10 @@
-"""ragas_config.py — RAGAS 的 judge LLM 与 embedding 后端装配(确定性配置,不含评测逻辑)。
+"""ragas_config.py — assembles the judge LLM and embedding backend for RAGAS (deterministic config, no eval logic).
 
-judge LLM:DeepSeek(OpenAI 兼容端点,经 langchain-openai),temperature=0 取最稳定判分。
-embedding:本地 Ollama bge-m3,与生产检索同模型,answer_relevancy 的相似度才有可比性。
+judge LLM: DeepSeek (OpenAI-compatible endpoint, via langchain-openai), temperature=0 for the most stable scoring.
+embedding: local Ollama bge-m3, the same model as production retrieval, so answer_relevancy's similarity is comparable.
 
-用法:from ragas_config import build_judge -> llm, emb = build_judge()
-缺 DEEPSEEK_API_KEY 直接抛错,绝不静默退化成默认 OpenAI 后端(规则 19)。
+Usage: from ragas_config import build_judge -> llm, emb = build_judge()
+If DEEPSEEK_API_KEY is missing, it raises directly and never silently falls back to the default OpenAI backend (rule 19).
 """
 from __future__ import annotations
 

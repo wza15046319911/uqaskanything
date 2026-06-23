@@ -1,4 +1,4 @@
-"""先修解析回归:AND/OR 树 / 括号 / 缩写展开 / raw 兜底 / 空。无 DB 依赖。"""
+"""Prerequisite parsing regression: AND/OR tree / parentheses / abbreviation expansion / raw fallback / empty. No DB dependency."""
 from app.scrapers.scraper import parse_prereq
 
 
@@ -45,9 +45,9 @@ def test_empty_is_none():
 def test_satisfied_soft_gate():
     from app.services.simulator import satisfied
     ok, why = satisfied(None, set())
-    assert ok and why is None                       # 无先修 = 解锁
+    assert ok and why is None                       # no prereq = unlocked
     ok, why = satisfied({"op": "raw", "unparsed": "x"}, set())
-    assert ok and "无法解析" in why                  # raw = 软警告不硬挡
+    assert ok and "无法解析" in why                  # raw = soft warning, not a hard block
     tree = parse_prereq("CSSE1001 or ENGG1001")
     assert satisfied(tree, {"ENGG1001"})[0]
     ok, why = satisfied(tree, set())

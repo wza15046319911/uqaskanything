@@ -1,4 +1,4 @@
-"""ratelimit 前置闸单测:真实 IP 提取 + 每 IP 固定窗口 + 每日熔断 + Turnstile 开关。纯逻辑,无需 DB。"""
+"""ratelimit pre-gate unit tests: real IP extraction + per-IP fixed window + daily circuit breaker + Turnstile switch. Pure logic, no DB needed."""
 from types import SimpleNamespace
 
 import pytest
@@ -27,7 +27,7 @@ def test_rate_limit_blocks_after_cap(monkeypatch):
     monkeypatch.setattr(ratelimit, "RL_PER_MIN", 3)
     now = 1_000_000.0
     assert [ratelimit._rate_ok("ip", now) for _ in range(4)] == [True, True, True, False]
-    # 不同 IP 各自独立计数
+    # Different IPs count independently
     assert ratelimit._rate_ok("other", now) is True
 
 
@@ -35,14 +35,14 @@ def test_rate_limit_resets_next_minute(monkeypatch):
     monkeypatch.setattr(ratelimit, "RL_PER_MIN", 1)
     assert ratelimit._rate_ok("ip", 60.0) is True
     assert ratelimit._rate_ok("ip", 60.0) is False
-    assert ratelimit._rate_ok("ip", 120.0) is True            # 下一分钟窗口重置
+    assert ratelimit._rate_ok("ip", 120.0) is True            # next-minute window resets
 
 
 def test_daily_cap_blocks_then_resets_next_day(monkeypatch):
     monkeypatch.setattr(ratelimit, "LLM_DAILY_CAP", 2)
     day = 1_000_000.0                                          # 1970-01-12
     assert [ratelimit._daily_ok(day) for _ in range(3)] == [True, True, False]
-    assert ratelimit._daily_ok(day + 86_400) is True          # 跨 UTC 日重置
+    assert ratelimit._daily_ok(day + 86_400) is True          # resets across the UTC day
 
 
 def test_check_passes_when_under_limits(monkeypatch):
@@ -64,7 +64,7 @@ def test_check_returns_429_when_rate_limited(monkeypatch):
 
 def test_check_blocks_403_when_turnstile_required_and_token_missing(monkeypatch):
     monkeypatch.setattr(ratelimit, "TURNSTILE_SECRET", "secret")
-    blocked = ratelimit.check(_req())                         # 无 cf-turnstile-response 头
+    blocked = ratelimit.check(_req())                         # no cf-turnstile-response header
     assert blocked is not None and blocked.status_code == 403
 
 

@@ -57,6 +57,6 @@ smoke-test `from app.main import app` to catch broken imports early.
 
 **Problem**: Adding code without reading the module and its import graph first.
 
-**Solution**: Read the file and its imports before changing it. Match the Chinese
-docstring style and existing patterns. Don't introduce a second convention next
-to an existing one.
+**Solution**: Read the file and its imports before changing it. Match the
+existing patterns and the English comment / docstring style. Don't introduce a
+second convention next to an existing one.

@@ -1,6 +1,6 @@
-"""qa 专业题:带方向结构的专业走 simulator 引擎按方向枚举(覆盖 major 门控选修),
-无方向结构的专业维持扁平枚举。只测确定性逻辑(不调 LLM,直接打 qa 的引擎辅助函数)。
-依赖本地 DB(2559/5522 已入树)。运行:pytest tests/test_qa_program.py -q
+"""qa program questions: a program with a direction structure goes through the simulator engine and enumerates per direction (covering major-gated electives),
+while a program without a direction structure keeps flat enumeration. Only deterministic logic is tested (no LLM call; directly hits qa's engine helper functions).
+Depends on the local DB (2559/5522 already in the tree). Run: pytest tests/test_qa_program.py -q
 """
 import psycopg
 import pytest
@@ -31,11 +31,11 @@ def test_engine_p2c_elective_covers_major_gated(conn):
     assert len(codes) == len(courses), "卡片应去重"
     assert courses and all(c["requirement_type"] == "elective" for c in courses), \
         "选修查询的卡片应全部标 elective"
-    # 比扁平直属选修多出 major 门控课
+    # Has the major-gated courses that the flat direct electives miss
     flat = {r["course_code"] for r in program_lookup.courses_for_program(
         conn, "2559", "elective", direct_only=True)}
     assert codes - flat, "引擎枚举应覆盖扁平漏掉的 major 门控选修"
-    # 文案按方向分组,且标注开放选修池
+    # The text groups by direction and marks the open elective pool
     assert "方向】" in ans and "可枚举" in ans
 
 
@@ -48,6 +48,6 @@ def test_engine_p2c_core_only_filters(conn):
 
 def test_ans_structured_empty_when_no_match(conn):
     ov = qa._structure_or_none(conn, "2559")
-    # 构造一个无任何组命中的 req(用不存在的 kind 不可能,改测 titles 为空时的兜底)
+    # Build a req that matches no group (a non-existent kind is impossible, so test the fallback when titles is empty)
     txt = qa._ans_p2c_structured("X", "elective", {"groups": []}, {})
     assert "未找到" in txt

@@ -1,40 +1,40 @@
-"""槽位化重构步骤2回归(纯函数,无 DB):build_where 拼装 + _validate_filters 校验。
+"""Slotting refactor step 2 regression (pure functions, no DB): build_where assembly + _validate_filters checks.
 
-build_where 用与旧 guard_where 自测用例(retrieval __main__)等价的逻辑 WHERE 对照:
-同样的条件,现在产出参数化 (sql_with_%s, params),注入安全是结构性的。
-_validate_filters 对照旧 _clean_where:未知键/非法值丢弃,location 原值保留(Gatton 红线)。
+build_where is compared against the equivalent logical WHERE of the old guard_where self-test cases (retrieval __main__):
+for the same conditions it now produces parameterized (sql_with_%s, params), and injection safety is structural.
+_validate_filters is compared against the old _clean_where: drop unknown keys / illegal values, keep the raw location value (Gatton red line).
 """
 from app.services import planner
 from app.services.retrieval import build_where, describe_where
 from app.services.planner import _validate_filters, _as_number
 
 
-# ---------- build_where:与旧 guard_where 必过用例的等价对照 ----------
+# ---------- build_where: equivalent comparison against the old guard_where must-pass cases ----------
 
 def test_build_where_single_bool():
-    # 旧 "has_exam=false"
+    # old "has_exam=false"
     assert build_where({"has_exam": False}) == ("has_exam = %s", [False])
     assert build_where({"has_exam": True}) == ("has_exam = %s", [True])
 
 
 def test_build_where_level_and_units_order_stable():
-    # 旧 "level='Postgraduate Coursework' AND units=2";顺序由 _WHERE_BUILDERS 固定(level 在 units 前)
+    # old "level='Postgraduate Coursework' AND units=2"; order fixed by _WHERE_BUILDERS (level before units)
     assert build_where({"level": "Postgraduate Coursework", "units": 2}) == (
         "level = %s AND units = %s", ["Postgraduate Coursework", 2])
-    # 入参 dict 顺序不影响输出顺序(确定性)
+    # Input dict order does not affect output order (deterministic)
     assert build_where({"units": 2, "level": "Postgraduate Coursework"}) == (
         "level = %s AND units = %s", ["Postgraduate Coursework", 2])
 
 
 def test_build_where_location_literal():
-    # 旧 "location='St Lucia'";非枚举值(Gatton)同样原样进 params -> 命中 0,绝不被换值
+    # old "location='St Lucia'"; a non-enum value (Gatton) also goes into params as is -> 0 hits, never substituted
     assert build_where({"location": "St Lucia"}) == ("location = %s", ["St Lucia"])
     assert build_where({"location": "Gatton"}) == ("location = %s", ["Gatton"])
 
 
 def test_build_where_course_type_exclude_is_not_in_equivalent():
-    # 旧 "has_exam=false AND course_type NOT IN ('placement','thesis','research')"
-    # <> ALL(数组) ≡ NOT IN(course_type NOT NULL,无三值逻辑漏排)
+    # old "has_exam=false AND course_type NOT IN ('placement','thesis','research')"
+    # <> ALL(array) ≡ NOT IN (course_type is NOT NULL, no three-valued-logic leak)
     sql, params = build_where(
         {"has_exam": False, "course_type_exclude": ["placement", "thesis", "research"]})
     assert sql == "has_exam = %s AND course_type <> ALL(%s)"
@@ -42,7 +42,7 @@ def test_build_where_course_type_exclude_is_not_in_equivalent():
 
 
 def test_build_where_course_type_only_is_in_equivalent():
-    # 旧 "course_type='thesis'"(= 或 IN 统一成 = ANY 数组)
+    # old "course_type='thesis'" (= or IN unified into = ANY array)
     assert build_where({"course_type_only": ["thesis"]}) == (
         "course_type = ANY(%s)", [["thesis"]])
     assert build_where({"course_type_only": ["coursework", "placement"]}) == (
@@ -50,7 +50,7 @@ def test_build_where_course_type_only_is_in_equivalent():
 
 
 def test_build_where_all_dimensions_order():
-    # 全维度一起:顺序严格按 _WHERE_BUILDERS,semester 走 offered_s* 标记(无参),course_type_only 在 exclude 前,均在尾部
+    # All dimensions together: order strictly per _WHERE_BUILDERS, semester uses the offered_s* flag (no param), course_type_only before exclude, both at the tail
     sql, params = build_where({
         "has_exam": True, "has_hurdle": False, "midterm_status": "has",
         "group_status": "none", "level": "Undergraduate", "units": 2,
@@ -66,53 +66,53 @@ def test_build_where_all_dimensions_order():
 
 
 def test_build_where_semester_routes_to_offered_flag():
-    # semester 不是普通列匹配:S1/S2 路由到按 code 派生的 offered_s1/offered_s2 标记(无 %s 参数),
-    # 因为 semester 文本列按 offering 存且对「本期是否开课」不可靠(见 backfill_offerings)。
+    # semester is not a plain column match: S1/S2 routes to the code-derived offered_s1/offered_s2 flag (no %s param),
+    # because the semester text column is stored per offering and is unreliable for "offered this term" (see backfill_offerings).
     assert build_where({"semester": "S2"}) == ("offered_s2 = TRUE", [])
     assert build_where({"semester": "S1"}) == ("offered_s1 = TRUE", [])
-    # 与其它维度组合:has_exam 进 params,semester 标记跟在后面不带参
+    # Combined with other dimensions: has_exam goes into params, the semester flag follows without a param
     assert build_where({"has_exam": False, "semester": "S2"}) == (
         "has_exam = %s AND offered_s2 = TRUE", [False])
 
 
 def test_build_where_empty_is_pure_no_raise():
-    # 纯函数:空 filters / None 返回 ("", []),不抛(是否容忍空由调用方决定)
+    # Pure function: empty filters / None returns ("", []), does not raise (whether to tolerate empty is up to the caller)
     assert build_where({}) == ("", [])
     assert build_where(None) == ("", [])
-    # 全 None / 空列表的维度等于「不过滤」,不出现在片段里
+    # Dimensions that are all None / empty list mean "no filter" and do not appear in the fragment
     assert build_where({"has_exam": None, "level": None,
                         "course_type_exclude": [], "course_type_only": []}) == ("", [])
 
 
 def test_build_where_false_and_zero_not_dropped():
-    # is None 判定:False / 0 是有效值,绝不能被当缺省丢掉
+    # is-None check: False / 0 are valid values and must never be dropped as default
     assert build_where({"has_exam": False}) == ("has_exam = %s", [False])
     assert build_where({"units": 0}) == ("units = %s", [0])
 
 
 def test_build_where_code_level_substring_first_digit():
-    # code 首位数字筛年级:取 code 第一个数字字符(等价 _first_digit),值进 params
+    # Filter year by the first digit of the code: take the first digit character of the code (equivalent to _first_digit), value goes into params
     assert build_where({"code_level": ["1", "3"]}) == (
         "substring(code from '[0-9]') = ANY(%s)", [["1", "3"]])
-    # 与其它维度组合:code_level 片段在尾部(course_type 之后)
+    # Combined with other dimensions: the code_level fragment is at the tail (after course_type)
     sql, params = build_where({"has_exam": False, "code_level": ["1"]})
     assert sql == "has_exam = %s AND substring(code from '[0-9]') = ANY(%s)"
     assert params == [False, ["1"]]
-    # 空列表 = 不过滤
+    # Empty list = no filter
     assert build_where({"code_level": []}) == ("", [])
 
 
-# ---------- _validate_filters:对照旧 _clean_where 的净化语义 ----------
+# ---------- _validate_filters: compared against the old _clean_where sanitizing semantics ----------
 
 def test_validate_drops_unknown_keys():
-    # 未知键(LLM 脑补的列/自由 SQL 残留)一律丢弃,不进 SQL
+    # Unknown keys (LLM-hallucinated columns / free-SQL leftovers) are all dropped and never enter SQL
     out = _validate_filters({"has_exam": False, "title": "%ml%", "drop table": 1,
                              "requirement_type": "thesis"})
     assert out == {"has_exam": False}
 
 
 def test_validate_bool_type_enforced():
-    # bool 槽位须真布尔;字符串 "false"/1 等非布尔丢弃(规则19:不静默 coerce)
+    # A bool slot must be a real bool; non-bool like the string "false"/1 is dropped (rule 19: no silent coerce)
     assert _validate_filters({"has_exam": False, "has_hurdle": True}) == \
         {"has_exam": False, "has_hurdle": True}
     assert _validate_filters({"has_exam": "false"}) == {}
@@ -123,76 +123,76 @@ def test_validate_bool_type_enforced():
 def test_validate_tristate():
     assert _validate_filters({"midterm_status": "none", "group_status": "has"}) == \
         {"midterm_status": "none", "group_status": "has"}
-    # 大小写归一,unknown 合法
+    # Case normalized, unknown is valid
     assert _validate_filters({"midterm_status": "NONE"}) == {"midterm_status": "none"}
     assert _validate_filters({"group_status": "unknown"}) == {"group_status": "unknown"}
-    # 非法三态值丢弃
+    # Illegal tri-state value is dropped
     assert _validate_filters({"midterm_status": "maybe"}) == {}
 
 
 def test_validate_semester_enum():
     assert _validate_filters({"semester": "S1"}) == {"semester": "S1"}
     assert _validate_filters({"semester": "S2"}) == {"semester": "S2"}
-    # 非 S1/S2 丢弃(语义上「都」由 both_semesters 路径处理,不进单 semester 槽)
+    # Non S1/S2 is dropped ("both" is handled by the both_semesters path, not the single semester slot)
     assert _validate_filters({"semester": "S3"}) == {}
 
 
 def test_validate_level_against_real_enum(monkeypatch):
-    # level 按真实 DB 枚举校验(同 _validate_coord_unit 模式):不在枚举内丢弃 + 记日志
+    # level is validated against the real DB enum (same pattern as _validate_coord_unit): not in the enum -> drop + log
     monkeypatch.setitem(planner._ENUM_CACHE, "level",
                         {"undergraduate", "postgraduate coursework"})
     assert _validate_filters({"level": "Postgraduate Coursework"}) == \
         {"level": "Postgraduate Coursework"}
     assert _validate_filters({"level": "undergraduate"}) == {"level": "undergraduate"}
-    # LLM 脑补的不存在层级值(Master/PG)丢弃,绝不进 SQL
+    # Non-existent level values the LLM hallucinates (Master/PG) are dropped, never enter SQL
     assert _validate_filters({"level": "Master"}) == {}
     assert _validate_filters({"level": "PG"}) == {}
 
 
 def test_validate_units_numeric():
     assert _validate_filters({"units": 2}) == {"units": 2}
-    assert _validate_filters({"units": 2.0}) == {"units": 2}      # 整数值收敛成 int
-    assert _validate_filters({"units": "2"}) == {"units": 2}      # 数字字符串转数值
-    assert _validate_filters({"units": "abc"}) == {}              # 非数值丢弃
-    assert _validate_filters({"units": True}) == {}              # bool 不算数值
+    assert _validate_filters({"units": 2.0}) == {"units": 2}      # integer value collapses to int
+    assert _validate_filters({"units": "2"}) == {"units": 2}      # numeric string converted to number
+    assert _validate_filters({"units": "abc"}) == {}              # non-numeric dropped
+    assert _validate_filters({"units": True}) == {}              # bool is not a number
 
 
 def test_validate_location_literal_kept_even_if_non_enum():
-    # 红线:location/attendance_mode 照搬用户原值,不校验枚举(Gatton/Online 故意制造空集)
+    # Red line: location/attendance_mode copy the user's raw value, no enum check (Gatton/Online deliberately produce an empty set)
     assert _validate_filters({"location": "Gatton"}) == {"location": "Gatton"}
     assert _validate_filters({"location": "St Lucia"}) == {"location": "St Lucia"}
     assert _validate_filters({"attendance_mode": "Online"}) == {"attendance_mode": "Online"}
-    # 空串/非字符串丢弃
+    # Empty string / non-string is dropped
     assert _validate_filters({"location": ""}) == {}
     assert _validate_filters({"location": 123}) == {}
 
 
 def test_validate_course_type_lists_filtered_to_closed_set():
-    # 课型列表过滤到合法闭集(去重升序),非法值丢弃 + 记日志
+    # Course-type lists filtered to the valid closed set (deduped, ascending), illegal values dropped + logged
     assert _validate_filters({"course_type_exclude": ["thesis", "research", "placement"]}) == \
         {"course_type_exclude": ["placement", "research", "thesis"]}
     assert _validate_filters({"course_type_only": ["coursework"]}) == \
         {"course_type_only": ["coursework"]}
-    # 含非法类型:只留合法的;全非法 -> 该键不出现
+    # Contains an illegal type: keep only the valid ones; all illegal -> the key does not appear
     assert _validate_filters({"course_type_exclude": ["thesis", "bogus"]}) == \
         {"course_type_exclude": ["thesis"]}
     assert _validate_filters({"course_type_exclude": ["bogus"]}) == {}
-    # 非列表丢弃
+    # Non-list is dropped
     assert _validate_filters({"course_type_exclude": "thesis"}) == {}
 
 
 def test_validate_code_level_digit_list():
-    # code_level 是数字列表(确定性注入,值须单字符 1-9,去重升序)
+    # code_level is a digit list (deterministically injected, values must be single chars 1-9, deduped ascending)
     assert _validate_filters({"code_level": ["3", "1", "1"]}) == {"code_level": ["1", "3"]}
-    # 非法元素(多位/非数字/0)丢弃;全非法 -> 该键不出现
+    # Illegal elements (multi-digit / non-digit / 0) are dropped; all illegal -> the key does not appear
     assert _validate_filters({"code_level": ["1", "12", "x", "0"]}) == {"code_level": ["1"]}
     assert _validate_filters({"code_level": ["x"]}) == {}
-    # 非列表丢弃
+    # Non-list is dropped
     assert _validate_filters({"code_level": "1"}) == {}
 
 
 def test_describe_where_renders_code_level():
-    # describe_where(build_where 可读对偶):code_level 渲染成可读年级集合
+    # describe_where (the readable dual of build_where): code_level renders as a readable year set
     assert describe_where({"code_level": ["1", "3"]}) == "code首位∈{1,3}"
     assert describe_where({"has_exam": False, "code_level": ["1"]}) == \
         "has_exam=false AND code首位∈{1}"

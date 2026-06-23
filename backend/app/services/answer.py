@@ -781,7 +781,7 @@ def answer_course_detail_stream(question: str, course: dict | None, lang: Lang =
 
 
 # ---------- Course guide (subjective experience) answer ----------
-# 攻略只当经验层:LLM 只转述召回块里的主观经验,事实口径由代码拼的强制前缀 + 官方链接兜底(红线 1/2)。
+# The guide is only an experience layer: the LLM only retells the subjective experience in the recalled chunks; factual framing comes from the forced prefix built in code + the official link as a backstop (red line 1/2).
 GUIDE_SYSTEM_ZH = """你是 UQ 选课助手。下面是学长写的【个人经验】(非 UQ 官方)。只转述其中的主观经验与建议(体验、避坑、怎么准备),用简洁中文。
 硬性规则:
 - 只用【经验】里的内容,绝不编造;不要把经验里提到的先修/考核占比/日期当权威事实陈述(这些一律以官方课程大纲为准)。
@@ -801,12 +801,12 @@ GUIDE_USER_TMPL = {
     "en": "Question: {q}\n\n[Personal experience] (one student's experience, unofficial)\n{facts}\n\nRetell based only on the [Personal experience] above; do not treat it as official fact.",
 }
 
-# 强制年份/非官方口径前缀(代码拼,非 LLM,确定性,红线 2:每个答案可一键回官方核验)。
+# Forced year / unofficial-framing prefix (built in code, not by the LLM, deterministic, red line 2: every answer can be verified against the official source in one click).
 _GUIDE_PREFIX = {
     "zh": "> 以下为学长个人经验({year} 年),非 UQ 官方;先修、考核占比、考试日期等请以官方课程大纲为准:{url}",
     "en": "> The following is one student's personal experience ({year}), not official UQ; for prerequisites, assessment weights, exam dates etc. rely on the official course profile: {url}",
 }
-# checked_at 距今超约一个学期(180 天)再追加过期提醒;新鲜的就不加。
+# Append a stale reminder only when checked_at is more than about one semester (180 days) ago; do not add it when fresh.
 _GUIDE_STALE = {
     "zh": "\n\n注:该经验可能已过期,务必核对当年课程大纲。",
     "en": "\n\nNote: this experience may be out of date; be sure to check the current year's course profile.",
@@ -815,7 +815,7 @@ _GUIDE_STALE_DAYS = 180
 
 
 def _guide_facts(chunks: list[dict]) -> str:
-    """攻略块 -> 编号事实列表,带小节名做锚。"""
+    """Guide chunks -> a numbered fact list, with the section name as an anchor."""
     out: list[str] = []
     for i, c in enumerate(chunks, 1):
         sec = (c.get("section") or "").strip()
@@ -825,7 +825,7 @@ def _guide_facts(chunks: list[dict]) -> str:
 
 
 def _guide_prefix(chunks: list[dict], lang: Lang = "zh") -> str:
-    """确定性前缀:经验年份 + 非官方口径 + 官方课程页链接(取首块的 year/profile_url)。"""
+    """Deterministic prefix: experience year + unofficial framing + the official course page link (taken from the first chunk's year/profile_url)."""
     c = chunks[0]
     year = c.get("year") or "?"
     url = c.get("profile_url") or ""
@@ -833,7 +833,7 @@ def _guide_prefix(chunks: list[dict], lang: Lang = "zh") -> str:
 
 
 def _guide_staleness(chunks: list[dict], lang: Lang = "zh") -> str:
-    """checked_at 距今超一个学期 -> 过期提醒;解析失败/缺失则不加(软防护,不拦)。"""
+    """checked_at more than one semester ago -> stale reminder; if parsing fails / it is missing, do not add it (soft guard, does not block)."""
     raw = (chunks[0].get("checked_at") or "").strip()
     try:
         delta = (date.today() - date.fromisoformat(raw)).days
@@ -843,7 +843,7 @@ def _guide_staleness(chunks: list[dict], lang: Lang = "zh") -> str:
 
 
 def answer_guide(question: str, chunks: list[dict], lang: Lang = "zh") -> str:
-    """攻略经验问答:强制非官方/年份前缀(确定性)+ LLM 转述经验层 + 过期提醒(若旧)。chunks 由调用方保证非空(空则 qa 已回退 course_detail)。"""
+    """Course-guide experience Q&A: forced unofficial/year prefix (deterministic) + LLM retelling of the experience layer + stale reminder (if old). chunks are guaranteed non-empty by the caller (if empty, qa has already fallen back to course_detail)."""
     if not chunks:
         return i18n.t("course_not_found", lang)
     body = llm.call([
@@ -854,7 +854,7 @@ def answer_guide(question: str, chunks: list[dict], lang: Lang = "zh") -> str:
 
 
 def answer_guide_stream(question: str, chunks: list[dict], lang: Lang = "zh") -> Iterator[str]:
-    """流式攻略问答:先发确定性前缀,再 token 级流式转述经验,最后追加过期提醒(若旧)。"""
+    """Streaming course-guide Q&A: send the deterministic prefix first, then stream the experience retelling token by token, and append the stale reminder at the end (if old)."""
     if not chunks:
         yield i18n.t("course_not_found", lang)
         return

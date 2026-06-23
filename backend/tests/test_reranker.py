@@ -1,4 +1,4 @@
-"""可选 reranker 骨架:默认关=零行为改变 + 不碰 torch;开启时只改顺序、失败降级。无 DB / 无 torch。"""
+"""Optional reranker skeleton: off by default = zero behavior change + does not touch torch; when on it only reorders and degrades on failure. No DB / no torch."""
 import os
 import sys
 import subprocess
@@ -17,11 +17,11 @@ def test_enabled_reads_env_live(monkeypatch):
 def test_rerank_disabled_is_identity(monkeypatch):
     monkeypatch.delenv("KB_RERANK", raising=False)
     cands = [{"text": "a"}, {"text": "b"}]
-    assert reranker.rerank("q", cands) is cands     # 原样同一对象返回 -> 行为与无重排完全一致
+    assert reranker.rerank("q", cands) is cands     # returns the same object as is -> behaves exactly as with no rerank
 
 
 def test_rerank_short_list_not_loaded(monkeypatch):
-    # <2 候选不重排,不触发加载(免在只有一条时白白拉模型)
+    # Fewer than 2 candidates: no rerank, no load triggered (avoid pulling the model for a single item)
     monkeypatch.setenv("KB_RERANK", "1")
     one = [{"text": "a"}]
     assert reranker.rerank("q", one) is one
@@ -32,7 +32,7 @@ def test_rerank_reorders_by_score(monkeypatch):
 
     class _Fake:
         def predict(self, pairs):
-            return [0.1, 0.9, 0.5]      # b 最高 -> c -> a
+            return [0.1, 0.9, 0.5]      # b highest -> c -> a
 
     monkeypatch.setattr(reranker, "_load", lambda: _Fake())
     out = reranker.rerank("q", [{"text": "a"}, {"text": "b"}, {"text": "c"}])
@@ -40,7 +40,7 @@ def test_rerank_reorders_by_score(monkeypatch):
 
 
 def test_rerank_degrades_when_model_unavailable(monkeypatch):
-    # 加载失败(_load 返回 None)-> 原序返回,不抛错
+    # Load failure (_load returns None) -> return original order, no error raised
     monkeypatch.setenv("KB_RERANK", "1")
     monkeypatch.setattr(reranker, "_load", lambda: None)
     cands = [{"text": "a"}, {"text": "b"}]
@@ -60,7 +60,7 @@ def test_rerank_degrades_on_predict_error(monkeypatch):
 
 
 def test_import_retrieval_does_not_pull_torch_when_disabled():
-    # 红线:不设 KB_RERANK 时,import 检索/重排链路绝不 import torch(懒加载保证)
+    # Red line: when KB_RERANK is not set, importing the retrieval/rerank chain must never import torch (lazy-load guarantee)
     code = (
         "import sys, app.services.retrieval, app.services.reranker, app.services.qa\n"
         "assert not app.services.reranker.enabled()\n"

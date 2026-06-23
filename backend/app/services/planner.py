@@ -153,9 +153,9 @@ _FACULTY_KW = [
 
 MODES = ("filter", "semantic", "hybrid", "program", "kb", "course_detail", "guide")
 
-# 攻略经验意图(确定性,规则 12):课程码 + 这些词 = 想问「主观经验/避坑/怎么准备」,走 mode=guide。
+# Course-guide experience intent (deterministic, rule 12): course code + these words = the user wants "subjective experience / pitfalls / how to prepare", route to mode=guide.
 _GUIDE_INTENT = re.compile(r"难不难|好过吗|水不水|怎么样|体验|值不值|踩坑|避坑|怎么准备|给点建议|经验|攻略|心得", re.I)
-# 事实意图(日期/先修/考核占比/Hurdle/学分):优先级高于 guide —— 同一句命中这些就走 course_detail/kb,绝不进攻略(student-facing 红线 1/3:事实问题永不召回攻略)。
+# Fact intent (date / prerequisite / assessment weight / hurdle / units): higher priority than guide -- if the same sentence hits these, route to course_detail/kb, never to the guide (student-facing red line 1/3: a fact question never recalls a guide).
 _FACT_INTENT = re.compile(
     r"什么时候|何时|哪天|几号|日期|开学|开课|放假|截止|"
     r"先修|先决|前置|前导|修读要求|"
@@ -832,8 +832,8 @@ def plan(question: str, schema_doc: str | None = None, conn: object | None = Non
             "semantic_query": "", "course_code": "", "program_name": "",
             "direction": "", "coord_units": [], "order": "assessments_asc"}
 
-    # 攻略经验意图快速通道(确定性,规则 12,不调 LLM):课程码 + 经验词 + 非事实意图 + 非专业问题 -> mode=guide。
-    # 事实意图优先短路:先修/考核占比/日期/Hurdle/学分等命中时不进攻略(红线:事实问题永不召回攻略,由 course_detail/kb 处理)。
+    # Course-guide experience intent fast path (deterministic, rule 12, no LLM call): course code + experience word + non-fact intent + non-program question -> mode=guide.
+    # Fact intent short-circuits first: when prerequisite / assessment weight / date / hurdle / units etc. hit, do not enter the guide (red line: a fact question never recalls a guide, handled by course_detail/kb).
     _gm = COURSE_CODE_RE.search(question)
     if (_gm and _GUIDE_INTENT.search(question)
             and not _FACT_INTENT.search(question)

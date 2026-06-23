@@ -1,5 +1,5 @@
-"""引擎回归:min–max 收敛 / 公式 / 分支 / SubRule / 归属 / claims / level cap。
-依赖本地 DB(2559 已入新树)。运行:pytest test_simulator.py -q
+"""Engine regression: min-max convergence / formula / branch / SubRule / attribution / claims / level cap.
+Depends on the local DB (2559 already in the new tree). Run: pytest test_simulator.py -q
 """
 import psycopg
 import pytest
@@ -20,7 +20,7 @@ def sim(conn):
     return PlanSimulator(conn, "2559")
 
 
-# ---------- 公式解析 ----------
+# ---------- formula parsing ----------
 def test_parse_rule_logic_tree():
     t = parse_rule_logic("Part A AND ( Part B OR Part C ) AND Part D")
     assert t["op"] == "and" and len(t["children"]) == 3
@@ -40,13 +40,13 @@ def test_parse_rule_logic_rejects_garbage():
     assert parse_rule_logic("") is None
 
 
-# ---------- 收敛(B1/B2) ----------
+# ---------- convergence (B1/B2) ----------
 def test_rule_open_until_max(sim):
     c2 = next(r for r in sim.rules if r["ref"] == "C.2")
     codes = [it["code"] for it in c2["items"] if it.get("kind") == "course"]
     sim.choose_branch("C")
     sim.select(codes[0])
-    sim.select(codes[1])                      # 4u = min,旧逻辑会在这里收敛
+    sim.select(codes[1])                      # 4u = min, the old logic would converge here
     assert "C.2" in sim.available_by_rule(), "满 min 不应收敛"
     for c in codes[2:11]:
         sim.select(c)                         # 22u = max
@@ -68,7 +68,7 @@ def test_flatten_equals_available(sim):
     assert sorted(set(flat)) == sorted(set(sim.available()))
 
 
-# ---------- 分支(Either/Or) ----------
+# ---------- branch (Either/Or) ----------
 def test_default_branch_is_major(sim):
     assert sim.branch_state() == {"B|C": "B"}
     inact = sim._inactive_refs()
@@ -90,20 +90,20 @@ def test_choose_branch_unknown_raises(sim):
 def test_inactive_rule_counts_zero(sim):
     c1 = next(r for r in sim.rules if r["ref"] == "C.1")
     code = next(it["code"] for it in c1["items"] if it.get("kind") == "course")
-    sim.select(code)                          # 默认 Major 路径,C.1 失活
+    sim.select(code)                          # default Major path, C.1 inactive
     st = {e["ref"]: e for e in sim.status()}
     assert st["C.1"]["units_counted"] == 0.0 and st["C.1"]["inactive"]
-    assert sim.attribution()["assigned"][code] == "E"   # 流入 E(程序课表)
+    assert sim.attribution()["assigned"][code] == "E"   # flows into E (program course list)
 
 
-# ---------- SubRule 父规则(C 8–24) ----------
+# ---------- SubRule parent rule (C 8-24) ----------
 def test_subrule_parent_sums_and_caps(sim):
     sim.choose_branch("C")
     c1 = [it["code"] for r in sim.rules if r["ref"] == "C.1"
           for it in r["items"] if it.get("kind") == "course"]
     c2 = [it["code"] for r in sim.rules if r["ref"] == "C.2"
           for it in r["items"] if it.get("kind") == "course"]
-    for c in c1[:5] + c2[:11]:                # 10 + 22 = 32 raw
+    for c in c1[:5] + c2[:11]:                # 10 + 22 = 32 raw units
         sim.select(c)
     st = {e["ref"]: e for e in sim.status()}
     assert st["C"]["units_done"] == 32.0
@@ -116,27 +116,27 @@ def test_subrule_done_needs_children_formula(sim):
     sim.choose_branch("C")
     c2 = [it["code"] for r in sim.rules if r["ref"] == "C.2"
           for it in r["items"] if it.get("kind") == "course"]
-    for c in c2[:4]:                          # C.2 8u(超 C 的 min=8),但 C.1 没满 min
+    for c in c2[:4]:                          # C.2 8u (exceeds C's min=8), but C.1 has not met its min
         sim.select(c)
     st = {e["ref"]: e for e in sim.status()}
     assert st["C"]["units_counted"] == 8.0
     assert not st["C"]["done"], "C.1 未满 min,C 的子公式不满足"
 
 
-# ---------- 归属(D 枚举 → E 程序课表 → F 任意) ----------
+# ---------- attribution (D enumeration -> E program course list -> F any) ----------
 def test_attribution_priority_and_unattributed(sim):
     outside = sorted(sim._all_codes - sim._all_referenced_codes())[0]
     sim.select(outside)
     att = sim.attribution()
     assert att["assigned"][outside] == "F"
-    sim.select("NOPE9999")                    # 不在 courses 库
+    sim.select("NOPE9999")                    # not in the courses DB
     att = sim.attribution()
     assert "NOPE9999" in att["unattributed"]
 
 
 def test_attribution_respects_level_cap_for_f(sim):
     pg_code = next(c for c in sorted(sim._all_codes - sim._all_referenced_codes())
-                   if c[4] == "7")            # 7000 级树外课
+                   if c[4] == "7")            # a level-7000 out-of-tree course
     sim.select(pg_code)
     att = sim.attribution()
     assert pg_code in att["unattributed"], "F 限 undergraduate(level<=6)"
@@ -146,7 +146,7 @@ def test_overall_total_no_double_count(sim, conn):
     sim.choose_plan("ARTINC2559")
     for c in ("COMP2701", "COMP3702", "COMP4702", "DECO2801", "MATH1051",
               "COMP3710", "COMP4703", "STAT3006"):
-        sim.select(c)                         # DECO2801 同时在 D 枚举表 -> 只计一次
+        sim.select(c)                         # DECO2801 is also in the D enumeration table -> counted only once
     st = {e["ref"]: e for e in sim.status()}
     assert st["B"]["units_counted"] == 16.0
     assert st["D"]["units_counted"] == 0.0
@@ -178,7 +178,7 @@ def test_dual_level_caps(sim):
 
 
 def test_formula_satisfied_both_paths(conn):
-    # Major 路径
+    # Major path
     s = PlanSimulator(conn, "2559")
     a = next(r for r in s.rules if r["ref"] == "A")
     for it in a["items"]:
@@ -196,7 +196,7 @@ def test_formula_satisfied_both_paths(conn):
         s.select(c)
     ov = s.overall()
     assert ov["total_counted"] == 48.0 and ov["formula_satisfied"]
-    # No-Major 路径
+    # No-Major path
     s2 = PlanSimulator(conn, "2559")
     s2.choose_branch("C")
     for r in ("C.1", "C.2"):
@@ -212,15 +212,15 @@ def test_formula_satisfied_both_paths(conn):
     assert s2.overall()["formula_satisfied"]
 
 
-# ---------- 单顶层 plan-picker:field 子规则上浮(5528 MEngSc / 5530 嵌套) ----------
+# ---------- single top-level plan-picker: field sub-rules surface (5528 MEngSc / 5530 nested) ----------
 @pytest.fixture()
 def meng(conn):
     return PlanSimulator(conn, "5528")
 
 
 def test_picker_rule_detected(meng, sim):
-    assert meng._picker_rule() is not None         # 5528 整学位=选一个 field
-    assert sim._picker_rule() is None              # 2559 多顶层规则,major 不上浮
+    assert meng._picker_rule() is not None         # 5528 whole degree = pick one field
+    assert sim._picker_rule() is None              # 2559 has multiple top-level rules, the major does not surface
 
 
 def test_picker_surfaces_subrules(meng):
@@ -239,7 +239,7 @@ def test_picker_surfaces_subrules(meng):
 def test_picker_available_grouped_not_flattened(meng):
     meng.choose_plan("SOFTWX5528")
     br = meng.available_by_rule()
-    assert set(br) == {"A.A", "A.B", "A.C", "A.D"}, "课程应按子规则分组,而非平铺到 A"
+    assert set(br) == {"A.A", "A.B", "A.C", "A.D"}, "课程应按子规则分组,而非平铺到 A"   # courses should group by sub-rule, not flatten into A
     flat = [s["code"] if s["kind"] == "course" else s["options"][0]
             for slots in br.values() for s in slots]
     assert "CSSE7100" in [s["code"] for s in br["A.A"] if s["kind"] == "course"]
@@ -250,7 +250,7 @@ def test_picker_available_grouped_not_flattened(meng):
 def test_picker_full_completion(meng):
     meng.choose_plan("SOFTWX5528")
     for c in ("CSSE7100", "CSSE7610", "REIT6811", "REIT7841",
-              "COMP7500", "DECO6500", "COMP4403"):                  # 4+6+4+2 = 16u
+              "COMP7500", "DECO6500", "COMP4403"):                  # 4+6+4+2 = 16u total
         meng.select(c)
     st = {e["ref"]: e for e in meng.status()}
     assert st["A"]["units_counted"] == 16.0 and st["A"]["done"]
@@ -266,7 +266,7 @@ def test_picker_subrule_min_enforced(meng):
     meng.choose_plan("SOFTWX5528")
     for c in ("CSSE7100", "CSSE7610", "INFS7410",                  # A.A 6u
               "COMP7500", "DECO6500", "ENGG7302", "INFS7205",      # A.C 8u
-              "COMP4403"):                                          # A.D 2u => 共 16u,A.B=0
+              "COMP4403"):                                          # A.D 2u => 16u total, A.B=0
         meng.select(c)
     st = {e["ref"]: e for e in meng.status()}
     assert st["A"]["units_counted"] == 16.0, "总学分够 16"
@@ -276,7 +276,7 @@ def test_picker_subrule_min_enforced(meng):
 
 
 def test_picker_nested_subrules(conn):
-    s = PlanSimulator(conn, "5530")               # 含 E -> E.1..E.4 嵌套
+    s = PlanSimulator(conn, "5530")               # contains the E -> E.1..E.4 nesting
     s.choose_plan("BIOPEX5530")
     st = {e["ref"]: e for e in s.status()}
     assert "A.E" in st and st["A.E"]["child_of"] == "A"
@@ -284,7 +284,7 @@ def test_picker_nested_subrules(conn):
     assert "A.E.1" in (st["A.E"].get("children_refs") or [])
 
 
-# ---------- structure_overview(供问答按方向完整枚举选修) ----------
+# ---------- structure_overview (lets QA fully enumerate electives per direction) ----------
 def test_structure_overview_directions_2559(sim):
     ov = sim.structure_overview()
     groups = ov["groups"]
@@ -293,20 +293,20 @@ def test_structure_overview_directions_2559(sim):
                           "Data Science", "Programming Theory"}, "应按 4 个 major 方向分组"
     core = next(g for g in groups if g["title"] == "BCompSc Core Courses")
     assert core["kind"] == "core" and core["plan_name"] is None
-    # 标题含 Elective 但 select_type='all' 的 Cyber 选修组,按标题归 elective(规则14:标题更权威)
+    # The Cyber elective group whose title has Elective but select_type='all' is classified as elective by title (rule 14: the title is more authoritative)
     cyber_elec = next(g for g in groups if g["title"] == "Cyber Security Elective Courses")
     assert cyber_elec["kind"] == "elective"
-    # 每个 major 不重复列「程序通用选修池」(子规则标题与顶层 E 同名的已跳过)
+    # Each major does not repeat the "program general elective pool" (a sub-rule whose title matches the top-level E is skipped)
     assert all(g["title"] != "BCompSc Program Elective Courses"
                for g in groups if g["plan_name"]), "major 不应重复列程序通用选修池"
-    # 开放规则(E/F)无可枚举码但仍列出,带 scope 标注
+    # Open rules (E/F) have no enumerable codes but are still listed, with a scope label
     opens = [g for g in groups if g["kind"] == "open"]
     assert opens and all(g["courses"] == [] and g["open_scope"] in ("program", "any")
                          for g in opens)
 
 
 def test_structure_overview_covers_major_gated_electives(conn):
-    """结构化枚举的选修池应是扁平直属(via_plan='')选修的真超集——多出的正是 major 门控选修。"""
+    """The structured-enumeration elective pool should be a true superset of the flat direct (via_plan='') electives — the extra ones are exactly the major-gated electives."""
     from app.services import program_lookup as pl
     ov = PlanSimulator(conn, "2559").structure_overview()
     struct_elec = {c for g in ov["groups"] if g["kind"] == "elective" for c in g["courses"]}

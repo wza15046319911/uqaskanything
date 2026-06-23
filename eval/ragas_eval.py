@@ -1,15 +1,15 @@
-"""ragas_eval.py — 对 generate.py 产出的样本跑 RAGAS 指标,输出每题分 + 汇总。
+"""ragas_eval.py — runs RAGAS metrics on the samples produced by generate.py, outputs a per-question score + summary.
 
-默认指标(都不需要 golden 答案,开箱即用):
-  - faithfulness                      答案是否被检索上下文支撑(防幻觉,对应红线 1)
-  - response_relevancy                答案是否切题(用 bge-m3 算相似度)
-  - llm_context_precision_without_ref 检索上下文是否相关
-样本若带 reference 字段,额外加 context_recall(检索是否覆盖标准答案要点)。
-无检索上下文的样本(program/empty)会被剔除并计数,不混入分母(规则 19)。
+Default metrics (none need golden answers, works out of the box):
+  - faithfulness                      whether the answer is supported by the retrieval context (anti-hallucination, maps to red line 1)
+  - response_relevancy                whether the answer is on topic (similarity computed with bge-m3)
+  - llm_context_precision_without_ref whether the retrieval context is relevant
+If a sample carries a reference field, context_recall is added (whether retrieval covers the key points of the reference answer).
+Samples with no retrieval context (program/empty) are dropped and counted, not mixed into the denominator (rule 19).
 
-用法(需 eval/.env 里的 DEEPSEEK_API_KEY + 本地 ollama;从仓库根):
-    python eval/generate.py        # 先产样本
-    python eval/ragas_eval.py      # 再评分
+Usage (needs DEEPSEEK_API_KEY in eval/.env + local ollama; from the repo root):
+    python eval/generate.py        # produce samples first
+    python eval/ragas_eval.py      # then score
 """
 from __future__ import annotations
 

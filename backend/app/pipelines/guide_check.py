@@ -1,14 +1,17 @@
 """
-guide_check.py — 攻略入库前置对账闸门(确定性,无 LLM)
+guide_check.py — pre-load reconciliation gate for guides (deterministic, no LLM)
 
-把一篇 `<code>_<year>.md` 的 frontmatter.claims 逐项比对 course_detail(事实权威源):
-先修 prereq、各考核占比 weight(多重集)、Hurdle 标注。任一不一致 -> 打印冲突表 + 非零退出
-(当入库闸门,规则 19:不静默放过)。比的是**值**不是「字段存不存在」(规则 16):权重数值相等、
-prereq 归一后字符串相等、hurdle 集合相等;弱比对等于没闸门。
+Compare every claim in a `<code>_<year>.md` frontmatter.claims against course_detail (the
+authoritative fact source): prereq, each assessment weight (multiset), and Hurdle marks. Any
+mismatch -> print a conflict table + non-zero exit (acts as a load gate, rule 19: do not pass
+silently). It checks the **value**, not "does the field exist" (rule 16): weight numbers must be
+equal, prereq strings must be equal after normalisation, and hurdle sets must be equal; a weak
+check is no gate at all.
 
-正文里疑似裸日期(「N 月」且附近无年份)只 warn,逼作者标年(不拦)。
+A suspected bare date in the body ("month N" with no year nearby) only warns, pushing the author
+to add the year (it does not block).
 
-用法(从 backend/ 跑,需本地 :5433):
+Usage (run from backend/, needs local :5433):
     python -m app.pipelines.guide_check data/guides/INFS7410_2025.md
     python -m app.pipelines.guide_check data/guides/COMP4500_2025.md data/guides/COMP7500_2025.md
 """
@@ -24,18 +27,18 @@ import psycopg
 from app.services import retrieval
 from app.core.config import DSN
 
-# 攻略文件名约定:<CODE>_<YEAR>.md;glob 展开时据此过滤掉 README.md 等非攻略文件
+# Guide file name convention: <CODE>_<YEAR>.md; used during glob expansion to filter out non-guide files like README.md
 _GUIDE_FILE_RE = re.compile(r"^[A-Za-z]{4}\d{4}_\d{4}\.md$")
 
-# frontmatter 分隔:文件以 `---\n<yaml>\n---\n<body>` 开头
+# frontmatter separator: the file starts with `---\n<yaml>\n---\n<body>`
 _FRONT_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.S)
-# 正文疑似具体日期:N月(中文),用于催作者标年;附近 6 字符内有 4 位年份则放过
+# Suspected concrete date in the body: "month N" (Chinese), used to push the author to add the year; passes if a 4-digit year is within 6 chars nearby
 _BARE_DATE_RE = re.compile(r"\d{1,2}\s*月")
 _YEAR_NEAR_RE = re.compile(r"\d{4}")
 
 
 def parse_guide(path: str) -> tuple[dict, str]:
-    """读一篇攻略 md -> (frontmatter dict, body)。无合法 frontmatter 直接抛错(入库闸门不容忍格式错)。"""
+    """Read one guide md -> (frontmatter dict, body). Raise if there is no valid frontmatter (the load gate does not tolerate format errors)."""
     raw = open(path, encoding="utf-8").read()
     m = _FRONT_RE.match(raw)
     if not m:
@@ -47,12 +50,12 @@ def parse_guide(path: str) -> tuple[dict, str]:
 
 
 def _norm_prereq(s) -> str:
-    """先修归一:大写 + 折叠空白 + 去首尾标点。归一后做字符串相等(规则 16:比值不比字段存在)。"""
+    """Normalise prereq: uppercase + collapse whitespace + strip leading/trailing punctuation. After this, compare strings for equality (rule 16: compare values, not field existence)."""
     return re.sub(r"\s+", " ", str(s or "").strip().upper()).strip(" 。.;;")
 
 
 def _weights(items) -> list[int]:
-    """考核项 -> 权重多重集(四舍五入取整,升序)。claim 用 item['weight'],course 用 a['weight']。"""
+    """Assessment items -> weight multiset (rounded to integers, ascending). claim uses item['weight'], course uses a['weight']."""
     out: list[int] = []
     for a in items or []:
         if not isinstance(a, dict):
@@ -64,7 +67,7 @@ def _weights(items) -> list[int]:
 
 
 def _hurdle_weights(items) -> list[int]:
-    """被标 hurdle 的考核项的权重集合(升序)。漏标 hurdle 会让两侧集合不等 -> 报冲突。"""
+    """Weight set of the assessment items marked as hurdle (ascending). Missing a hurdle mark makes the two sets unequal -> report a conflict."""
     out: list[int] = []
     for a in items or []:
         if isinstance(a, dict) and a.get("hurdle"):
@@ -74,7 +77,7 @@ def _hurdle_weights(items) -> list[int]:
 
 
 def check_claims(claims: dict, course: dict) -> list[str]:
-    """逐项比 claims vs course_detail,返回冲突说明列表(空列表 = 全过)。"""
+    """Compare claims against course_detail item by item, return a list of conflict notes (empty list = all pass)."""
     conflicts: list[str] = []
     claims = claims or {}
 
@@ -98,7 +101,7 @@ def check_claims(claims: dict, course: dict) -> list[str]:
 
 
 def _suspect_dates(body: str) -> list[str]:
-    """正文里疑似裸日期(N月 且附近无年份),只告警不拦,催作者把日期标年(Risk 2)。"""
+    """Suspected bare date in the body ("month N" with no year nearby), only warn without blocking, pushing the author to add the year to the date (Risk 2)."""
     warns: list[str] = []
     for m in _BARE_DATE_RE.finditer(body):
         window = body[max(0, m.start() - 16): m.end() + 16]
@@ -108,7 +111,7 @@ def _suspect_dates(body: str) -> list[str]:
 
 
 def check_file(conn, path: str) -> dict:
-    """单篇对账,返回 {code, ok, conflicts, warnings, frontmatter, body}。course 缺失即视为冲突。"""
+    """Reconcile a single file, return {code, ok, conflicts, warnings, frontmatter, body}. A missing course counts as a conflict."""
     fm, body = parse_guide(path)
     code = str(fm.get("course_code") or "").strip().upper()
     if not code:
@@ -125,7 +128,7 @@ def check_file(conn, path: str) -> dict:
 
 
 def _expand(paths: list[str]) -> list[str]:
-    """展开路径:glob 模式只保留符合 <CODE>_<YEAR>.md 的攻略文件(滤掉 README 等);显式路径原样保留(便于报错)。"""
+    """Expand paths: glob patterns keep only guide files matching <CODE>_<YEAR>.md (filter out README etc.); explicit paths are kept as-is (so errors can be reported)."""
     out: list[str] = []
     for p in paths:
         if any(c in p for c in "*?["):

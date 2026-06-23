@@ -23,6 +23,6 @@ export default tseslint.config(
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
   },
-  // 关闭与 Prettier 冲突的格式化规则(必须放最后)
+  // Turn off formatting rules that clash with Prettier (must come last)
   prettier,
 )

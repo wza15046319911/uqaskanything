@@ -23,7 +23,7 @@ export default function App() {
   return (
     <div className="min-h-dvh bg-background font-sans text-foreground">
       <Toast.Provider />
-      <nav className="relative flex items-center justify-center gap-1 px-5 pt-4">
+      <nav className="relative flex items-center justify-center gap-1 px-5 pt-6">
         {!isProd && (
           <>
             <NavLink to="/" end className={navCls}>
@@ -37,7 +37,7 @@ export default function App() {
             </NavLink>
           </>
         )}
-        <div className="absolute right-5 flex items-center gap-1.5">
+        <div className="absolute right-7 flex items-center gap-1.5">
           <Select
             className="w-28"
             aria-label={t('nav.toggleLang')}

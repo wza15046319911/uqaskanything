@@ -8,7 +8,7 @@ mode routing:
   hybrid   -> retrieval.hybrid_search (structured + semantic)
   program  -> program_lookup (course_to_programs / program_to_courses)
   kb       -> retrieval.kb_search (knowledge base FAQ/date/policy, decided up front by planner classification)
-  guide    -> retrieval.guide_search (单课主观经验/攻略,经验意图触发;事实意图优先短路,库内无攻略回退 course_detail)
+  guide    -> retrieval.guide_search (single-course subjective experience / guide, triggered by experience intent; fact intent short-circuits first, falls back to course_detail when there is no guide in the store)
   empty    -> question too broad / cannot form a retrieval condition (graceful fallback when planner raises ValueError)
 
 Usage:
@@ -409,8 +409,8 @@ def _retrieve(conn, question: str, lang: Lang = "zh") -> dict:
                 "program_facts": None, "prog_answer": None,
                 "chunks": _kb_or_none(conn, question, p.get("kb_query"))}
 
-    # Course guide: planner judged it a single-course subjective-experience question (经验意图 + 课程码,事实意图已被优先短路掉)。
-    # 物理隔离:只查 course_guides;库内该课无攻略 -> 优雅回退 course_detail(不报错、不空答,红线 3 / Risk 4)。
+    # Course guide: planner judged it a single-course subjective-experience question (experience intent + course code; fact intent has already been short-circuited first).
+    # Physical isolation: query only course_guides; if that course has no guide in the store -> gracefully fall back to course_detail (no error, no empty answer, red line 3 / Risk 4).
     if mode == "guide":
         code = p["course_code"]
         chunks = retrieval.guide_search(conn, code, question)
@@ -786,7 +786,7 @@ def run_stream(conn, question: str, lang: Lang | None = None):
             full = answer.kb_answer_body(question, chunks, lang=lang)
         yield ("done", full)
         return
-    if mode == "guide":                         # 攻略经验:先发确定性年份/非官方前缀,再流式转述经验层(无攻略已在 _retrieve 回退为 course_detail)
+    if mode == "guide":                         # course guide experience: send the deterministic year / unofficial prefix first, then stream the experience-layer retelling (a no-guide case has already been turned into course_detail in _retrieve)
         acc: list[str] = []
         for delta in answer.answer_guide_stream(question, r["chunks"], lang=lang):
             acc.append(delta)

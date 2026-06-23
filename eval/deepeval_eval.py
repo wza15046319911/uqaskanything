@@ -1,24 +1,24 @@
-"""deepeval_eval.py — 对 generate.py 产出的样本跑 DeepEval(LLM-as-judge)分层深度评测,
-按「每条样本实际可用的数据」自适应选指标,不再静默剔除无上下文样本(规则 19)。
+"""deepeval_eval.py — runs DeepEval (LLM-as-judge) tiered deep evaluation on the samples produced by generate.py,
+picking metrics adaptively based on "the data actually available per sample", no longer silently dropping samples without context (rule 19).
 
-覆盖从简单到复杂的全量 query(course_detail / kb / semantic / filter / hybrid / program /
-拒答 / 宽泛),按难度 tier 与 mode 拆分汇总。指标按样本可用字段挑选:
-  - AnswerRelevancyMetric     有作答就跑(只需 input+output),衡量答案是否切题
-  - FaithfulnessMetric        有检索上下文才跑,衡量答案是否被上下文支撑(防幻觉,红线 1)
-  - ContextualRelevancyMetric 有检索上下文才跑,衡量检索上下文是否相关
-  - ContextualPrecisionMetric 有上下文 + reference 才跑,相关上下文是否排在前
-  - ContextualRecallMetric    有上下文 + reference 才跑,检索是否覆盖标准答案要点
-  - Correctness(GEval)        有 reference 就跑,答案与标准答案的事实是否一致
-确定性判定(非 LLM,规则 12):
-  - refuse 样本   -> 答案是否命中后端 KB_REFUSE 拒答话术(refusal_ok)
-  - broad 样本    -> 答案是否正确收窄(命中 EMPTY_MSG)或给出课程列表
-程序枚举(program)是确定性渲染、零幻觉,正确性由后端 answer_eval 的 answer_has 断言负责,
-这里只跑 AnswerRelevancy 看切题度,不送 faithfulness(否则把零幻觉答案误判为无依据)。
+Covers the full range of queries from simple to complex (course_detail / kb / semantic / filter / hybrid / program /
+refusal / broad), split and summarized by difficulty tier and mode. Metrics are chosen by the fields available per sample:
+  - AnswerRelevancyMetric     runs whenever there is an answer (needs only input+output), measures whether the answer is on topic
+  - FaithfulnessMetric        runs only with retrieval context, measures whether the answer is supported by the context (anti-hallucination, red line 1)
+  - ContextualRelevancyMetric runs only with retrieval context, measures whether the retrieval context is relevant
+  - ContextualPrecisionMetric runs only with context + reference, whether relevant context is ranked first
+  - ContextualRecallMetric    runs only with context + reference, whether retrieval covers the key points of the reference answer
+  - Correctness(GEval)        runs whenever there is a reference, whether the answer's facts match the reference answer
+Deterministic checks (non-LLM, rule 12):
+  - refuse samples   -> whether the answer matches the backend KB_REFUSE refusal wording (refusal_ok)
+  - broad samples    -> whether the answer correctly narrows down (matches EMPTY_MSG) or gives a course list
+Program enumeration (program) is deterministic rendering with zero hallucination, and its correctness is covered by the backend answer_eval answer_has assertion,
+so here we only run AnswerRelevancy to check on-topicness, and do not send faithfulness (otherwise a zero-hallucination answer would be wrongly judged as unsupported).
 
-用法(需 eval/.env 里的 DEEPSEEK_API_KEY;从仓库根,用 deepeval 专属 venv):
-    eval/.venv-deepeval/bin/python eval/generate.py        # 先产样本
-    eval/.venv-deepeval/bin/python eval/deepeval_eval.py   # 再分层评分 -> reports/deepeval_report.{json,md}
-    eval/.venv-deepeval/bin/python eval/deepeval_eval.py --limit 3   # 冒烟
+Usage (needs DEEPSEEK_API_KEY in eval/.env; from the repo root, using the deepeval-specific venv):
+    eval/.venv-deepeval/bin/python eval/generate.py        # produce samples first
+    eval/.venv-deepeval/bin/python eval/deepeval_eval.py   # then tiered scoring -> reports/deepeval_report.{json,md}
+    eval/.venv-deepeval/bin/python eval/deepeval_eval.py --limit 3   # smoke test
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ from deepeval_config import build_judge
 
 HERE = Path(__file__).resolve().parent
 
-# 镜像后端 answer.KB_REFUSE / qa.EMPTY_MSG 的稳定锚点(eval 与后端进程解耦,不 import backend)
+# Stable anchors mirroring the backend answer.KB_REFUSE / qa.EMPTY_MSG (eval is decoupled from the backend process, does not import backend)
 REFUSE_ANCHOR = "没找到能直接回答"
 EMPTY_ANCHOR = "问题太宽泛"
 
@@ -64,7 +64,7 @@ def load_samples(path: Path) -> list[dict]:
 
 
 def build_metrics(judge) -> dict:
-    """装配指标实例(judge=DeepSeek,串行判分取稳定),按 key 复用,measure() 每次覆盖分数。"""
+    """Assemble metric instances (judge=DeepSeek, serial scoring for stability), reused by key; measure() overwrites the score each time."""
     return {
         "faithfulness": FaithfulnessMetric(model=judge, async_mode=False, include_reason=True),
         "answer_relevancy": AnswerRelevancyMetric(model=judge, async_mode=False, include_reason=True),
@@ -91,9 +91,9 @@ def build_metrics(judge) -> dict:
 
 
 def pick_metrics(r: dict) -> list[str]:
-    """按样本可用字段挑指标:有作答跑 relevancy;有上下文加 faithfulness/contextual;
-    有 reference 加 correctness,且上下文齐全时再加 precision/recall。program 无上下文无 ref
-    -> 只 answer_relevancy。"""
+    """Pick metrics by the fields available per sample: with an answer run relevancy; with context add faithfulness/contextual;
+    with a reference add correctness, and when context is complete also add precision/recall. program has no context and no ref
+    -> only answer_relevancy."""
     has_ctx = bool(r.get("contexts"))
     has_ref = bool(r.get("reference"))
     keys = ["answer_relevancy"]
@@ -142,7 +142,7 @@ def main() -> None:
         mode = r.get("mode")
         rec = {"q": q, "mode": mode, "tier": tier, "category": None, "scores": {}}
 
-        # ---- 确定性判定(非 LLM)----
+        # ---- Deterministic checks (non-LLM) ----
         if r.get("refuse"):
             rec["category"] = "refuse"
             ok = REFUSE_ANCHOR in answer
@@ -158,7 +158,7 @@ def main() -> None:
             rec["category"] = "broad"
             narrowed = EMPTY_ANCHOR in answer
             listed = bool(r.get("contexts"))
-            ok = narrowed or listed                  # 收窄提示 或 直接给课程列表 都算合理
+            ok = narrowed or listed                  # either a narrow-down hint or directly giving a course list counts as reasonable
             det["broad"]["n"] += 1
             det["broad"]["passed"] += int(ok)
             rec["broad_ok"] = ok
@@ -169,7 +169,7 @@ def main() -> None:
             print(f"  {'✓' if ok else '✗'} [broad/{rec['broad_behavior']}] {q[:36]}")
             continue
 
-        # ---- LLM 判分(自适应)----
+        # ---- LLM scoring (adaptive) ----
         if not answer:
             rec["category"] = "no_answer"
             rec["note"] = "后端无作答(answer 为空),跳过 LLM 指标"
@@ -195,7 +195,7 @@ def main() -> None:
                         by_tier[tier][key].append(score)
                     if mode:
                         by_mode[mode][key].append(score)
-            except Exception as e:                    # 不吞错:记录并继续(规则 19)
+            except Exception as e:                    # do not swallow errors: record and continue (rule 19)
                 msg = f"{q[:40]} / {key}: {type(e).__name__}: {e}"
                 metric_errors.append(msg)
                 rec["scores"][key] = {"score": None, "error": f"{type(e).__name__}: {e}"}
@@ -205,7 +205,7 @@ def main() -> None:
         ws = f" worst={worst:.2f}" if worst is not None else ""
         print(f"  ✓ [{rec['category']}/T{tier}] {q[:36]}{ws}")
 
-    # ---- 汇总 ----
+    # ---- Summarize ----
     def means(d):
         return {k: round(sum(v) / len(v), 4) for k, v in d.items() if v}
 
@@ -223,14 +223,14 @@ def main() -> None:
     mode_summary = {k: {**means(m), "_n_scored": mode_counts.get(k, 0)}
                     for k, m in sorted(by_mode.items())}
 
-    # 覆盖矩阵 tier × mode(含确定性样本)
+    # Coverage matrix tier x mode (includes deterministic samples)
     coverage: dict = defaultdict(lambda: defaultdict(int))
     for rec in per_sample:
         t = str(rec.get("tier"))
         m = rec.get("mode") or rec.get("category")
         coverage[t][m] += 1
 
-    # 最弱样本(任一 LLM 指标分最低,升序)
+    # Weakest samples (lowest score on any LLM metric, ascending)
     scored_samples = [s for s in per_sample if s.get("scores") and
                       any(v.get("score") is not None for v in s["scores"].values())]
     def min_score(s):

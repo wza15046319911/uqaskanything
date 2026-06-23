@@ -1,16 +1,16 @@
 """
 backfill_offerings.py — backfill the per-code "current semester offering" flags offered_s1 / offered_s2.
 
-为什么不用 semester 文本列直接过滤:该列按 offering 存且不可靠——S1 行是 2026,S2 行多为去年 2025 的代理,
-而真实的 2026 S2 开课清单在 S2_CODES(data/s2_course_codes.txt),不在列里。所以「本期是否开 S1/S2」
-统一用按 code 派生的两个标记列(retrieval.build_where / both_semesters 都读它们)。
+Why not filter on the semester text column directly: that column is stored per offering and is not reliable -- the S1 row is 2026, but the S2 row is mostly a proxy for last year's 2025,
+while the real 2026 S2 offering list is in S2_CODES (data/s2_course_codes.txt), not in the column. So "is it offered this S1/S2"
+goes through two flag columns derived per code (both retrieval.build_where / both_semesters read them).
 
-派生口径(确定性):
-  offered_s2 = code ∈ S2_CODES(权威 2026 S2 清单)
-  offered_s1 = code 在库里有 semester='S1' 的行(S1 已全量爬取,列即权威源,无单独文件)
+Derivation (deterministic):
+  offered_s2 = code in S2_CODES (the authoritative 2026 S2 list)
+  offered_s1 = code has a row with semester='S1' in the DB (S1 is fully scraped, the column is the authoritative source, no separate file)
 
-幂等:每次按上述口径整列重算。会显式报告 S2_CODES 中「库里完全没有行」的码数(rule 19:不静默吞掉),
-这些码只有课程码、无任何详情,任何方案都无法展示,本脚本也不为它们造空壳行。
+Idempotent: each run recomputes the whole column by the above rules. It explicitly reports the count of codes in S2_CODES that "have no row at all in the DB" (rule 19: do not swallow silently),
+these codes only have a course code with no details, no plan can show them, and this script does not create empty shell rows for them either.
 
 Usage:
     python -m app.pipelines.backfill_offerings

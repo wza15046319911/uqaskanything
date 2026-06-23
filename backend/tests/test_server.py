@@ -1,4 +1,4 @@
-"""API 冒烟:状态/分支/搜索/排课/advise 护栏(LLM mock)。依赖本地 DB。"""
+"""API smoke test: state/branch/search/schedule/advise guardrail (LLM mocked). Depends on the local DB."""
 import pytest
 from fastapi.testclient import TestClient
 

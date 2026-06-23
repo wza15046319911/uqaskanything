@@ -1,11 +1,12 @@
-"""deepeval_config.py — DeepEval 的 judge LLM 装配(DeepSeek,deepeval 4.x 内置 DeepSeekModel)。
+"""deepeval_config.py — assembles the judge LLM for DeepEval (DeepSeek, deepeval 4.x has a built-in DeepSeekModel).
 
-与 ragas_config.py 并列、共用 eval/.env:judge 同样走 DeepSeek、temperature=0 取稳定判分,
-区别是 DeepEval 用自带的 DeepSeekModel(走 DeepSeek 官方端点),不经 langchain 包装。
-DeepEval 的 RAG 指标全是 LLM-as-judge,不用 embedding,所以这里只装配 judge。
-缺 DEEPSEEK_API_KEY 直接抛错,绝不静默退化成默认 OpenAI 后端(规则 19)。
+Sits alongside ragas_config.py and shares eval/.env: the judge also goes through DeepSeek with
+temperature=0 for stable scoring. The difference is that DeepEval uses its own DeepSeekModel
+(via the official DeepSeek endpoint), not wrapped through langchain.
+DeepEval's RAG metrics are all LLM-as-judge and use no embedding, so only the judge is assembled here.
+If DEEPSEEK_API_KEY is missing, it raises directly and never silently falls back to the default OpenAI backend (rule 19).
 
-用法:from deepeval_config import build_judge -> judge = build_judge()
+Usage: from deepeval_config import build_judge -> judge = build_judge()
 """
 from __future__ import annotations
 

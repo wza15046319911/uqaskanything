@@ -5,7 +5,7 @@ html {
   background-color: var(--background);
 }
 
-/* RulesPane 跳转定位高亮(JS 加 .flash 类) */
+/* RulesPane scroll-to highlight (JS adds the .flash class) */
 .flash {
   animation: flash-ring 1.2s ease;
 }
