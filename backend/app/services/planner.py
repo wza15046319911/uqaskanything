@@ -164,6 +164,11 @@ _FACT_INTENT = re.compile(
     r"\b(?:census|deadline|when|start\s*date|prerequisite|prereq|exam|assessment|weight|hurdle|units?)\b",
     re.I)
 
+
+def is_fact_intent(question: str) -> bool:
+    """Whether the question hits high-risk fact intent (date / prerequisite / assessment weight / hurdle / units). Used to keep the subjective guide out of fact answers (student-facing red line 1/3)."""
+    return bool(_FACT_INTENT.search(question or ""))
+
 # Course code: 4 letters + 4 digits. When Chinese is adjacent the ASCII \b fails, so use lookaround boundaries;
 # forbid a trailing letter/digit to avoid mistaking CSSE10012 (5 digits) for CSSE1001.
 COURSE_CODE_RE = re.compile(r"(?<![A-Za-z])([A-Za-z]{4}\d{4})(?![A-Za-z0-9])")

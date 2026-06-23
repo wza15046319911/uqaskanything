@@ -36,6 +36,10 @@ KB_STRONG_SIM = 0.62  # when filter hits empty, only switch when KB top sim reac
 # Saves real questions where "the correct page sits just under the 0.62 threshold" (word-order jitter of a Chinese query against an English KB, e.g. "how to issue an enrolment certificate" 0.618);
 # made-up ones are still blocked by the dual gate (entity absent / LLM gate). Discrimination precision belongs to answerability, not simply lowering the threshold to let everything through.
 KB_SOFT_SIM = 0.60
+# Guide attached to a course_detail (intro-type) answer: the guide is already physically scoped to this one course,
+# so any of its chunks is on-topic; keep the floor at 0 (show the experience layer whenever a guide exists), and only
+# rank by the question. Fact-intent questions still get no guide at all (gated in _retrieve, red line 1/3).
+GUIDE_ATTACH_SIM = 0.0
 # Date/time-point intent words: asking "when / which day" rather than the course itself -> even if filter hits a course, switch to the knowledge base (academic calendar)
 _DATE_INTENT = re.compile(r"什么时候|何时|哪天|几号|日期|开学|开课|放假|census|截止|deadline|when|start\s*date", re.I)
 # Real course-filter dimensions: filters with these keys count as "querying courses"; semester alone is a time restriction, not a course filter.
@@ -432,9 +436,15 @@ def _retrieve(conn, question: str, lang: Lang = "zh") -> dict:
         if not course:
             return {"plan": p, "mode": "empty", "meta": f"未找到课程 {p['course_code']}",
                     "courses": [], "program_facts": None, "prog_answer": None, "chunks": []}
-        return {"plan": p, "mode": "course_detail", "meta": f"course_detail {p['course_code']}",
+        # Intro-type detail also surfaces the experience layer (guide) appended after the facts; fact-intent
+        # questions (prereq / assessment weight / date / hurdle / units) never recall a guide (red line 1/3).
+        guide_chunks: list[dict] = []
+        if not planner.is_fact_intent(question):
+            guide_chunks = retrieval.guide_search(conn, p["course_code"], question, min_sim=GUIDE_ATTACH_SIM)
+        meta = f"course_detail {p['course_code']}" + (f"+guide({len(guide_chunks)} 块)" if guide_chunks else "")
+        return {"plan": p, "mode": "course_detail", "meta": meta,
                 "courses": [], "program_facts": None, "prog_answer": None,
-                "chunks": [], "course": course}
+                "chunks": [], "course": course, "guide_chunks": guide_chunks}
 
     cu = p.get("coord_units") or None           # discipline -> faculty restriction (deterministic, parameterized SQL), None = no limit
     cu_note = f" @units{cu}" if cu else ""
@@ -714,6 +724,8 @@ def run(conn, question: str, generate: bool = True, lang: Lang | None = None) ->
             ans = answer.answer_guide(question, r["chunks"], lang=lang)
         elif r["mode"] == "course_detail":
             ans = answer.answer_course_detail(question, r.get("course"), lang=lang)
+            if r.get("guide_chunks"):           # intro-type detail: append the unofficial experience layer after the facts
+                ans += "\n\n" + answer.answer_guide(question, r["guide_chunks"], lang=lang)
         elif r["mode"] == "program":
             ans = r["prog_answer"]
         elif r.get("det_answer"):                # low load / chill: deterministic answer, bypasses the LLM (red line 1)
@@ -798,6 +810,13 @@ def run_stream(conn, question: str, lang: Lang | None = None):
         for delta in answer.answer_course_detail_stream(question, r.get("course"), lang=lang):
             acc.append(delta)
             yield ("token", delta)
+        if r.get("guide_chunks"):               # intro-type detail: append the unofficial experience layer after the facts
+            sep = "\n\n"
+            acc.append(sep)
+            yield ("token", sep)
+            for delta in answer.answer_guide_stream(question, r["guide_chunks"], lang=lang):
+                acc.append(delta)
+                yield ("token", delta)
         yield ("done", "".join(acc))
         return
 
